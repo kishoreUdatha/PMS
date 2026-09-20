@@ -1,0 +1,676 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Book your stay</title>
+<!--
+  The guest-facing booking engine.
+
+  Served from the gateway rather than bundled into the PMS frontend, for two
+  reasons. The PMS bundle is the staff application -- shipping it to the public
+  would send a hundred-odd screens and the whole auth layer to somebody who
+  wants to book a room. And the gateway is the single public origin, so every
+  call here is same-origin: no CORS, no second hostname to configure, and the
+  tunnel that makes webhooks reachable makes this reachable too.
+
+  Deliberately one file of plain JavaScript. The flow is four linear steps; a
+  framework and a build step would add a toolchain to maintain without making
+  any of it clearer. The only external dependency is Razorpay's checkout, which
+  has to come from their CDN because it opens their payment window.
+
+  The one rule it must not break: **the browser never decides a booking is
+  confirmed.** Razorpay's handler firing means the guest finished paying, not
+  that we were told about it. Confirmation arrives by signed webhook, so this
+  polls for it. Anything else would confirm rooms nobody paid for.
+-->
+<style>
+  :root {
+    --ink: #1e293b; --muted: #64748b; --line: #e2e8f0;
+    --bg: #f8fafc; --card: #ffffff;
+    --brand: #0f766e; --brand-dark: #115e59;
+    /* What goes ON the brand colour. Computed by the server from the
+       colour itself, never chosen by the hotel -- see branding.py. */
+    --brand-ink: #fff;
+    --warn-bg: #fffbeb; --warn: #92400e;
+    --bad-bg: #fef2f2; --bad: #b91c1c;
+    --good-bg: #ecfdf5; --good: #047857;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 780px; margin: 0 auto; padding: 20px 16px 64px; }
+  header.prop { padding: 28px 0 18px; }
+  header.prop h1 { margin: 0; font-size: 28px; letter-spacing: -.02em; }
+  header.prop p { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 16px; padding: 18px; margin-bottom: 16px;
+  }
+  h2 { font-size: 17px; margin: 0 0 14px; }
+  label { display: block; font-size: 13px; font-weight: 600; color: #475569; margin-bottom: 5px; }
+  input, select {
+    width: 100%; padding: 11px 12px; border: 1px solid var(--line);
+    border-radius: 10px; font: inherit; background: #fff; color: var(--ink);
+  }
+  header.prop img#propLogo { max-height: 56px; max-width: 220px; margin-bottom: 10px; display: block; }
+  header.prop .tagline { margin: 2px 0 4px; font-size: 15px; color: #475569; }
+  input:focus, select:focus { outline: 2px solid var(--brand); outline-offset: -1px; border-color: var(--brand); }
+  .row { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
+  .row-4 { display: grid; gap: 12px; grid-template-columns: 1fr 1fr 1fr 1fr; }
+  @media (max-width: 560px) { .row-4 { grid-template-columns: 1fr 1fr; } }
+  button {
+    font: inherit; font-weight: 600; border: 0; border-radius: 11px;
+    padding: 12px 18px; background: var(--brand); color: var(--brand-ink); cursor: pointer;
+  }
+  button:hover:not(:disabled) { background: var(--brand-dark); }
+  button:disabled { opacity: .5; cursor: default; }
+  button.ghost { background: transparent; color: var(--muted); padding: 8px 0; font-weight: 500; }
+  button.ghost:hover:not(:disabled) { background: transparent; color: var(--brand); }
+  .full { width: 100%; }
+  .room { display: flex; gap: 14px; padding: 14px 0; border-top: 1px solid var(--line); }
+  .room:first-of-type { border-top: 0; }
+  .room img { width: 116px; height: 88px; object-fit: cover; border-radius: 10px; flex: 0 0 auto; background: #f1f5f9; }
+  .room .grow { flex: 1; min-width: 0; }
+  .room h3 { margin: 0 0 3px; font-size: 15px; }
+  .room .amen { color: var(--muted); font-size: 12.5px; margin: 0 0 8px; }
+  .room .price { text-align: right; white-space: nowrap; }
+  .room .price b { display: block; font-size: 17px; }
+  .room .price span { color: var(--muted); font-size: 12px; }
+  @media (max-width: 560px) {
+    .room { flex-wrap: wrap; }
+    .room img { width: 100%; height: 150px; }
+    .room .price { text-align: left; width: 100%; }
+  }
+  .note { border-radius: 11px; padding: 12px 14px; font-size: 13.5px; margin: 0 0 14px; }
+  .note.warn { background: var(--warn-bg); color: var(--warn); }
+  .note.bad { background: var(--bad-bg); color: var(--bad); }
+  .note.good { background: var(--good-bg); color: var(--good); }
+  .note.info { background: #f1f5f9; color: #475569; }
+  .totals { display: flex; justify-content: space-between; padding: 9px 0; font-size: 14px; }
+  .totals.grand { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 13px; font-size: 17px; font-weight: 700; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .hide { display: none !important; }
+  .spin {
+    width: 17px; height: 17px; border: 2px solid rgba(255,255,255,.4);
+    border-top-color: #fff; border-radius: 50%; display: inline-block;
+    vertical-align: -3px; margin-right: 8px; animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .center { text-align: center; padding: 22px 0; }
+  .big { font-size: 40px; line-height: 1; margin-bottom: 10px; }
+  code { background: #f1f5f9; padding: 2px 6px; border-radius: 5px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="prop">
+    <img id="propLogo" alt="" hidden>
+    <h1 id="propName">Book your stay</h1>
+    <p id="propTagline" class="tagline" hidden></p>
+    <p id="propWhere"></p>
+  </header>
+
+  <div id="fatal" class="note bad hide"></div>
+
+  <!-- 1. dates ------------------------------------------------------- -->
+  <section id="stepSearch" class="card">
+    <h2>When are you staying?</h2>
+    <div class="row-4">
+      <div><label for="arrival">Check in</label><input type="date" id="arrival"></div>
+      <div><label for="departure">Check out</label><input type="date" id="departure"></div>
+      <div><label for="adults">Adults</label>
+        <select id="adults"></select></div>
+      <div><label for="children">Children</label>
+        <select id="children"></select></div>
+    </div>
+    <p id="searchErr" class="note bad hide" style="margin:14px 0 0"></p>
+    <button id="searchBtn" class="full" style="margin-top:16px">Search rooms</button>
+  </section>
+
+  <!-- 2. rooms ------------------------------------------------------- -->
+  <section id="stepRooms" class="card hide">
+    <h2 id="roomsHead">Available rooms</h2>
+    <div id="roomList"></div>
+    <button class="ghost" data-back="search">&larr; Change dates</button>
+  </section>
+
+  <!-- 3. guest ------------------------------------------------------- -->
+  <section id="stepGuest" class="card hide">
+    <h2>Your details</h2>
+    <div id="pickSummary" class="note info"></div>
+    <div style="margin-bottom:12px">
+      <label for="gName">Full name</label>
+      <input id="gName" autocomplete="name" placeholder="As on your ID">
+    </div>
+    <div class="row" style="margin-bottom:12px">
+      <div><label for="gEmail">Email</label>
+        <input id="gEmail" type="email" autocomplete="email" placeholder="you@example.com"></div>
+      <div><label for="gPhone">Phone</label>
+        <input id="gPhone" type="tel" autocomplete="tel" placeholder="10-digit mobile"></div>
+    </div>
+    <div style="margin-bottom:12px">
+      <label for="gReq">Special requests <span style="font-weight:400;color:#94a3b8">(optional)</span></label>
+      <input id="gReq" maxlength="1000" placeholder="Late arrival, high floor…">
+    </div>
+    <p id="guestErr" class="note bad hide"></p>
+    <button id="holdBtn" class="full">Hold this room</button>
+    <p class="muted" style="margin:10px 0 0">
+      We hold the room while you pay. Nothing is charged until you confirm.
+    </p>
+    <button class="ghost" data-back="rooms">&larr; Choose another room</button>
+  </section>
+
+  <!-- 4. pay --------------------------------------------------------- -->
+  <section id="stepPay" class="card hide">
+    <h2>Confirm and pay</h2>
+    <div id="holdTimer" class="note warn"></div>
+    <div id="payLines"></div>
+    <p id="payErr" class="note bad hide"></p>
+    <button id="payBtn" class="full">Pay now</button>
+    <p class="muted" style="margin:10px 0 0">
+      Payment is handled by Razorpay. We never see your card details.
+    </p>
+  </section>
+
+  <!-- 5. confirming / done ------------------------------------------- -->
+  <section id="stepDone" class="card hide">
+    <div class="center">
+      <div class="big" id="doneIcon">⏳</div>
+      <h2 id="doneHead" style="margin-bottom:6px">Confirming your booking…</h2>
+      <p id="doneBody" class="muted" style="max-width:420px;margin:0 auto"></p>
+      <div id="doneRef" class="note good hide" style="margin-top:18px"></div>
+    </div>
+  </section>
+
+  <p class="muted center" style="opacity:.75">
+    Powered by Chirala Bay PMS
+  </p>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// The property is taken from the path, never from a query parameter -- the same
+// rule the API itself keeps. /book/559167 is the whole of the addressing.
+// ---------------------------------------------------------------------------
+const CODE = location.pathname.split('/').filter(Boolean).pop() || '';
+const API = '/api/booking/public/' + encodeURIComponent(CODE);
+
+const state = {
+  prop: null, nights: 0, room: null,
+  reservationId: null, paymentToken: null, expiresAt: null,
+  order: null, timer: null, polls: 0,
+};
+
+const $ = (id) => document.getElementById(id);
+const money = (n, cur) => new Intl.NumberFormat('en-IN',
+  { style: 'currency', currency: cur || 'INR', maximumFractionDigits: 0 })
+  .format(Number(n));
+const isoDate = (d) => d.toISOString().slice(0, 10);
+
+function show(step) {
+  for (const s of ['Search', 'Rooms', 'Guest', 'Pay', 'Done']) {
+    $('step' + s).classList.toggle('hide', s.toLowerCase() !== step);
+  }
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function err(el, message) {
+  const box = $(el);
+  box.textContent = message;
+  box.classList.toggle('hide', !message);
+}
+
+function busy(btn, on, label) {
+  btn.disabled = on;
+  btn.innerHTML = on ? '<span class="spin"></span>' + label : label;
+}
+
+/** Every call goes through here so one place turns a failure into a sentence. */
+async function call(path, options) {
+  let resp;
+  try {
+    resp = await fetch(path, options);
+  } catch {
+    throw new Error('We could not reach the booking system. Please check your '
+      + 'connection and try again.');
+  }
+  const body = await resp.json().catch(() => null);
+  if (!resp.ok) {
+    // FastAPI puts validation failures in a list and our own refusals in a
+    // string; a guest should never see either shape, only the sentence.
+    const d = body && body.detail;
+    throw new Error(typeof d === 'string' ? d
+      : Array.isArray(d) && d.length ? (d[0].msg || 'That did not look right.')
+        : 'Something went wrong. Please try again.');
+  }
+  return body;
+}
+
+// --- 1. dates --------------------------------------------------------------
+
+function initDates() {
+  const t = new Date();
+  const plus = (n) => { const d = new Date(t); d.setDate(d.getDate() + n); return d; };
+  $('arrival').value = isoDate(plus(1));
+  $('departure').value = isoDate(plus(3));
+  $('arrival').min = isoDate(t);
+  $('departure').min = isoDate(plus(1));
+  for (let i = 1; i <= 10; i++) {
+    $('adults').insertAdjacentHTML('beforeend', `<option value="${i}">${i}</option>`);
+  }
+  for (let i = 0; i <= 10; i++) {
+    $('children').insertAdjacentHTML('beforeend', `<option value="${i}">${i}</option>`);
+  }
+  $('adults').value = '2';
+  $('children').value = '0';
+  $('arrival').addEventListener('change', () => {
+    // Keep checkout after check-in without silently overriding a real choice.
+    if ($('departure').value <= $('arrival').value) {
+      const d = new Date($('arrival').value);
+      d.setDate(d.getDate() + 1);
+      $('departure').value = isoDate(d);
+    }
+    $('departure').min = $('arrival').value;
+  });
+}
+
+async function search() {
+  err('searchErr', '');
+  const arrival = $('arrival').value, departure = $('departure').value;
+  if (!arrival || !departure || departure <= arrival) {
+    return err('searchErr', 'Check-out must be at least one night after check-in.');
+  }
+  busy($('searchBtn'), true, 'Searching…');
+  try {
+    const q = new URLSearchParams({
+      arrival, departure,
+      adults: $('adults').value, children: $('children').value,
+    });
+    const data = await call(`${API}/availability?${q}`);
+    state.prop = data.property;
+    state.nights = data.nights;
+    paintProperty(data.property);
+    paintRooms(data);
+    show('rooms');
+  } catch (e) {
+    err('searchErr', e.message);
+  } finally {
+    busy($('searchBtn'), false, 'Search rooms');
+  }
+}
+
+function paintProperty(p) {
+  $('propName').textContent = p.name;
+  const where = [p.city, p.country].filter(Boolean).join(', ');
+  $('propWhere').textContent = where
+    + (p.checkin_time ? ` · Check-in from ${p.checkin_time}` : '');
+  document.title = 'Book your stay · ' + p.name;
+  paintBranding(p.branding || {});
+}
+
+/** Make the page look like the hotel rather than like the platform.
+ *
+ *  Everything here is set as a property or as textContent, never by building
+ *  markup: this is the one part of the page fed entirely by values a tenant
+ *  typed, and the room list next door already learned to run every such
+ *  string through esc().
+ *
+ *  The colour is trusted only as far as the server validated it -- six hex
+ *  digits, checked again by a database constraint, and paired with a text
+ *  colour the server computed for contrast. The page never picks the ink
+ *  itself, because "white on the brand colour" is the assumption that makes
+ *  a pale-gold button invisible.
+ */
+function paintBranding(b) {
+  state.brand = b;
+  const root = document.documentElement;
+  if (b.brand_color) {
+    root.style.setProperty('--brand', b.brand_color);
+    root.style.setProperty('--brand-dark', shade(b.brand_color, 0.82));
+    root.style.setProperty('--brand-ink', b.ink_on_brand || '#fff');
+  }
+  const logo = $('propLogo');
+  if (b.logo_url) {
+    logo.src = b.logo_url;
+    logo.alt = '';           // decorative: the name is right beside it
+    logo.hidden = false;
+  } else {
+    logo.hidden = true;
+  }
+  const tagline = $('propTagline');
+  if (b.tagline) {
+    tagline.textContent = b.tagline;
+    tagline.hidden = false;
+  } else {
+    tagline.hidden = true;
+  }
+}
+
+/** A darker shade of a hex colour, for the hover state.
+ *
+ *  Multiplying each channel keeps the hue, which a fixed darker colour would
+ *  not -- a maroon hotel hovering to the platform's teal would look broken.
+ */
+function shade(hex, factor) {
+  const n = parseInt(hex.slice(1), 16);
+  const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+    .map((v) => Math.max(0, Math.min(255, Math.round(v * factor))));
+  return '#' + ch.map((v) => v.toString(16).padStart(2, '0')).join('');
+}
+
+function paintRooms(data) {
+  const nights = data.nights;
+  $('roomsHead').textContent =
+    `${nights} night${nights > 1 ? 's' : ''} · ${fmtDate(data.arrival)} to ${fmtDate(data.departure)}`;
+  const list = $('roomList');
+  // Only what can actually be sold. A room type with nothing left is not an
+  // offer, and showing it greyed out just invites a click that fails.
+  const sellable = (data.room_types || []).filter((r) => r.available > 0);
+  if (!sellable.length) {
+    list.innerHTML = '<p class="note info">Nothing is available for those '
+      + 'dates. Please try a different stay.</p>';
+    return;
+  }
+  list.innerHTML = sellable.map((r, i) => `
+    <div class="room">
+      ${r.photos && r.photos.length
+        ? `<img src="${esc(r.photos[0].url)}" alt="${esc(r.name)}" loading="lazy">`
+        : '<div class="room-noimg" style="width:116px;height:88px;border-radius:10px;background:#f1f5f9"></div>'}
+      <div class="grow">
+        <h3>${esc(r.name)}</h3>
+        <p class="amen">${esc([
+          r.bed_setup, r.max_occupancy ? `Sleeps ${r.max_occupancy}` : '',
+          ...(r.amenities || []).slice(0, 3),
+        ].filter(Boolean).join(' · '))}</p>
+        <button data-pick="${i}">Select</button>
+      </div>
+      <div class="price">
+        <b>${money(r.total, data.property.currency)}</b>
+        <span>${money(r.nightly_from, data.property.currency)} / night</span>
+      </div>
+    </div>`).join('');
+  list.querySelectorAll('[data-pick]').forEach((b) => {
+    b.addEventListener('click', () => pick(sellable[+b.dataset.pick]));
+  });
+}
+
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
+  (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmtDate = (s) => new Date(s + 'T00:00:00').toLocaleDateString('en-IN',
+  { day: 'numeric', month: 'short' });
+
+// --- 3. guest --------------------------------------------------------------
+
+function pick(room) {
+  state.room = room;
+  $('pickSummary').innerHTML =
+    `<b>${esc(room.name)}</b> · ${state.nights} night${state.nights > 1 ? 's' : ''}`
+    + ` · ${money(room.total, state.prop.currency)}`;
+  err('guestErr', '');
+  show('guest');
+}
+
+async function hold() {
+  err('guestErr', '');
+  const name = $('gName').value.trim();
+  const email = $('gEmail').value.trim();
+  const phone = $('gPhone').value.trim();
+  if (name.length < 2) return err('guestErr', 'Please enter your full name.');
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    return err('guestErr', 'Please enter a valid email address — your confirmation goes there.');
+  }
+  if (phone.replace(/\D/g, '').length < 5) {
+    return err('guestErr', 'Please enter a phone number the property can reach you on.');
+  }
+
+  busy($('holdBtn'), true, 'Holding…');
+  try {
+    const held = await call(`${API}/book`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        arrival: $('arrival').value,
+        departure: $('departure').value,
+        room_type_code: state.room.code,
+        adults: +$('adults').value,
+        children: +$('children').value,
+        guest: { full_name: name, email, phone },
+        special_requests: $('gReq').value.trim() || null,
+      }),
+    });
+    state.reservationId = held.reservation_id;
+    // Handed over once and never again. Kept only in memory: a reload loses
+    // it, which is the correct trade for not leaving a payment capability in
+    // somebody's browser storage.
+    state.paymentToken = held.payment_token;
+    state.expiresAt = new Date(held.expires_at);
+    paintPay(held);
+    startCountdown();
+    show('pay');
+  } catch (e) {
+    err('guestErr', e.message);
+  } finally {
+    busy($('holdBtn'), false, 'Hold this room');
+  }
+}
+
+// --- 4. pay ----------------------------------------------------------------
+
+function paintPay(held) {
+  const cur = held.currency;
+  $('payLines').innerHTML = `
+    <div class="totals"><span>${esc(held.room_type)}</span><span>${esc(held.reservation_number)}</span></div>
+    <div class="totals"><span>${fmtDate(held.arrival)} → ${fmtDate(held.departure)}</span>
+      <span>${held.nights} night${held.nights > 1 ? 's' : ''}</span></div>
+    <div class="totals grand"><span>Total</span><span>${money(held.total, cur)}</span></div>`;
+}
+
+function startCountdown() {
+  clearInterval(state.timer);
+  const tick = () => {
+    const left = Math.max(0, state.expiresAt - Date.now());
+    if (left === 0) {
+      clearInterval(state.timer);
+      $('holdTimer').textContent =
+        'This hold has expired and the room has been released. Please search again.';
+      $('payBtn').disabled = true;
+      return;
+    }
+    const m = Math.floor(left / 60000), s = Math.floor(left % 60000 / 1000);
+    $('holdTimer').textContent =
+      `Your room is held for ${m}:${String(s).padStart(2, '0')} more.`;
+  };
+  tick();
+  state.timer = setInterval(tick, 1000);
+}
+
+async function pay() {
+  err('payErr', '');
+  busy($('payBtn'), true, 'Opening payment…');
+  try {
+    const order = await call(`${API}/pay`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        reservation_id: state.reservationId,
+        payment_token: state.paymentToken,
+      }),
+    });
+    state.order = order;
+
+    // An empty key means the property has no live gateway: the order is a
+    // stand-in and no money will move. Saying so beats opening a checkout that
+    // cannot work, and beats pretending the booking is done.
+    if (!order.key_id) {
+      clearInterval(state.timer);
+      // Not "Test mode" -- that phrase belongs to Razorpay, and a property
+      // using rzp_test_ keys IS in Razorpay's test mode while reaching this
+      // branch would mean something quite different: no gateway switched on
+      // at all.
+      finish('warn', 'Online payment unavailable',
+        'This property has not switched on online payments yet, so no payment '
+        + 'was taken and this booking is not confirmed. The property has your '
+        + 'details and can take payment directly. Your reference is '
+        + order.reservation_number + '.');
+      return;
+    }
+
+    await loadRazorpay();
+    openCheckout(order);
+  } catch (e) {
+    err('payErr', e.message);
+    busy($('payBtn'), false, 'Pay now');
+  }
+}
+
+function loadRazorpay() {
+  if (window.Razorpay) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    s.onload = resolve;
+    s.onerror = () => reject(new Error(
+      'The payment window could not be loaded. Please disable any ad blocker '
+      + 'and try again.'));
+    document.head.appendChild(s);
+  });
+}
+
+function openCheckout(order) {
+  const rzp = new window.Razorpay({
+    key: order.key_id,
+    order_id: order.order_id,
+    amount: Math.round(Number(order.amount) * 100),
+    currency: order.currency,
+    name: state.prop.name,
+    description: `${state.room.name} · ${state.nights} night(s)`,
+    prefill: {
+      name: $('gName').value.trim(),
+      email: $('gEmail').value.trim(),
+      contact: $('gPhone').value.trim(),
+    },
+    // The gateway's own window, in the hotel's colour. A guest who has
+    // just read the hotel's page should not hand over a card on one
+    // that suddenly belongs to somebody else.
+    theme: { color: (state.brand && state.brand.brand_color) || '#0f766e' },
+    // Fires when the guest finishes paying. It does NOT mean we have been
+    // told -- the signed webhook is the only thing that confirms a booking,
+    // so this starts watching for it rather than declaring success.
+    handler: () => {
+      clearInterval(state.timer);
+      show('done');
+      pollStatus();
+    },
+    modal: {
+      ondismiss: () => {
+        busy($('payBtn'), false, 'Pay now');
+        err('payErr', 'Payment was not completed. Your room is still held — '
+          + 'you can try again.');
+      },
+    },
+  });
+  rzp.on('payment.failed', (e) => {
+    busy($('payBtn'), false, 'Try again');
+    err('payErr', (e && e.error && e.error.description)
+      || 'That payment did not go through. Your room is still held.');
+  });
+  rzp.open();
+  busy($('payBtn'), false, 'Pay now');
+}
+
+// --- 5. confirming ---------------------------------------------------------
+
+/**
+ * Watch for the webhook to land.
+ *
+ * Backed off and bounded. A callback normally arrives within a second or two,
+ * but "normally" is not "always", and a page that polls forever is a page that
+ * hammers the API from every abandoned tab. After about a minute it stops and
+ * says something true: the money is taken and the property has the booking,
+ * even if this page never saw it flip.
+ */
+async function pollStatus() {
+  const delays = [1000, 1000, 1500, 2000, 2500, 3000, 4000, 5000, 6000, 8000, 10000, 15000];
+  for (const wait of delays) {
+    try {
+      const q = new URLSearchParams({ payment_token: state.paymentToken });
+      const s = await call(
+        `${API}/booking/${encodeURIComponent(state.reservationId)}?${q}`);
+      if (s.status === 'confirmed') {
+        return finish('good', 'Booking confirmed',
+          `We have emailed the details to ${$('gEmail').value.trim()}.`,
+          s.reservation_number);
+      }
+      if (s.paid) {
+        $('doneBody').textContent =
+          'Your payment went through. Confirming the room now…';
+      }
+    } catch {
+      // A failed poll is not a failed booking. Keep waiting; the fallback
+      // below is what the guest sees if it never resolves.
+    }
+    await new Promise((r) => setTimeout(r, wait));
+  }
+  finish('warn', 'Payment received',
+    'Your payment went through, but we are still confirming the room. The '
+    + 'property has your booking and will email you shortly. Please do not pay '
+    + 'again.', state.order && state.order.reservation_number);
+}
+
+function finish(kind, head, body, ref) {
+  show('done');
+  $('doneIcon').textContent = kind === 'good' ? '✅' : kind === 'warn' ? '⚠️' : 'ℹ️';
+  $('doneHead').textContent = head;
+  $('doneBody').textContent = body;
+  const box = $('doneRef');
+  box.className = 'note ' + (kind === 'good' ? 'good' : 'warn');
+  box.classList.toggle('hide', !ref);
+  if (ref) box.innerHTML = 'Your reference: <b>' + esc(ref) + '</b>';
+}
+
+// --- boot ------------------------------------------------------------------
+
+async function boot() {
+  if (!CODE || !/^[A-Za-z0-9-]{3,40}$/.test(CODE)) {
+    $('fatal').textContent = 'This booking link is not valid.';
+    $('fatal').classList.remove('hide');
+    $('stepSearch').classList.add('hide');
+    return;
+  }
+  initDates();
+
+  // Who this page belongs to, before the guest has chosen anything. Branding
+  // that only arrives after a search is branding the guest sees second, on
+  // the screen where it matters least -- so the hotel's name, line and colour
+  // are fetched on load and painted before the form is touched.
+  //
+  // A failure here is not fatal: the page still works in the platform's own
+  // colours, and the search that follows will paint it properly. Refusing to
+  // show a booking form because a logo could not be fetched would be the
+  // wrong trade by a distance.
+  call(API).then(paintProperty).catch(() => {});
+
+  $('searchBtn').addEventListener('click', search);
+  $('holdBtn').addEventListener('click', hold);
+  $('payBtn').addEventListener('click', pay);
+  document.querySelectorAll('[data-back]').forEach((b) =>
+    b.addEventListener('click', () => show(b.dataset.back)));
+
+  // Warn before losing a live hold. Browsers show their own wording; the only
+  // thing that matters is that the prompt happens at all.
+  window.addEventListener('beforeunload', (e) => {
+    if (state.reservationId && !$('stepPay').classList.contains('hide')) {
+      e.preventDefault(); e.returnValue = '';
+    }
+  });
+}
+
+boot();
+</script>
+</body>
+</html>

@@ -1,0 +1,248 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: Inter, system-ui, sans-serif;
+
+  /* The whole interface, one notch down.
+     ----------------------------------------------------------------------
+     Reported twice as "everything looks zoomed in", and it was: at 150%
+     Windows display scaling a 1920 screen gives the app ~1277 CSS px, so a
+     16px base and a 32px page title render at 24px and 48px of glass. The
+     browser's own zoom was already at 100% — there was nothing left for the
+     user to turn down.
+
+     Tailwind sizes padding, gaps, widths and radii in rem, so moving the root
+     size moves the entire system in proportion rather than only the text.
+     15px is a 6.25% reduction: enough to buy back roughly 85px of width on a
+     scaled screen and a visible amount of vertical room, without shrinking
+     14px body copy below the 13.1px where it stops being comfortable to read
+     all day. A second notch to 14px was tried and crossed that line. */
+  font-size: 15px;
+
+  /* Packed, not cramped.
+     Inter is drawn for -0.011em at text sizes and reads loose without it;
+     large type wants more negative tracking than small, which is why this is
+     not one number everywhere. The brief asked for roughly -1px — that is
+     about right at a 32px title and far too tight at 14px, where it would
+     start closing up the counters, so it is expressed relative to size and
+     applied per step in the scale rather than globally. */
+  letter-spacing: -0.011em;
+}
+
+/* The app shell fills the viewport and scrolls inside itself, so the page
+   must not scroll as well. Nothing pinned html to the viewport, so the
+   document grew a phantom scrollbar — a second bar on the right, next to the
+   content's own, that scrolled 221px into empty space. It showed up at any
+   browser zoom other than 100%, because `100vh` resolves to a fraction
+   (661.667px at 120%) while the document rounds to a whole pixel.
+
+   Pinning all three to 100% and hiding their overflow leaves exactly one
+   scrollbar: the one on the content the mouse is over. */
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  /* Must match `canvas` in tailwind.config.js. Painted here as well so the
+     area behind the app shell — visible for a moment before React mounts, and
+     under an overscroll bounce — is the page colour rather than white. */
+  margin: 0;
+  background-color: #fcfdfe;
+}
+
+/* Typed text is slate, like every other word in the application.
+   Not one of the thirty-three inputs in this app sets a text colour, so all
+   of them fell through to the user agent's pure black -- against headings at
+   slate-800, labels at slate-600 and body copy at slate-500. The difference
+   is small on one field and obvious on a form: the value a person typed is
+   the darkest thing on the screen, darker than the heading above it.
+
+   Set once here rather than on every field, because the next input somebody
+   adds should be right without them having to know. */
+input,
+textarea,
+select {
+  color: #1e293b; /* slate-800 */
+}
+input::placeholder,
+textarea::placeholder {
+  color: #94a3b8; /* slate-400 */
+}
+
+/* ------------------------------------------------------- keyboard focus ---
+ * Eight files out of a hundred and thirteen styled a focus state, and
+ * seventy-six set `outline-none`, which switches off the browser's. Tab
+ * through this application and, for most of it, nothing moves: the focus is
+ * somewhere, and the screen will not say where. A front desk works the
+ * keyboard all day, so that is not a small omission.
+ *
+ * Set once here rather than on every control, for the same reason the input
+ * colour above is: the next button somebody writes should be right without
+ * them having to remember.
+ *
+ * Three decisions make it survive the code that already exists.
+ *
+ * Plain element selectors, not `:where()`. `:where()` has no specificity and
+ * lost to the `.outline-none` on those seventy-six files. `button:focus-visible`
+ * scores one class and one element, which beats `.outline-none` — and still
+ * loses to a component's own `focus-visible:ring-*`, which is two classes. So
+ * the order comes out right on its own: a component that has thought about its
+ * focus state wins, and everything else gets this.
+ *
+ * `outline-offset: -2px`, so the ring is drawn *inside* the element. The first
+ * version put it outside, and on the sidebar — where a nav row runs the full
+ * width of the bar — the left and right sides of the ring fell outside the
+ * sidebar and were clipped. What was left read as two horizontal rules above
+ * and below the row: it looked like a divider, not a focus state. Drawn
+ * inside, it cannot be clipped by anything.
+ *
+ * `:focus-visible`, not `:focus`: the ring appears for the keyboard and stays
+ * out of the way of the mouse, which is what makes it acceptable to put on
+ * every control in the application at once.
+ */
+button:focus-visible,
+a[href]:focus-visible,
+summary:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[role='button']:focus-visible,
+[role='menuitem']:focus-visible,
+[role='tab']:focus-visible,
+[tabindex]:not([tabindex='-1']):focus-visible {
+  outline: 2px solid #007a85;
+  outline-offset: -2px;
+}
+
+/* The sidebar is dark, and brand teal on that navy is the one place this ring
+   goes quiet. White is the only colour that reads on it, and it is already the
+   colour of the text there. */
+.bg-brand-sidebar a:focus-visible,
+.bg-brand-sidebar button:focus-visible,
+.bg-brand-sidebar [tabindex]:not([tabindex='-1']):focus-visible {
+  outline-color: #ffffff;
+}
+
+/* Someone tabbing into a long table or a scrolling panel should not have the
+   focused row appear hard against the top edge. */
+:where(button, a[href], input, select, textarea, [tabindex]) {
+  scroll-margin: 0.75rem;
+}
+
+/* Slim scrollbars.
+   The sidebar menu and the main content both scroll independently (the page
+   itself never does). On short viewports the default OS scrollbar is a heavy
+   vertical band; these keep it present and usable but visually quiet. */
+.scroll-slim {
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.45) transparent;
+}
+.scroll-slim::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scroll-slim::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-slim::-webkit-scrollbar-thumb {
+  background-color: rgba(148, 163, 184, 0.45);
+  border-radius: 9999px;
+}
+.scroll-slim::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(100, 116, 139, 0.65);
+}
+
+/* On the dark sidebar the same thumb needs to read against navy, not white. */
+.scroll-slim-dark {
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+}
+.scroll-slim-dark::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.28);
+}
+.scroll-slim-dark::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.45);
+}
+
+/* ---------------------------------------------------------------- print ---
+ * A night-audit report is a document people keep: printed for the morning
+ * handover, or saved as PDF against a discrepancy months later. Printing the
+ * page around it would waste most of a sheet on the sidebar and the screen it
+ * was opened over.
+ *
+ * The report renders through a portal, so it is a sibling of #root rather than
+ * inside it — which is what makes "hide everything else" a single rule instead
+ * of a cascade of overrides.
+ */
+@media print {
+  /* Landscape: the charge and checkout tables carry a dozen columns each. */
+  @page { size: A4 landscape; margin: 10mm; }
+
+  /* The app shell pins html and body to the viewport with overflow hidden so
+     the sidebar and main pane scroll independently. On screen that is right;
+     on paper it clips the whole document to a single page and silently drops
+     everything past the fold — which is exactly what it did. */
+  html, body {
+    height: auto !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+
+  body:has([data-print-sheet]) > #root { display: none !important; }
+
+  [data-print-sheet] {
+    position: static !important;
+    display: block !important;
+    background: none !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+  [data-print-sheet] .print-sheet {
+    max-width: none !important;
+    max-height: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    overflow: visible !important;
+  }
+
+  /* Browsers drop background colours when printing unless asked. The teal
+     section bands and table heads are how this document is read, so without
+     this the printed copy is a wall of undifferentiated text. */
+  [data-print-sheet],
+  [data-print-sheet] * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Paging: repeat a table's head on each page it spans, and never split a
+     row or leave a section title stranded at the foot of a page. */
+  [data-print-sheet] thead { display: table-header-group; }
+  [data-print-sheet] tr { break-inside: avoid; }
+  [data-print-sheet] .print-keep { break-inside: avoid; break-after: avoid; }
+  [data-print-sheet] .print-section { break-inside: avoid-page; }
+
+  /* Controls are not part of the document. */
+  [data-print-sheet] .print-hide { display: none !important; }
+}
+
+
+/* The platform console's nav groups expand in place. Without this the rows
+   below them jump, which reads as the page glitching rather than the menu
+   opening. Guarded by motion-safe at the call site. */
+@keyframes submenu {
+  from { opacity: 0; transform: translateY(-3px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Result toasts. Same treatment as the submenu above: a short move so the
+   toast reads as arriving rather than blinking into existence, guarded by
+   motion-safe at the call site. */
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

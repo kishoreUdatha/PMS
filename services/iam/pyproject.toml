@@ -1,0 +1,31 @@
+[project]
+name = "chirala-iam"
+version = "0.1.0"
+description = "IAM service: organizations, properties, users, memberships, roles, permissions."
+requires-python = ">=3.12"
+dependencies = [
+    "chirala-common",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy>=2.0.30",
+    "psycopg[binary]>=3.2",
+    "alembic>=1.13",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    # A property logo goes to object storage; the upload arrives as multipart.
+    "boto3>=1.34",
+    "python-multipart>=0.0.9",
+    # Going live asks booking-core to set the property up at the
+    # channel manager.
+    "httpx>=0.27",
+]
+
+[tool.uv.sources]
+chirala-common = { path = "../../libs/common", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["iam_service"]

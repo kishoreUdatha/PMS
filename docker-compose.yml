@@ -1,0 +1,285 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-pms}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pms_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-chirala_pms}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pms} -d ${POSTGRES_DB:-chirala_pms}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./infra/keycloak:/opt/keycloak/data/import:ro
+
+  iam:
+    build:
+      context: .
+      dockerfile: services/iam/Dockerfile
+    env_file: .env
+    environment:
+      # Row-level security (schema §12): the app connects as a login that
+      # owns nothing and cannot bypass RLS; migrations and grants run as the
+      # owner, before the app starts.
+      IAM_DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-pms_app}:${APP_DB_PASSWORD:-pms_app_dev_password}@postgres:5432/${POSTGRES_DB:-chirala_pms}
+      IAM_MIGRATION_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-pms}:${POSTGRES_PASSWORD:-pms_dev_password}@postgres:5432/${POSTGRES_DB:-chirala_pms}
+      APP_DB_USER: ${APP_DB_USER:-pms_app}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-pms_app_dev_password}
+      REDIS_URL: redis://redis:6379/0
+      NATS_URL: nats://nats:4222
+      # A property logo is an image, and images belong in object storage the
+      # same way guest ID scans do — only the key goes in the database.
+      MINIO_ENDPOINT: minio:9000
+      # Signed against the address the *browser* uses, which is now this
+      # The origin a BROWSER fetches media from. The gateway proxies the
+      # object store at the bucket root and forwards the Host header, because
+      # SigV4 signs the host and the path -- so this must be the origin the
+      # URL was signed for, or MinIO answers 403.
+      #
+      # Settable on its own, and defaulting to APP_BASE_URL rather than being
+      # APP_BASE_URL. In production they are the same origin and the default
+      # is right. In development they are not: the app is served by Vite and
+      # media by the gateway on another port, and one variable cannot be both.
+      # Tying them together meant a dead APP_BASE_URL broke every room photo
+      # on every booking page.
+      MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-${APP_BASE_URL:-http://localhost:8111}}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-chirala-pms}
+      # A property going live is set up at the channel manager by the service
+      # that owns those mappings.
+      BOOKING_URL: http://booking-core:8002
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+
+  booking-core:
+    build:
+      context: .
+      dockerfile: services/booking-core/Dockerfile
+    env_file: .env
+    environment:
+      # The gateway is the only hop, so its address is the only
+      # X-Forwarded-For worth believing. Docker resolves the name.
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-gateway}
+      # A guest paying for their own hold opens the intent through finance,
+      # which is the only service holding the tenant's gateway secrets.
+      FINANCE_URL: http://finance:8003
+      # Channel manager. Staging unless told otherwise.
+      CHANNEX_API_URL: ${CHANNEX_API_URL:-https://staging.channex.io/api/v1}
+      CHANNEX_API_KEY: ${CHANNEX_API_KEY:-}
+      CHANNEX_WEBHOOK_SECRET: ${CHANNEX_WEBHOOK_SECRET:-}
+      # Row-level security (schema §12): the app connects as a login that
+      # owns nothing and cannot bypass RLS; migrations and grants run as the
+      # owner, before the app starts.
+      BOOKING_DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-pms_app}:${APP_DB_PASSWORD:-pms_app_dev_password}@postgres:5432/${POSTGRES_DB:-chirala_pms}
+      BOOKING_MIGRATION_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-pms}:${POSTGRES_PASSWORD:-pms_dev_password}@postgres:5432/${POSTGRES_DB:-chirala_pms}
+      APP_DB_USER: ${APP_DB_USER:-pms_app}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-pms_app_dev_password}
+      REDIS_URL: redis://redis:6379/0
+      NATS_URL: nats://nats:4222
+      # The outbox relay lives here because booking-core owns
+      # integration.outbox_events. One deployment publishes.
+      OUTBOX_RELAY_ENABLED: "true"
+      # Uploads go over the compose network; presigned URLs must be signed
+      # against the address the *browser* uses (the published host port).
+      MINIO_ENDPOINT: minio:9000
+      # Signed against the address the *browser* uses, which is now this
+      # The origin a BROWSER fetches media from. The gateway proxies the
+      # object store at the bucket root and forwards the Host header, because
+      # SigV4 signs the host and the path -- so this must be the origin the
+      # URL was signed for, or MinIO answers 403.
+      #
+      # Settable on its own, and defaulting to APP_BASE_URL rather than being
+      # APP_BASE_URL. In production they are the same origin and the default
+      # is right. In development they are not: the app is served by Vite and
+      # media by the gateway on another port, and one variable cannot be both.
+      # Tying them together meant a dead APP_BASE_URL broke every room photo
+      # on every booking page.
+      MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-${APP_BASE_URL:-http://localhost:8111}}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-chirala-pms}
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    env_file: .env
+    environment:
+      IAM_URL: http://iam:8001
+      BOOKING_URL: http://booking-core:8002
+      FINANCE_URL: http://finance:8003
+      # Media is streamed from here so guests load photos from one origin.
+      MINIO_URL: http://minio:9000
+      MINIO_BUCKET: ${MINIO_BUCKET:-chirala-pms}
+    ports:
+      - "8000:8000"
+    depends_on:
+      - iam
+      - booking-core
+      - finance
+
+  finance:
+    build:
+      context: .
+      dockerfile: services/finance/Dockerfile
+    env_file: .env
+    environment:
+      # The webhook confirms a booking over HTTP rather than
+      # reimplementing inventory logic it does not own.
+      BOOKING_URL: http://booking-core:8002
+      # Row-level security (schema §12): the app connects as a login that
+      # owns nothing and cannot bypass RLS; migrations and grants run as the
+      # owner, before the app starts.
+      FINANCE_DATABASE_URL: postgresql+psycopg://${APP_DB_USER:-pms_app}:${APP_DB_PASSWORD:-pms_app_dev_password}@postgres:5432/${POSTGRES_DB:-chirala_pms}
+      FINANCE_MIGRATION_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-pms}:${POSTGRES_PASSWORD:-pms_dev_password}@postgres:5432/${POSTGRES_DB:-chirala_pms}
+      APP_DB_USER: ${APP_DB_USER:-pms_app}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-pms_app_dev_password}
+      REDIS_URL: redis://redis:6379/0
+      NATS_URL: nats://nats:4222
+      # Screen 114 attaches the bill behind a folio adjustment, so finance now
+      # reaches the object store too. Uploads go over the compose network;
+      # presigned URLs must be signed against the address the browser uses.
+      MINIO_ENDPOINT: minio:9000
+      # Signed against the address the *browser* uses, which is now this
+      # The origin a BROWSER fetches media from. The gateway proxies the
+      # object store at the bucket root and forwards the Host header, because
+      # SigV4 signs the host and the path -- so this must be the origin the
+      # URL was signed for, or MinIO answers 403.
+      #
+      # Settable on its own, and defaulting to APP_BASE_URL rather than being
+      # APP_BASE_URL. In production they are the same origin and the default
+      # is right. In development they are not: the app is served by Vite and
+      # media by the gateway on another port, and one variable cannot be both.
+      # Tying them together meant a dead APP_BASE_URL broke every room photo
+      # on every booking page.
+      MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-${APP_BASE_URL:-http://localhost:8111}}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-chirala-pms}
+    ports:
+      - "8003:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+
+  # A public HTTPS address for the gateway, for when something on the internet
+  # has to reach in -- which in practice means a payment gateway's webhook.
+  #
+  # Razorpay signs a callback and POSTs it to whatever URL the tenant saved in
+  # their dashboard. That URL has to resolve from Cloudflare's network, so a
+  # LAN address or localhost simply never receives anything, and the symptom is
+  # a guest who paid and a booking that stays held.
+  #
+  # A *quick* tunnel: no Cloudflare account, no domain, no credentials to keep.
+  # The trade is that the hostname is random and changes every restart, so it
+  # is for development. A deployment that needs a stable callback URL wants a
+  # named tunnel or an ordinary public host.
+  #
+  # Behind a profile so it never starts by accident -- it publishes this stack
+  # to the internet, which should be something somebody typed:
+  #     docker compose --profile tunnel up -d cloudflared
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
+    command: ["tunnel", "--url", "http://gateway:8000",
+              "--metrics", "0.0.0.0:2000", "--no-autoupdate"]
+    depends_on:
+      - gateway
+
+  # The same job as `cloudflared` above, but on a hostname you own and that
+  # survives a restart.
+  #
+  # Worth the setup only because of what a webhook URL is: a value pasted into
+  # a payment gateway's dashboard by every tenant. A quick tunnel's hostname
+  # changes each time the container restarts, which means every tenant
+  # re-pasting theirs and payments failing silently until they do. A named
+  # tunnel's does not change, so the URL can be handed out and left alone.
+  #
+  # Authenticated by a credentials file rather than a Zero Trust token, which
+  # is what makes this reachable without a paid plan: `cloudflared tunnel
+  # login` + `create` only need a domain on the account, and never touch Zero
+  # Trust onboarding. See infra/cloudflared/README.md for the four commands.
+  #
+  # The whole directory is mounted because the config names the credentials
+  # file beside it; only config.yml is in version control, the JSON next to it
+  # is a secret and is ignored.
+  #
+  #     docker compose --profile named-tunnel up -d cloudflared-named
+  cloudflared-named:
+    image: cloudflare/cloudflared:latest
+    profiles: ["named-tunnel"]
+    command: ["tunnel", "--no-autoupdate",
+              "--config", "/etc/cloudflared/config.yml", "run"]
+    volumes:
+      - ./infra/cloudflared:/etc/cloudflared:ro
+    depends_on:
+      - gateway
+
+volumes:
+  pgdata:
+  miniodata:

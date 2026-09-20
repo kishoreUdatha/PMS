@@ -1,0 +1,35 @@
+# Cloudflare named tunnel: a stable public HTTPS address for the gateway.
+#
+# Only reason this exists: a payment gateway has to be able to reach us. Razorpay
+# POSTs a signed callback to whatever URL each tenant saved in their dashboard,
+# and that URL has to resolve from the public internet. A quick tunnel would do
+# it, except its hostname changes on every restart -- which would mean every
+# tenant re-pasting their webhook URL, and payments failing silently until they
+# did. This one does not change.
+#
+# ---------------------------------------------------------------------------
+# FILL IN THE TWO PLACEHOLDERS BELOW. See README.md in this directory for the
+# four commands that produce them.
+# ---------------------------------------------------------------------------
+
+# The tunnel's UUID, printed by `cloudflared tunnel create`.
+tunnel: REPLACE_WITH_TUNNEL_UUID
+
+# The credentials file that same command wrote. It is named <UUID>.json and
+# lives in ~/.cloudflared/ -- copy it into this directory, and it is mounted
+# read-only at /etc/cloudflared inside the container.
+#
+# It is a secret: this file alone is enough to run the tunnel, so .gitignore
+# keeps *.json in this directory out of version control.
+credentials-file: /etc/cloudflared/REPLACE_WITH_TUNNEL_UUID.json
+
+ingress:
+  # `gateway:8000`, not `localhost:8111`. cloudflared runs inside the compose
+  # network alongside the gateway, so it uses the service name and the
+  # container's own port -- the published host port does not exist in here.
+  - hostname: REPLACE_WITH_YOUR_HOSTNAME
+    service: http://gateway:8000
+
+  # Required last rule: anything not matched above is refused rather than
+  # quietly forwarded somewhere. A tunnel without this will not start.
+  - service: http_status:404

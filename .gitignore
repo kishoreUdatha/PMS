@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.log
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+build/
+
+# Local data volumes
+/infra/data/
+
+# Cloudflare tunnel credentials. The tunnel's config.yml is
+# committed; the credentials JSON beside it is a secret.
+infra/cloudflared/*.json
+
+# Database dumps. These are real guest and payment records -- 89 COPY/INSERT
+# blocks of live data in the one committed here by accident would be a breach,
+# not a mistake. They stay on the machine that made them.
+backups/
+
+# QA run artifacts, regenerated every run.
+outputs/
+
+# The 120 design mockups: ~162 MB of PNGs, and reference material rather than
+# code. Git cannot delta-compress them, so committing them would put 162 MB in
+# every clone of this repository for the rest of its life. Keep them where
+# they are, or add them to a separate repo with Git LFS if they need versions.
+Chirala_Bay_Resort_PMS_120_Screens/
+
+# `frontend/nul`: 93 KB of Tailwind output written by a `-o nul` redirect that
+# Git Bash took as a filename instead of the null device. Git cannot index a
+# file named after a reserved Windows device, so it blocks `git add` outright.
+# Ignored rather than deleted -- it is junk, but it is not mine to remove.
+nul

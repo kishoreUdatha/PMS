@@ -1,0 +1,33 @@
+# Local host-port overrides for this machine (many default ports are taken by
+# other projects). !override REPLACES the base port list instead of merging.
+# Only the host side changes; container ports and service URLs are unaffected.
+services:
+  postgres:
+    ports: !override
+      - "5544:5432"
+  redis:
+    ports: !override
+      - "6399:6379"
+  nats:
+    ports: !override
+      - "4223:4222"
+      - "8232:8222"
+  minio:
+    ports: !override
+      - "9010:9000"
+      - "9011:9001"
+  keycloak:
+    ports: !override
+      - "8090:8080"
+  iam:
+    ports: !override
+      - "8101:8001"
+  booking-core:
+    ports: !override
+      - "8102:8002"
+  finance:
+    ports: !override
+      - "8103:8003"
+  gateway:
+    ports: !override
+      - "8111:8000"

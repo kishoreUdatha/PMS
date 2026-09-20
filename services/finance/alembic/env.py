@@ -1,0 +1,68 @@
+"""Alembic environment for the finance service."""
+
+from __future__ import annotations
+
+from logging.config import fileConfig
+
+from alembic import context
+from chirala_common.models import Base
+from sqlalchemy import engine_from_config, pool
+
+from finance_service.settings import settings
+
+config = context.config
+# Migrations run as the schema owner when one is configured; the app
+# connects as the runtime login.
+config.set_main_option(
+    "sqlalchemy.url",
+    settings.finance_migration_database_url or settings.finance_database_url,
+)
+
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
+
+target_metadata = Base.metadata
+INCLUDE_SCHEMAS = {"finance"}
+
+
+def include_object(obj, name, type_, reflected, compare_to):  # noqa: ANN001
+    if type_ == "table" and obj.schema not in INCLUDE_SCHEMAS:
+        return False
+    return True
+
+
+def run_migrations_offline() -> None:
+    context.configure(
+        url=config.get_main_option("sqlalchemy.url"),
+        target_metadata=target_metadata,
+        literal_binds=True,
+        include_schemas=True,
+        include_object=include_object,
+        version_table_schema="finance",
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+def run_migrations_online() -> None:
+    connectable = engine_from_config(
+        config.get_section(config.config_ini_section, {}),
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+    )
+    with connectable.connect() as connection:
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            include_schemas=True,
+            include_object=include_object,
+            version_table_schema="finance",
+        )
+        with context.begin_transaction():
+            context.run_migrations()
+
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()

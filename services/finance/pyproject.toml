@@ -1,0 +1,34 @@
+[project]
+name = "chirala-finance"
+version = "0.1.0"
+description = "Finance service: folios, charges, payments, refunds, invoices, night audit."
+requires-python = ">=3.12"
+dependencies = [
+    "chirala-common",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy>=2.0.30",
+    "psycopg[binary]>=3.2",
+    "alembic>=1.13",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    # Screen 114 attaches the bill or void slip behind an adjustment,
+    # which puts finance on the same object store the other services use.
+    "boto3>=1.34",
+    # FastAPI needs this to accept the upload form.
+    "python-multipart>=0.0.9",
+    # The guest folio / tax invoice is a document a guest is handed and a
+    # property files, so it is rendered server-side to a fixed layout rather
+    # than left to whatever a browser's print dialog produces.
+    "reportlab>=4.2",
+]
+
+[tool.uv.sources]
+chirala-common = { path = "../../libs/common", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["finance_service"]
