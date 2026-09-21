@@ -27,8 +27,10 @@ import {
 } from 'lucide-react'
 import {
   listProperties, searchGuests, getAvailableRooms, assignRoomToUnit, listCommercialAccounts, getAvailabilityByRoomType, BOOKING_SOURCES, type RoomTypeAvailability, type BookingSource, type CandidateRoom, createGuest, createHold, confirmReservation, listBookingAttributes, settleReservation, getTaxQuote, listMealPlans, getPropertySettings, listAccountRatePlans, ratePlanPrice, getCompReasons, markComplimentary,
-  blocksForDates,
+  blocksForDates, saveFormC,
 } from '../api'
+import FormCFields from '../components/FormCFields'
+import { needsFormC, type FormCValues } from '../lib/formC'
 import { Crumbs } from '../components/Crumbs'
 import { useActivePropertyId } from '../hooks/useProperty'
 
@@ -113,6 +115,14 @@ export default function NewReservation() {
   // nothing has ever filled them at booking, which is the one moment the
   // guest is on the phone to be asked.
   const [addr, setAddr] = useState('')
+  // Nationality, not the address country: an Indian citizen living in Dubai
+  // has a foreign address and needs no Form C, while a Briton with an
+  // address in Chennai does. Keying the obligation off `country` gets both
+  // of those backwards.
+  const [nationality, setNationality] = useState('')
+  const [formC, setFormC] = useState<FormCValues>({})
+  const setFc = (k: keyof FormCValues, v: string) =>
+    setFormC((f) => ({ ...f, [k]: v }))
   const [city, setCity] = useState('')
   const [stateName, setStateName] = useState('')
   const [zip, setZip] = useState('')
@@ -475,6 +485,7 @@ export default function NewReservation() {
           full_name: guestName.trim(),
           phone: guestPhone || undefined,
           email: guestEmail || undefined,
+          nationality: nationality.trim() || undefined,
           address_line: addr.trim() || undefined,
           city: city.trim() || undefined,
           state: stateName.trim() || undefined,
@@ -529,6 +540,29 @@ export default function NewReservation() {
       // guards — if a room went in the meantime this refuses, and the booking
       // still stands with the room left to assign later.
       const units = hold.reservation_unit_ids ?? [hold.reservation_unit_id]
+
+      // Only now: a Form C hangs off a STAY, and until the hold returns
+      // there is no reservation unit to hang it on. Saved against the first
+      // unit, which is the one the primary guest occupies -- a second
+      // foreign guest in a second room is their own arrival to report, and
+      // the register is where that is picked up.
+      if (needsFormC(nationality) && units[0]) {
+        try {
+          await saveFormC(units[0], propertyId, {
+            ...formC,
+            full_name: guestName.trim() || null,
+            nationality: nationality.trim() || null,
+            permanent_address: [addr, city, stateName, zip, country]
+              .map((x) => x.trim()).filter(Boolean).join(', ') || null,
+          })
+        } catch {
+          // The booking stands. A missing Form C is recoverable from the
+          // register; a booking lost to a compliance save is not.
+          setErrorMsg('The booking was created, but the Form C details were '
+            + 'not saved. Add them from the Form C register.')
+        }
+      }
+
       for (let i = 0; i < units.length && i < lines.length; i++) {
         if (!lines[i].roomId) continue
         try {
@@ -1220,7 +1254,21 @@ export default function NewReservation() {
                   <ListSelect value={country} onChange={setCountry} options={COUNTRIES}
                     placeholder="Select country" className={inputCls} />
                 </Field>
+                {/* Its own field, next to the address it is so easily
+                    confused with. Asked here because this is the moment the
+                    guest is on the phone -- and because it is what decides
+                    whether the property owes the Bureau of Immigration a
+                    Form C within 24 hours of their arrival. */}
+                <Field label="Nationality">
+                  <ListSelect value={nationality} onChange={setNationality}
+                    options={COUNTRIES} placeholder="Select nationality"
+                    className={inputCls} />
+                </Field>
               </div>
+
+              {needsFormC(nationality) && (
+                <FormCFields values={formC} onChange={setFc} idPrefix="nr" />
+              )}
               <div className="mt-5 flex justify-between">
                 <button onClick={() => setStep(0)} className="rounded-xl border border-slate-200 px-5 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
                   Back

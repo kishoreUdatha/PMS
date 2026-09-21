@@ -80,6 +80,10 @@ export const navItems: NavItem[] = [
   // block becomes reservations -- and because the rooms it is holding are
   // rooms the desk cannot sell, which is worth being able to see.
   { label: 'Group Blocks', path: '/reservations/group-blocks', icon: Users2 },
+  // Foreign guests reported to the Bureau of Immigration. Its own entry
+  // because the 24-hour clock starts at check-in and nobody goes looking
+  // for a legal deadline inside a submenu.
+  { label: 'Form C', path: '/reservations/form-c', icon: ShieldCheck },
   // One day by the hour, as opposed to Stayview's multi-day grid. Named for
   // the difference, because side by side the two otherwise read as one
   // screen.

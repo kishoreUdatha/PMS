@@ -47,6 +47,7 @@ import DepositSchedule from './pages/DepositSchedule'
 import Housekeeping from './pages/Housekeeping'
 import Cashiering from './pages/Cashiering'
 import DayBook from './pages/DayBook'
+import FormCRegister from './pages/FormCRegister'
 import FolioAdjustment from './pages/FolioAdjustment'
 import PaymentReversal from './pages/PaymentReversal'
 import NightAudit from './pages/NightAudit'
@@ -267,6 +268,10 @@ export default function App() {
             the drawer figures on that tab row describe till money and mean
             nothing beside a list that includes charges. */}
         <Route path="payments/daybook" element={<DayBook />} />
+        {/* Foreign guest reporting to the Bureau of Immigration. Under
+            reservations rather than finance: it is a front-desk duty that
+            starts at check-in and is measured in hours from it. */}
+        <Route path="reservations/form-c" element={<FormCRegister />} />
         <Route path="payments/folios/:folioId/adjust" element={<FolioAdjustment />} />
         <Route path="payments/:paymentId/reverse" element={<PaymentReversal />} />
         <Route path="night-audit" element={<NightAudit />} />

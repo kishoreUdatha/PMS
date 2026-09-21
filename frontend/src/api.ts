@@ -4956,6 +4956,54 @@ export async function createRoomMove(
   return data
 }
 
+/* ---------------- Extend Stay (in-house) ---------------- */
+/**
+ * Keeping a guest who is already in the house for longer.
+ *
+ * Separate from `modifyReservation`, which refuses in-house bookings because
+ * it releases the assigned room and re-picks it. This extends the room's
+ * calendar entry in place, so the guest stays where they are.
+ *
+ * `available` needs both halves: `unavailable_reason` is the room TYPE being
+ * sold out, `room_conflicts` is this guest's own room being taken while the
+ * type still has others free. The first means "no room to sell them", the
+ * second means "move them first" — different problems, different answers.
+ */
+export interface ExtendQuote {
+  in_house: boolean
+  blocked_reason: string | null
+  current_departure: string | null
+  new_departure: string
+  added_nights: number
+  rooms: number
+  nightly_rate: string
+  estimated_amount: string
+  available: boolean
+  unavailable_reason: string | null
+  room_conflicts: string[]
+}
+
+export async function getExtendQuote(
+  reservationId: string, propertyId: string, newDeparture: string,
+): Promise<ExtendQuote> {
+  const { data } = await api.post<ExtendQuote>(
+    `/booking/reservations/${reservationId}/extend-quote`,
+    { new_departure_date: newDeparture },
+    { params: { property_id: propertyId } },
+  )
+  return data
+}
+
+export async function extendStay(
+  reservationId: string, propertyId: string, body: Record<string, unknown>,
+): Promise<ChangeResult> {
+  const { data } = await api.post<ChangeResult>(
+    `/booking/reservations/${reservationId}/extend`, body,
+    { params: { property_id: propertyId } },
+  )
+  return data
+}
+
 /* ---------------- Modify or Cancel Reservation (screen 029) ---------------- */
 export interface StaySide {
   arrival_date: string
@@ -7674,4 +7722,119 @@ export function ratePlanPrice(plan: RatePlan, base: number): number {
     ? base * (1 + signed / 100)
     : base + signed
   return Math.max(0, Math.round(out * 100) / 100)
+}
+
+/* ---------------- Form C — foreign guest reporting (FRRO) ---------------- */
+/**
+ * Rule 14 of the Registration of Foreigners Rules 1992: a foreign guest's
+ * arrival is reported to the Bureau of Immigration within 24 hours.
+ *
+ * `nationality_state` is three-valued on purpose. `unknown` means nobody
+ * recorded a nationality — a data gap, not a missed filing — and it is kept
+ * out of the overdue count so the register does not cry wolf.
+ */
+export interface FormCRow {
+  reservation_unit_id: string
+  reservation_number: string | null
+  guest_name: string | null
+  nationality: string | null
+  nationality_state: 'foreign' | 'indian' | 'unknown'
+  room_code: string | null
+  arrival_date: string | null
+  departure_date: string | null
+  checked_in_at: string | null
+  status: 'pending' | 'filed' | 'exempt'
+  filed_at: string | null
+  acknowledgement_no: string | null
+  missing_count: number
+  hours_left: number | null
+}
+export interface FormCRegister {
+  rows: FormCRow[]
+  pending: number
+  overdue: number
+  filed: number
+  unknown: number
+}
+export interface FormCDetail {
+  reservation_unit_id: string
+  reservation_number: string | null
+  room_code: string | null
+  arrival_date: string | null
+  departure_date: string | null
+  status: string
+  filed_at: string | null
+  acknowledgement_no: string | null
+  required: boolean
+  missing: string[]
+  exists: boolean
+  full_name: string | null
+  sex: string | null
+  date_of_birth: string | null
+  nationality: string | null
+  passport_number: string | null
+  passport_issue_place: string | null
+  passport_issue_date: string | null
+  passport_expiry_date: string | null
+  visa_number: string | null
+  visa_type: string | null
+  visa_issue_place: string | null
+  visa_issue_date: string | null
+  visa_expiry_date: string | null
+  arrived_in_india_on: string | null
+  arrived_in_india_at: string | null
+  address_in_india: string | null
+  permanent_address: string | null
+  purpose_of_visit: string | null
+  next_destination: string | null
+  notes: string | null
+}
+
+export async function getFormCRegister(
+  propertyId: string, params: Record<string, string | undefined> = {},
+): Promise<FormCRegister> {
+  const { data } = await api.get<FormCRegister>('/booking/form-c/register',
+    { params: { property_id: propertyId, ...params } })
+  return data
+}
+export async function getFormC(
+  unitId: string, propertyId: string,
+): Promise<FormCDetail> {
+  const { data } = await api.get<FormCDetail>(
+    `/booking/reservation-units/${unitId}/form-c`,
+    { params: { property_id: propertyId } })
+  return data
+}
+export async function saveFormC(
+  unitId: string, propertyId: string, body: Record<string, unknown>,
+): Promise<FormCDetail> {
+  const { data } = await api.put<FormCDetail>(
+    `/booking/reservation-units/${unitId}/form-c`, body,
+    { params: { property_id: propertyId } })
+  return data
+}
+export async function fileFormC(
+  unitId: string, propertyId: string, body: Record<string, unknown>,
+): Promise<FormCDetail> {
+  const { data } = await api.post<FormCDetail>(
+    `/booking/reservation-units/${unitId}/form-c/file`, body,
+    { params: { property_id: propertyId } })
+  return data
+}
+
+/** Firm a block up, or let it go back to provisional.
+ *
+ * This is the switch that decides whether the rooms are off sale. Definite
+ * takes them; tentative hands them back. Bookings already picked up are
+ * untouched either way — a reservation does not become provisional because
+ * the block it came from did.
+ */
+export async function setBlockCommitment(
+  blockId: string, propertyId: string,
+  commitment: 'tentative' | 'definite',
+): Promise<GroupBlock> {
+  const { data } = await api.post<GroupBlock>(
+    `/booking/group-blocks/${blockId}/commitment`, { commitment },
+    { params: { property_id: propertyId } })
+  return data
 }

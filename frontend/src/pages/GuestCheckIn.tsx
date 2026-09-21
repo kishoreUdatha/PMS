@@ -12,6 +12,7 @@ import {
   listArrivals, getCheckInView, completeCheckIn, saveCheckInGuest,
   uploadGuestDocument,
   deleteGuestDocument, ID_TYPES,
+  getFormC, saveFormC, openRegistrationCard,
   type GuestDoc,
 } from '../api'
 import { Departures } from './GuestCheckOut'
@@ -24,6 +25,8 @@ import AssignRoomsPanel from '../components/AssignRoomsPanel'
 import { fmtDate } from '../lib/dates'
 import { Crumbs } from '../components/Crumbs'
 import { useActivePropertyId, usePropertyToday } from '../hooks/useProperty'
+import FormCFields from '../components/FormCFields'
+import { needsFormC, type FormCValues } from '../lib/formC'
 import { usePaymentMethods } from '../lib/paymentMethods'
 /**
  * Screen 005 — Guest Check-In.
@@ -240,7 +243,8 @@ export default function GuestCheckIn() {
   const propertyId = useActivePropertyId()
   const { methods } = usePaymentMethods(propertyId)
   const [error, setError] = useState('')
-  const [done, setDone] = useState<{ room: string; warnings: string[] } | null>(null)
+  const [done, setDone] = useState<
+    { room: string; warnings: string[]; deposit: number } | null>(null)
 
   const q = useQuery({
     queryKey: ['checkInView', unitId, propertyId],
@@ -261,6 +265,13 @@ export default function GuestCheckIn() {
     signature_captured: false, policies_accepted: false,
     welcome_sent: false, key_issued: false,
   })
+  // Form C is a separate record with its own table, so it gets its own
+  // state rather than being folded into the guest fields: it is saved to a
+  // different endpoint, and a foreign guest's visa is not a property of the
+  // guest row the way their phone number is.
+  const [formC, setFormC] = useState<FormCValues>({})
+  const setFc = (k: keyof FormCValues, v: string) =>
+    setFormC((f) => ({ ...f, [k]: v }))
 
   // The list arrives from the server, so the default cannot be chosen until
   // it does. Previously this file named the default itself — "UPI" — which is
@@ -287,13 +298,54 @@ export default function GuestCheckIn() {
       room_id: v.assigned_room_id ?? '',
       adults: v.adults, children: v.children,
     }))
-  }, [v])
+    // Whatever was already collected for this stay, so a half-filled form
+    // survives the clerk walking away and coming back.
+    getFormC(v.reservation_unit_id, propertyId)
+      .then((d) => setFormC({
+        passport_number: d.passport_number, visa_number: d.visa_number,
+        passport_issue_place: d.passport_issue_place,
+        passport_issue_date: d.passport_issue_date,
+        passport_expiry_date: d.passport_expiry_date,
+        visa_type: d.visa_type, visa_issue_place: d.visa_issue_place,
+        visa_issue_date: d.visa_issue_date,
+        visa_expiry_date: d.visa_expiry_date,
+        arrived_in_india_on: d.arrived_in_india_on,
+        arrived_in_india_at: d.arrived_in_india_at,
+        address_in_india: d.address_in_india,
+        next_destination: d.next_destination,
+      }))
+      // A missing Form C is the normal case, not an error worth a banner.
+      .catch(() => undefined)
+  }, [v, propertyId])
 
   const set = (k: string, val: unknown) => setForm((f) => ({ ...f, [k]: val }))
 
   function fail(e: unknown) {
     const er = e as { response?: { data?: { detail?: string } } }
     setError(er.response?.data?.detail ?? 'That did not work. Please try again.')
+  }
+
+  // Saved beside the guest, never instead of it. A failure here must not
+  // lose the address the clerk just typed, so it runs after the guest save
+  // has succeeded and reports separately -- and it is skipped entirely for
+  // a guest who is not a foreign national, so no empty row appears on the
+  // compliance register.
+  async function persistFormC() {
+    if (!needsFormC(form.nationality, form.id_type)) return
+    try {
+      await saveFormC(unitId, propertyId, {
+        ...formC,
+        full_name: form.full_name.trim() || null,
+        nationality: form.nationality || null,
+        permanent_address: [form.address_line, form.city, form.state,
+                            form.postal_code, form.country]
+          .filter(Boolean).join(', ') || null,
+      })
+    } catch (e) {
+      const er = e as { response?: { data?: { detail?: string } } }
+      setError(er.response?.data?.detail
+        ?? 'The guest was saved, but the Form C details were not.')
+    }
   }
 
   const saveGuest = useMutation({
@@ -305,7 +357,7 @@ export default function GuestCheckIn() {
       country: form.country || null,
       id_type: form.id_type || null, id_number: form.id_number || null,
     }),
-    onSuccess: () => { setError(''); q.refetch() },
+    onSuccess: async () => { setError(''); await persistFormC(); q.refetch() },
     onError: fail,
   })
 
@@ -329,12 +381,18 @@ export default function GuestCheckIn() {
       welcome_sent: form.welcome_sent,
       key_issued: form.key_issued,
     }),
-    onSuccess: (r) => {
+    onSuccess: async (r) => {
+      // After the check-in, not before: this is the moment the 24-hour
+      // clock actually starts, and a Form C saved against a stay that then
+      // failed to check in would sit on the register owed by nobody.
+      await persistFormC()
       qc.invalidateQueries({ queryKey: ['arrivals'] })
       qc.invalidateQueries({ queryKey: ['rack'] })
       qc.invalidateQueries({ queryKey: ['checkInView', unitId] })
+      qc.invalidateQueries({ queryKey: ['form-c-register'] })
       setError('')
-      setDone({ room: r.room_code, warnings: r.warnings })
+      setDone({ room: r.room_code, warnings: r.warnings,
+                deposit: Number(r.deposit_amount || 0) })
     },
     onError: (e) => {
       const er = e as { response?: { data?: { detail?: string } } }
@@ -421,27 +479,83 @@ export default function GuestCheckIn() {
           </button>
         </p>
       )}
+      {/* What the desk needs the moment a check-in lands.
+          
+          This said "Checked in — room 301." and stopped. True, and no use:
+          it did not name the guest, so a clerk working two arrivals at once
+          could not tell which one had gone through; it did not say how long
+          they are staying, which is the next thing said out loud to them;
+          and it did not say whether any money is still owed, which is the
+          one fact that decides whether the guest can simply be handed keys
+          and sent up. All three were already on the screen and were thrown
+          away at the moment they mattered most. */}
+      {/* A modal, not a banner on the page.
+          
+          This was an inline strip near the top of the screen while
+          "Complete Check-in" sits in the footer, three hundred lines of
+          form below it. So the desk pressed the button, the confirmation
+          appeared above the fold behind them, and the honest report was
+          "no message after check-in" -- the message was there and nobody
+          could ever have seen it.
+          
+          A modal because this is a finished transaction with things still
+          to do -- print the card, take the balance -- not a notice that
+          can fade. It has to be dismissed, which is also how the desk
+          says "yes, I have dealt with this guest". */}
       {done && (
-        <div className="rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-          <p className="flex items-center gap-2 font-semibold">
-            <CheckCircle2 size={16} /> Checked in — room {done.room}.
+        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/50 p-4"
+          role="dialog" aria-modal="true"
+          aria-label={`Checked in to room ${done.room}`}>
+        <div className="w-full max-w-md rounded-2xl bg-white p-5 text-sm text-emerald-900 shadow-xl">
+          <p className="flex items-center gap-2 text-lg font-semibold text-emerald-800">
+            <CheckCircle2 size={20} />
+            {v.guest_name || 'Guest'} is in room {done.room}
+          </p>
+          <p className="mt-1 text-emerald-900">
+            {v.nights} night{v.nights === 1 ? '' : 's'} · out {day(v.departure_date)}
+            {done.deposit > 0 && ` · ${money.format(done.deposit)} deposit taken`}
+          </p>
+          {/* Money, said plainly. A balance is not a warning -- it is normal
+              and settled at check-out -- so it is stated rather than
+              flagged, and only the zero case gets the reassuring wording. */}
+          <p className="mt-0.5 text-emerald-900">
+            {v.balance > 0
+              ? `${money.format(v.balance)} to settle at check-out.`
+              : 'Nothing outstanding.'}
           </p>
           {done.warnings.map((w) => (
             <p key={w} className="mt-1 flex items-start gap-2 text-emerald-900">
               <Info size={14} className="mt-0.5 shrink-0" /> {w}
             </p>
           ))}
-          <div className="mt-2 flex gap-2">
-            <button onClick={() => navigate('/reservations/list?tab=arrivals')}
-              className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white">
-              Back to arrivals
+          {/* The registration card first: it is the piece of paper the guest
+              signs and the property files, and the only one of these three
+              that has to happen before they walk away from the desk. */}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              onClick={() => void openRegistrationCard(
+                propertyId, v.reservation_unit_id)}
+              className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">
+              Registration card
             </button>
             <button
               onClick={() => navigate(`/reservations/${v.reservation_id}/folio`)}
               className="rounded-lg border border-emerald-300 px-3 py-1.5 text-xs font-semibold text-emerald-800">
               Open folio
             </button>
+            <button onClick={() => navigate('/reservations/list?tab=arrivals')}
+              className="rounded-lg border border-emerald-300 px-3 py-1.5 text-xs font-semibold text-emerald-800">
+              Next arrival
+            </button>
+            {/* Staying on the check-in screen is a real choice -- the desk
+                often wants to look at what it just recorded -- so closing
+                is offered rather than forced by navigation. */}
+            <button onClick={() => setDone(null)}
+              className="rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-500 hover:text-slate-700">
+              Close
+            </button>
           </div>
+        </div>
         </div>
       )}
 
@@ -507,6 +621,13 @@ export default function GuestCheckIn() {
                 onChange={(e) => set('id_number', e.target.value)} />
             </Field>
           </div>
+
+          {/* Appears the moment a non-Indian nationality is chosen above,
+              with the passport still on the counter. An Indian guest never
+              sees it. */}
+          {needsFormC(form.nationality, form.id_type) && (
+            <FormCFields values={formC} onChange={setFc} idPrefix="ci" />
+          )}
 
           {/* The guest's own photo sits first because it is the one taken
               from the camera every time; the ID sides follow. */}
