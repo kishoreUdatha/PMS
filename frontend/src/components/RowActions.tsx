@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import Select from './Select'
 import { useNavigate } from 'react-router-dom'
 import {
-  ArrowLeftRight, Ban, BedDouble, ClipboardList, Copy, FileText, Gift, KeyRound, Loader2, LogOut, MoreVertical, Pencil, Printer, Receipt, ScrollText, Sparkles, UserX, Wallet, X,
+  ArrowLeftRight, Ban, BedDouble, CalendarPlus, ClipboardList, Copy, FileText, Gift, KeyRound, Loader2, LogOut, MoreVertical, Pencil, Printer, Receipt, ScrollText, Sparkles, UserX, Wallet, X,
 } from 'lucide-react'
 import { type ActionItem } from './ActionsMenu'
 import RowActionsPanel from './RowActionsPanel'
@@ -11,6 +11,7 @@ import {
   addFolioCharge, collectFolioPayment, createInvoice, ensureFolio,
   issueInvoice,
   clearComplimentary, getComplimentary, getCompReasons, markComplimentary,
+  extendStay, getExtendQuote,
   openFolioPdf, openRegistrationCard, setHousekeepingStatus,
 } from '../api'
 import { usePaymentMethods } from '../lib/paymentMethods'
@@ -90,7 +91,7 @@ export default function RowActions({ ctx, open, onOpenChange }: {
     if (onOpenChange) onOpenChange(next)
     else setOwnPanel(next)
   }
-  const [dialog, setDialog] = useState<'charge' | 'payment' | 'hk' | 'comp' | null>(null)
+  const [dialog, setDialog] = useState<'charge' | 'payment' | 'hk' | 'comp' | 'extend' | null>(null)
   const [busy, setBusy] = useState('')
   const [note, setNote] = useState('')
   const [err, setErr] = useState('')
@@ -149,6 +150,17 @@ export default function RowActions({ ctx, open, onOpenChange }: {
       hint: checkedOut ? 'The stay is closed.'
         : !ctx.room ? 'No room is assigned yet.' : undefined,
       onSelect: () => navigate(`/front-desk/room-move/${unit}`),
+    })
+  }
+  if (on('moveRoom') && inHouse) {
+    // Beside Move room deliberately: once a guest is in the house these are
+    // the two things that can still change about their stay, and a desk
+    // asked "can we stay longer?" should not have to know that the answer
+    // lives on a different screen from "can we change rooms?".
+    items.push({
+      label: 'Extend stay', icon: CalendarPlus, group: 'stay',
+      description: 'Keep this guest longer without moving them',
+      onSelect: () => setDialog('extend'),
     })
   }
   if (on('housekeeping')) {
@@ -342,6 +354,10 @@ export default function RowActions({ ctx, open, onOpenChange }: {
       )}
       {dialog === 'payment' && (
         <PaymentDialog ctx={ctx} onClose={() => setDialog(null)}
+          onSaved={() => { setDialog(null); ctx.onDone() }} />
+      )}
+      {dialog === 'extend' && (
+        <ExtendDialog ctx={ctx} onClose={() => setDialog(null)}
           onSaved={() => { setDialog(null); ctx.onDone() }} />
       )}
       {dialog === 'comp' && (
@@ -682,6 +698,147 @@ function CompDialog({ ctx, onClose, onSaved }: {
           Put back on normal terms
         </button>
       )}
+    </Shell>
+  )
+}
+
+
+/* -------------------------------------------------------------- extend --- */
+/**
+ * "Can we stay two more nights?" — the most ordinary request a resort desk
+ * gets, and the one change this system could not make until now.
+ *
+ * Quoted live as the date changes rather than behind a button, because the
+ * desk is usually on the phone or facing the guest and the only two things
+ * they need are the price and whether it is possible. Both arrive together.
+ *
+ * Nothing is charged when this is applied. The night audit already accrues a
+ * room night for every guest who is checked in and has not left, reading the
+ * stay rather than the planned departure, so the added nights bill
+ * themselves at each night's own rate. The figure here is what to TELL the
+ * guest, not a charge being raised — which is why it is labelled as an
+ * estimate.
+ */
+function ExtendDialog({ ctx, onClose, onSaved }: {
+  ctx: RowActionCtx; onClose: () => void; onSaved: () => void
+}) {
+  // Seeded one night past the current departure: the commonest answer, and
+  // it means the quote below is populated the moment the dialog opens
+  // instead of after the desk types a date.
+  // Formatted from the LOCAL parts, never through toISOString(). That
+  // returns UTC, and east of Greenwich local midnight is the previous day
+  // there -- so in India this seeded the field with the departure date the
+  // guest already has, and the dialog opened refusing itself.
+  const nextDay = (iso?: string | null) => {
+    if (!iso) return ''
+    const d = new Date(`${iso.slice(0, 10)}T00:00:00`)
+    d.setDate(d.getDate() + 1)
+    const p2 = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`
+  }
+  const [newDate, setNewDate] = useState(nextDay(ctx.departureDate))
+  const [reason, setReason] = useState('guest_request')
+  const [notes, setNotes] = useState('')
+  const { busy, err, save } = useSave(onSaved)
+
+  const quote = useQuery({
+    queryKey: ['extend-quote', ctx.reservationId, newDate],
+    queryFn: () => getExtendQuote(ctx.reservationId, ctx.propertyId, newDate),
+    enabled: !!newDate,
+  })
+  const q = quote.data
+
+  // Named `inr` rather than `money`: this file already has a module-level
+  // `money` of a different shape, and one name for two formatters is how a
+  // figure ends up rendered without its currency.
+  const inr = (v?: string) => v === undefined ? '—'
+    : new Intl.NumberFormat('en-IN', {
+      style: 'currency', currency: 'INR', minimumFractionDigits: 2,
+    }).format(Number(v))
+
+  return (
+    <Shell title={`Extend stay — ${ctx.number}`} onClose={onClose}>
+      <p className="text-xs text-slate-500">
+        {ctx.guestName ?? 'This guest'} is in {ctx.room ? `room ${ctx.room}` : 'house'}
+        {ctx.departureDate ? `, due to leave ${ctx.departureDate.slice(0, 10)}` : ''}.
+        They stay in the same room — nothing moves.
+      </p>
+
+      <div>
+        <label className={lbl} htmlFor="extend-date">New departure date</label>
+        <input id="extend-date" type="date" className={field} value={newDate}
+          min={nextDay(ctx.departureDate)}
+          onChange={(e) => setNewDate(e.target.value)} />
+      </div>
+
+      {/* The quote, and the two different ways this can be impossible. */}
+      {newDate && quote.isLoading && (
+        <p className="flex items-center gap-2 text-xs text-slate-400">
+          <Loader2 size={13} className="animate-spin" /> Checking availability…
+        </p>
+      )}
+      {q && q.added_nights > 0 && (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+          <div className="flex justify-between">
+            <span className="text-slate-500">
+              {q.added_nights} extra night{q.added_nights === 1 ? '' : 's'}
+              {q.rooms > 1 ? ` × ${q.rooms} rooms` : ''}
+            </span>
+            <span className="font-semibold text-ink">
+              {inr(q.estimated_amount)}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-slate-400">
+            Estimated, at {inr(q.nightly_rate)} for the first added night.
+            Each night is charged at its own rate by the night audit — nothing
+            is posted now.
+          </p>
+        </div>
+      )}
+      {q && q.blocked_reason && (
+        <p className="rounded-lg bg-amber-50 p-2 text-xs text-amber-700">
+          {q.blocked_reason}
+        </p>
+      )}
+      {/* Room type sold out: there is no room to sell them at all. */}
+      {q && q.unavailable_reason && !q.blocked_reason && (
+        <p className="rounded-lg bg-rose-50 p-2 text-xs text-rose-700">
+          {q.unavailable_reason}
+        </p>
+      )}
+      {/* This guest's own room is taken, though the type has others free.
+          A different problem with a different answer, so it says so. */}
+      {q && q.room_conflicts.length > 0 && (
+        <p className="rounded-lg bg-rose-50 p-2 text-xs text-rose-700">
+          Room {q.room_conflicts.join(', ')} is already booked for those
+          nights. Move the guest to another room first, then extend.
+        </p>
+      )}
+
+      <div>
+        <label className={lbl} htmlFor="extend-reason">Reason</label>
+        <Select id="extend-reason" className={field} value={reason}
+          onChange={(e) => setReason(e.target.value)}>
+          <option value="guest_request">Guest request</option>
+          <option value="travel_plans">Change in travel plans</option>
+          <option value="property_initiated">Property initiated</option>
+          <option value="other">Other</option>
+        </Select>
+      </div>
+      <div>
+        <label className={lbl} htmlFor="extend-notes">Notes</label>
+        <input id="extend-notes" className={field} value={notes}
+          placeholder="Optional"
+          onChange={(e) => setNotes(e.target.value)} />
+      </div>
+
+      {err && <p className="text-xs text-rose-600">{err}</p>}
+      <Submit busy={busy} label="Extend stay"
+        disabled={!q || !q.available}
+        onClick={() => save(() => extendStay(
+          ctx.reservationId, ctx.propertyId,
+          { new_departure_date: newDate, reason, notes: notes || null },
+        ))} />
     </Shell>
   )
 }

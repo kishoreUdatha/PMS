@@ -212,6 +212,11 @@ def _units(db: Session, rid: uuid.UUID):
             """
             SELECT ru.id, ru.room_type_id, ru.arrival_date, ru.departure_date,
                    ru.adults, ru.children, ru.status, ru.assigned_room_id,
+                   -- The rate this booking was actually sold at. Extending a
+                   -- stay is quoted from this rather than from the rate
+                   -- calendar, because it is what the night audit will
+                   -- charge; see `extend_quote`.
+                   ru.nightly_rate,
                    rt.name AS room_type
             FROM booking.reservation_units ru
             LEFT JOIN property.room_types rt ON rt.id = ru.room_type_id
@@ -903,3 +908,341 @@ def list_changes(
          "refund_estimate": str(r["refund_estimate"])}
         for r in rows
     ]
+
+
+# --------------------------------------------------------------------------
+# Extend Stay
+# --------------------------------------------------------------------------
+# A guest already in the house asking to stay longer. The most ordinary
+# request a resort front desk gets, and until now the one change this system
+# could not make: `modify` refuses the moment a unit is `checked_in`, and it
+# is right to -- it releases the assigned room and re-picks it, which for
+# somebody whose suitcase is in room 201 is not a modification but an
+# eviction.
+#
+# So this is its own path rather than `modify` with the guard loosened, and
+# it is deliberately the narrowest operation that answers the question:
+#
+#   * departure only. Arrival cannot move once nights have been slept, and
+#     the room type cannot change without moving the guest -- that is Room
+#     Move, which exists.
+#   * forward only. Shortening an in-house stay is an early check-out, which
+#     also exists, and which does things this does not (settling the folio).
+#   * the guest does not move. The calendar entry is EXTENDED in place, so
+#     the room they are sitting in stays theirs and the nights already slept
+#     keep pointing at it.
+#
+# **Nothing is charged here, and that is not an omission.** The night audit
+# accrues a room night for every unit that is `checked_in` and has not
+# actually checked out -- it reads the stay, not the planned departure date.
+# So the extra nights bill themselves as they happen, at each night's own
+# rate, and posting a lump sum here would charge the guest twice.
+#
+# Which also says what this feature is really fixing. The money was never the
+# broken part: a guest who overstayed was always billed. What was broken is
+# everything that reads `departure_date` -- the room went back on sale on the
+# original departure date and could be sold out from under an occupant,
+# housekeeping was told to turn a room that was not leaving, and the due-out
+# list was wrong. This closes that, which is why the inventory shift below
+# matters more than the quote above it.
+
+class ExtendQuote(BaseModel):
+    in_house: bool
+    blocked_reason: str | None
+    current_departure: date | None
+    new_departure: date
+    added_nights: int
+    rooms: int
+    #: The first added night, for display. Each night is priced on its own
+    #: date, so a weekend added to a weekday stay is not quoted at the
+    #: weekday rate.
+    nightly_rate: Decimal
+    estimated_amount: Decimal
+    available: bool
+    unavailable_reason: str | None
+    #: Rooms whose own calendar already has somebody else in the added
+    #: nights. Distinct from `unavailable_reason`, which is about room-type
+    #: inventory: a type can have spare rooms while THIS guest's room is
+    #: taken, and the answer to each is different -- sell them another room,
+    #: or move them.
+    room_conflicts: list[str]
+
+
+class ExtendIn(BaseModel):
+    new_departure_date: date
+    reason: str | None = None
+    notes: str | None = Field(default=None, max_length=600)
+
+
+def _extend_blocked(res, units) -> str | None:
+    """Why this stay cannot be extended, in words, or None."""
+    if res["status"] == "cancelled":
+        return "This reservation is cancelled."
+    if res["status"] == "completed":
+        return "This reservation is completed."
+    if not any(u["status"] == "checked_in" for u in units):
+        # Not a failure -- the other screen is simply the right one, and
+        # saying so beats refusing without a next step.
+        return ("Nobody from this booking is in the house yet. Use Modify "
+                "Reservation to change the dates.")
+    return None
+
+
+def _in_house_units(units):
+    """The rooms actually occupied. Only these get extended.
+
+    A booking can hold a room that has checked out and another still
+    occupied, and stretching the departed one would put a room back on hold
+    that housekeeping has already turned.
+    """
+    return [u for u in units if u["status"] == "checked_in"]
+
+
+def _room_conflicts(db: Session, units, new_departure: date) -> list[str]:
+    """Occupied rooms that somebody else already holds in the added nights.
+
+    Read-only and therefore a preview: the exclusion constraint on
+    ``room_calendar_entries`` is what actually decides, under a lock, when
+    the extension is applied.
+    """
+    out: list[str] = []
+    for u in units:
+        if u["assigned_room_id"] is None:
+            continue
+        clash = db.execute(
+            text(
+                """
+                SELECT rm.code
+                  FROM booking.room_calendar_entries e
+                  JOIN property.rooms rm ON rm.id = e.room_id
+                 WHERE e.room_id = :room
+                   AND e.status = 'active'
+                   AND e.reservation_unit_id IS DISTINCT FROM :unit
+                   AND e.occupied_period && tstzrange(
+                         CAST(:from_d AS timestamptz),
+                         CAST(:to_d AS timestamptz), '[)')
+                 LIMIT 1
+                """
+            ),
+            {"room": u["assigned_room_id"], "unit": u["id"],
+             "from_d": datetime.combine(u["departure_date"], time(0, 0),
+                                        tzinfo=timezone.utc),
+             "to_d": datetime.combine(new_departure, time(23, 59),
+                                      tzinfo=timezone.utc)},
+        ).scalar()
+        if clash:
+            out.append(clash)
+    return out
+
+
+def _extend_sides(units, new_departure: date):
+    """The occupied rooms as they would stand, for the inventory delta."""
+    return [
+        {"id": u["id"], "room_type_id": u["room_type_id"],
+         "arrival_date": u["arrival_date"], "departure_date": new_departure}
+        for u in units
+    ]
+
+
+@change_router.post("/reservations/{reservation_id}/extend-quote",
+                    response_model=ExtendQuote)
+def extend_quote(
+    reservation_id: uuid.UUID,
+    property_id: uuid.UUID,
+    body: ExtendIn,
+    caller: Caller = Depends(require_permission("reservations", "view")),
+    db: Session = Depends(get_session),
+):
+    """What extending this stay would cost, and whether it can be had."""
+    assert_property_in_org(db, caller, property_id)
+    res = _reservation(db, reservation_id, property_id)
+    units = _units(db, reservation_id)
+    blocked = _extend_blocked(res, units)
+    occupied = _in_house_units(units)
+
+    current_dep = (max(u["departure_date"] for u in occupied)
+                   if occupied else None)
+    new_dep = body.new_departure_date
+
+    if blocked or current_dep is None:
+        return ExtendQuote(
+            in_house=False, blocked_reason=blocked,
+            current_departure=current_dep, new_departure=new_dep,
+            added_nights=0, rooms=0, nightly_rate=Decimal("0"),
+            estimated_amount=Decimal("0"), available=False,
+            unavailable_reason=blocked, room_conflicts=[],
+        )
+
+    if new_dep <= current_dep:
+        return ExtendQuote(
+            in_house=True, blocked_reason=None,
+            current_departure=current_dep, new_departure=new_dep,
+            added_nights=0, rooms=len(occupied), nightly_rate=Decimal("0"),
+            estimated_amount=Decimal("0"), available=False,
+            unavailable_reason=(
+                f"The guest is already due to leave on {current_dep}. To end "
+                f"the stay sooner, check them out early."),
+            room_conflicts=[],
+        )
+
+    # Priced per night on its own date, over the ADDED nights only. The
+    # nights already slept are charged and settled; re-quoting them would
+    # invite somebody to charge the difference twice.
+    added = (new_dep - current_dep).days
+    # Priced at the rate the booking HOLDS, not the rate calendar's price for
+    # those dates. The two differ whenever a guest was sold anything but the
+    # published rate, and the night audit accrues `ru.nightly_rate` -- so
+    # quoting the calendar told the desk 1,800 for a night the folio then
+    # billed at 2,250. A quote that does not match the bill is worse than no
+    # quote: the desk says the smaller number out loud to the guest.
+    #
+    # It also means an extension continues the guest's own rate rather than
+    # silently re-pricing their stay, which is what a desk means by "two more
+    # nights" and what the guest assumes they agreed to.
+    total = Decimal("0")
+    for u in occupied:
+        total += Decimal(u["nightly_rate"] or 0) * added
+    first = Decimal(occupied[0]["nightly_rate"] or 0)
+
+    # The full occupancy after the change, not the delta. `_capacity_problem`
+    # compares each night's need against what is free WITH this booking's own
+    # hold added back, so it has to see the whole stay; handed a delta it
+    # would check only the added nights and, worse, read their `need` as a
+    # difference rather than a count.
+    reason = _capacity_problem(
+        db, property_id,
+        occupancy(_extend_sides(occupied, new_dep)),
+        reservation_id,
+    )
+    conflicts = _room_conflicts(db, occupied, new_dep)
+
+    return ExtendQuote(
+        in_house=True, blocked_reason=None,
+        current_departure=current_dep, new_departure=new_dep,
+        added_nights=added, rooms=len(occupied), nightly_rate=first,
+        estimated_amount=total,
+        available=reason is None and not conflicts,
+        unavailable_reason=reason, room_conflicts=conflicts,
+    )
+
+
+@change_router.post("/reservations/{reservation_id}/extend",
+                    response_model=ChangeOut)
+def extend_stay(
+    reservation_id: uuid.UUID,
+    property_id: uuid.UUID,
+    body: ExtendIn,
+    caller: Caller = Depends(require_permission("reservations", "edit")),
+    db: Session = Depends(get_session),
+):
+    """Keep the guest where they are for longer. One transaction."""
+    assert_property_in_org(db, caller, property_id)
+    _check_reason(body.reason)
+    res = _reservation(db, reservation_id, property_id)
+    units = _units(db, reservation_id)
+    warnings: list[str] = []
+
+    blocked = _extend_blocked(res, units)
+    if blocked:
+        raise HTTPException(status_code=422, detail=blocked)
+
+    occupied = _in_house_units(units)
+    current_dep = max(u["departure_date"] for u in occupied)
+    new_dep = body.new_departure_date
+    if new_dep <= current_dep:
+        raise HTTPException(
+            status_code=422,
+            detail=(f"The guest is already due to leave on {current_dep}. To "
+                    f"end the stay sooner, check them out early rather than "
+                    f"shortening it here -- an early check-out settles the "
+                    f"folio, and this does not."),
+        )
+
+    after = _extend_sides(occupied, new_dep)
+    delta = occupancy_delta(occupancy(occupied), occupancy(after))
+
+    unavailable = _capacity_problem(db, property_id, occupancy(after),
+                                    reservation_id)
+    if unavailable:
+        raise HTTPException(status_code=409, detail=unavailable)
+
+    # Take the added nights off sale before anything else is written, so an
+    # oversold night is a 409 with nothing changed. This is the part that was
+    # actually missing: a guest who simply overstayed was always billed by
+    # the audit, but their room went back on sale on the original departure
+    # date and could be sold to somebody else while they were still in it.
+    try:
+        shift_inventory(
+            db,
+            property_id=property_id,
+            organization_id=res["organization_id"],
+            counter=counter_for(res["status"]),
+            delta=delta,
+            overbooking_allowance=settings.overbooking_allowance,
+        )
+    except InventoryOversold as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    for u in occupied:
+        db.execute(
+            text("UPDATE booking.reservation_units "
+                 "SET departure_date = :d, version = version + 1 "
+                 "WHERE id = :id"),
+            {"d": new_dep, "id": u["id"]},
+        )
+        if u["assigned_room_id"] is None:
+            warnings.append(
+                "This room has no room assigned, so nothing was held for the "
+                "extra nights -- assign one.")
+            continue
+        # Extended in place, never released and re-picked: the guest stays
+        # put and the nights already slept keep pointing at this room. The
+        # check-out TIME of day is carried over rather than reset to the
+        # default, so a late check-out already granted is not quietly undone.
+        try:
+            db.execute(
+                text(
+                    """
+                    UPDATE booking.room_calendar_entries
+                       SET occupied_period = tstzrange(
+                             lower(occupied_period),
+                             (CAST(:d AS date)
+                              + CAST(upper(occupied_period) AT TIME ZONE 'UTC'
+                                     AS time)) AT TIME ZONE 'UTC',
+                             '[)'),
+                           version = version + 1
+                     WHERE reservation_unit_id = :u AND status = 'active'
+                    """
+                ),
+                {"d": new_dep, "u": u["id"]},
+            )
+            db.flush()
+        except IntegrityError as exc:
+            # The GiST exclusion refused: somebody else holds this room in
+            # the added nights. Nothing is written, and the honest answer is
+            # that this guest cannot stay in THIS room -- which is a room
+            # move, not an extension.
+            raise HTTPException(
+                status_code=409,
+                detail=("That room is already booked for the extra nights. "
+                        "Move the guest to another room first, then extend."),
+            ) from exc
+
+    record_audit(
+        db, action="reservation.extended", entity_type="reservation",
+        entity_id=str(reservation_id), organization_id=res["organization_id"],
+        property_id=property_id, actor_subject=caller.subject,
+        reason=body.notes,
+        before={"departure": str(current_dep), "rooms": len(occupied)},
+        after={"departure": str(new_dep), "rooms": len(occupied),
+               "added_nights": (new_dep - current_dep).days,
+               "reason_code": body.reason},
+    )
+
+    return ChangeOut(
+        id=reservation_id, kind="extend", status=res["status"],
+        # Nothing is posted: the night audit charges each added night as it
+        # reaches it, from the stay rather than the planned departure.
+        difference=Decimal("0"), penalty_amount=Decimal("0"),
+        refund_estimate=Decimal("0"), warnings=warnings,
+    )
