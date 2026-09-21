@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { fmtDate } from '../lib/dates'
 import Select from '../components/Select'
-import { FILTER_SELECT } from '../lib/controls'
+import { TABLE_ROW, TABLE_HEAD, TABLE_SHELL, FILTER_SELECT } from '../lib/controls'
 import { Link, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import {
@@ -343,12 +343,12 @@ export default function Guests() {
           onEdit={(g) => setModal({ mode: 'edit', guest: g as Guest })} />
       )}
 
-      <div className={`overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm ${
+      <div className={`${TABLE_SHELL} ${
         layout === 'cards' ? 'border-0 shadow-none' : ''}`}>
         <div className={`overflow-x-auto ${layout === 'cards' ? 'hidden' : ''}`}>
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-slate-100 bg-slate-50/60 text-left text-slate-600">
+              <tr className={TABLE_HEAD}>
                 <Th label="Guest" k="name" sort={sort} dir={direction} on={reorder}
                   className="pl-5" />
                 <th className="px-4 py-3 font-semibold">Contact</th>
@@ -362,7 +362,7 @@ export default function Guests() {
                 <th className="w-12 px-4 py-3" />
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-50">
+            <tbody>
               {isLoading && (
                 <tr><td colSpan={8} className="p-10 text-center text-slate-400">
                   <Loader2 size={18} className="mx-auto animate-spin" />
@@ -388,7 +388,7 @@ export default function Guests() {
                         navigate(`/guests/${g.id}`)
                       }
                     }}
-                    className="cursor-pointer text-slate-700 outline-none hover:bg-slate-50/50 focus-visible:bg-brand/5">
+                    className={`${TABLE_ROW} cursor-pointer text-slate-700 outline-none focus-visible:bg-brand/5`}>
                     <td className="py-3 pl-5 pr-4">
                       <div className="flex items-center gap-3">
                         <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white ${AVATAR[i % AVATAR.length]}`}>

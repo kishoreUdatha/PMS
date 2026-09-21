@@ -2,7 +2,7 @@ import { useState } from 'react'
 import Select from '../components/Select'
 import { StayLayoutToggle, useListLayout } from '../lib/listLayout'
 import { fmtDate } from '../lib/dates'
-import { FILTER_SELECT } from '../lib/controls'
+import { TABLE_ROW, TABLE_HEAD, TABLE_SHELL, FILTER_SELECT } from '../lib/controls'
 import { downloadCsv, datedName } from '../lib/csv'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -136,11 +136,17 @@ function BoardList({ board, onAct, busy }: {
     )
   }
 
+  // Matched to `StayTable`, which is what Reservations, Arrivals, In-house
+  // and Departures all draw. This table had a softer radius and a lighter
+  // border than every other list in the product, so moving between
+  // Housekeeping and Reservations looked like moving between two
+  // applications -- close enough to feel wrong without being obviously
+  // different. One table shape, everywhere.
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white">
+    <div className={TABLE_SHELL}>
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="border-b border-slate-100 bg-slate-50/60 text-left text-slate-600">
+        <table className="w-full text-left text-sm">
+          <thead className={TABLE_HEAD}>
             <tr>
               <th className="whitespace-nowrap px-4 py-3 font-semibold">Room</th>
               <th className="whitespace-nowrap px-4 py-3 font-semibold">Status</th>
@@ -151,12 +157,12 @@ function BoardList({ board, onAct, busy }: {
               <th className="whitespace-nowrap px-4 py-3 text-right font-semibold">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-50">
+          <tbody>
             {rows.map((c) => {
               const urgent = c.arriving_in_minutes !== null
                 && c.arriving_in_minutes <= 90
               return (
-                <tr key={c.room_id} className="text-slate-700 hover:bg-slate-50/60">
+                <tr key={c.room_id} className={`${TABLE_ROW} text-slate-700`}>
                   <td className="px-4 py-3">
                     <span className="block font-semibold text-slate-800">{c.room_code}</span>
                     <span className="block text-xs text-slate-400">

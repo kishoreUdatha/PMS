@@ -49,3 +49,33 @@ export const FILTER_SELECT = `${FILTER_BOX} ${CONTROL}`
  *  Colour is deliberately absent; the caller sets it from on/off state. */
 export const FILTER_CHIP =
   `flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-2 ${CONTROL_TYPE} transition-colors`
+
+/* ------------------------------------------------------------- tables --- */
+/** One spelling of a list table, for the same reason as the controls above.
+ *
+ * `StayTable` set the shape every list in this product is measured against
+ * -- Reservations, Arrivals, In-house, Departures all draw it. Screens
+ * written separately drifted: Housekeeping and Guests each had a softer
+ * corner and a fainter border, and a divider a shade lighter again. None of
+ * it is wrong on its own, and together it made moving from Reservations to
+ * Housekeeping feel like moving between two applications -- close enough to
+ * be unsettling without being obviously different.
+ *
+ * Class strings rather than a `<Table>` component, exactly as above: these
+ * tables differ in what they list and in nothing else, and wrapping them
+ * would mean a prop for every column quirk and a rewrite of each screen to
+ * adopt it.
+ */
+
+/** The box a list table is drawn in. */
+export const TABLE_SHELL =
+  'overflow-hidden rounded-xl border border-slate-200 bg-white'
+
+/** The header row. Cells keep `px-4 py-3 font-semibold`. */
+export const TABLE_HEAD =
+  'border-b border-slate-200 bg-slate-50/60 text-left text-sm text-slate-600'
+
+/** A body row. Separated per row rather than by `divide-y`, so the last one
+ *  can drop its border and sit flush against the shell. */
+export const TABLE_ROW =
+  'border-b border-slate-100 last:border-0 hover:bg-slate-50'
