@@ -249,6 +249,7 @@ def test_a_payment_reduces_the_balance_and_the_screen_agrees(booking):
         "source_line_key": f"{RUN}-charge-2"}, base=FINANCE)
     post("/payments", {
         "property_id": PROP, "method": "card",
+        "reference": RUN,
         "business_date": str(date(2026, 11, 3)),
         "allocations": [{"folio_id": folio["id"], "amount": "800.00"}],
     }, base=FINANCE)
@@ -270,6 +271,7 @@ def test_a_refund_is_not_a_charge(booking):
         "type": "guest", "currency": "INR"}, base=FINANCE)
     pay = post("/payments", {
         "property_id": PROP, "method": "card",
+        "reference": RUN,
         "business_date": str(date(2026, 11, 3)),
         "allocations": [{"folio_id": folio["id"], "amount": "1000.00"}],
     }, base=FINANCE)
@@ -303,6 +305,7 @@ def test_a_second_refund_does_not_re_debit_the_first_folio():
         made.append(f["id"])
     pay = post("/payments", {
         "property_id": PROP, "method": "card",
+        "reference": RUN,
         "business_date": str(date(2026, 11, 3)),
         "allocations": [{"folio_id": made[0], "amount": "600.00"},
                         {"folio_id": made[1], "amount": "400.00"}],
@@ -331,6 +334,7 @@ def test_checkout_reports_a_balance_rather_than_silently_keeping_it(booking):
     over = D(before["total_charges"]) + D("1000.00")
     post("/payments", {
         "property_id": PROP, "method": "card",
+        "reference": RUN,
         "business_date": str(date(2026, 11, 3)),
         "allocations": [{"folio_id": folio["id"], "amount": str(over)}],
     }, base=FINANCE)
@@ -389,13 +393,26 @@ def test_housekeeping_status_change_is_visible_to_every_screen_that_asks():
         (v for v in rooms.values() if isinstance(v, list)), [])
     room = rows[0]
 
-    before = get(f"/dashboard?property_id={PROP}")["room_status"]
+    board = get(f"/dashboard?property_id={PROP}")
+    before = board["room_status"]
     post(f"/rooms/{room['id']}/housekeeping-status?property_id={PROP}",
          {"status": "dirty", "remarks": f"{RUN} housekeeping probe"})
 
     after = get(f"/dashboard?property_id={PROP}")["room_status"]
+    # The day the DASHBOARD is reporting, not the one the clock says. This
+    # was pinned to 14 September 2026 -- the day somebody wrote it -- so
+    # once that passed the test compared two screens on two different days
+    # and failed on the difference, which nobody saw because the suite was
+    # not running.
+    #
+    # Today is not the fix either: the dashboard reports the property's
+    # business date, and on 20 September against a business date of the
+    # 19th the rack counted a room reserved for tomorrow and the two
+    # disagreed by exactly that one room. Both screens were right.
+    bd = board["business_date"]
+    nxt = (date.fromisoformat(bd) + timedelta(days=1)).isoformat()
     cal = get(f"/reservation-calendar?property_id={PROP}"
-              f"&start_date=2026-09-14&end_date=2026-09-15")["room_states"]
+              f"&start_date={bd}&end_date={nxt}")["room_states"]
 
     assert after["cleaning"] >= before["cleaning"], (
         "a room was marked dirty and the dashboard's not-ready count did not move")

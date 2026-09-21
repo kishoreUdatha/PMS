@@ -25,6 +25,13 @@ import httpx
 import pytest
 from sqlalchemy import text
 
+#: What the services require of an internal caller. The orchestration layer
+#: forwards the client's own headers rather than minting credentials, so an
+#: unauthenticated client here reaches booking-core as an anonymous request
+#: and is refused -- which is correct of the service and was simply never
+#: seen, because this test had not run since auth was added.
+_SERVICE_HEADERS = {"x-service-token": os.getenv("SERVICE_TOKEN", "")}
+
 BOOKING_URL_ENV = os.getenv("BOOKING_DATABASE_URL")
 FINANCE_URL_ENV = os.getenv("FINANCE_DATABASE_URL")
 
@@ -71,6 +78,29 @@ async def test_full_loop_checkout_bills_folio():
     arrival = date.today() + timedelta(days=120)
     nights = 3
     departure = arrival + timedelta(days=nights)
+
+    # Seed the tenant itself first.
+    #
+    # This test invented an org and a property and seeded rooms under them,
+    # but never registered either in `iam`. `assert_property_in_org` reads
+    # `iam.properties`, so every call through the orchestration is refused
+    # with "Property outside caller tenant" -- about a property the test had
+    # just created. The guard is right; the test predates it and never ran
+    # again to find out.
+    with engine.begin() as conn:
+        conn.execute(
+            text("INSERT INTO iam.organizations (id, name, status) "
+                 "VALUES (:org, :name, 'active')"),
+            {"org": org, "name": f"FULLLOOP {str(org)[:8]}"},
+        )
+        conn.execute(
+            text("INSERT INTO iam.properties "
+                 "  (id, organization_id, code, name, timezone, currency, status) "
+                 "VALUES (:prop, :org, :code, :name, 'Asia/Kolkata', 'INR', 'active')"),
+            # Six digits exactly: `ck_property_code_shape` enforces it.
+            {"prop": prop, "org": org, "code": f"{prop.int % 1000000:06d}",
+             "name": f"FULLLOOP {str(prop)[:8]}"},
+        )
 
     # Seed room type, room, inventory.
     with engine.begin() as conn:
@@ -134,7 +164,7 @@ async def test_full_loop_checkout_bills_folio():
 
     # Orchestrated checkout via the real orchestration code path.
     transport = _MultiAppTransport()
-    async with httpx.AsyncClient(transport=transport) as client:
+    async with httpx.AsyncClient(transport=transport, headers=_SERVICE_HEADERS) as client:
         result = await checkout_with_billing(
             client,
             booking_url=BOOKING_BASE,
@@ -142,6 +172,12 @@ async def test_full_loop_checkout_bills_folio():
             reservation_unit_id=str(unit_id),
             nightly_rate=Decimal("5000.00"),
             business_date=arrival.isoformat(),
+            # Without this no tenant is bound, the services run as the
+            # unprivileged runtime role, row security hides the booking the
+            # test has just created, and the orchestration reports "Not
+            # found" about data that is plainly there. Passing the org is
+            # what every real caller does.
+            organization_id=str(org),
         )
 
     assert result["nights"] == nights
@@ -150,7 +186,7 @@ async def test_full_loop_checkout_bills_folio():
     folio_id = result["folio_id"]
 
     # Idempotent re-bill: run the charge again, balance unchanged.
-    async with httpx.AsyncClient(transport=transport) as client:
+    async with httpx.AsyncClient(transport=transport, headers=_SERVICE_HEADERS) as client:
         # Re-post the same room charge directly (same source_line_key).
         resp = await client.post(
             f"{FINANCE_BASE}/charges",
