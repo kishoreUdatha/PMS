@@ -24,7 +24,7 @@ from fastapi import (
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from . import schemas
+from . import group_blocks, schemas
 from .database import SessionFactory, get_session
 from .dashboard import get_dashboard
 from .guest_mail import send_confirmation
@@ -455,6 +455,9 @@ def create_hold_endpoint(body: schemas.HoldCreate, caller: Caller = Depends(requ
         )
     except InventoryShortage as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except group_blocks.BlockError as exc:
+        # A booking drawing on a block that holds nothing -- see `draw_down`.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -893,6 +896,10 @@ def dashboard(
     bd = business_date or date.today()
     m = get_dashboard(db, property_id=property_id, business_date=bd)
     return schemas.DashboardOut(
+        # Whichever day was actually used, echoed back. Everything below is
+        # computed against it, and a caller lining the dashboard up with any
+        # other screen has no way to do so without being told.
+        business_date=m.business_date,
         occupancy_pct=m.occupancy_pct,
         arrivals=m.arrivals,
         departures=m.departures,
@@ -1048,10 +1055,20 @@ def list_reservations(
                              ('payment', 'refund', 'security_deposit',
                               'room_night', 'room_stay', 'room_upgrade')
                    ), 0) AS other_charges,
+                   -- Allocations across every folio on this booking.
+                   --
+                   -- Correlated on `f.reservation_id`, which is the GROUP BY
+                   -- key, so it yields one value per reservation. It cannot
+                   -- be `sum()` of a joined column: this query already
+                   -- fans out one row per folio ENTRY, so summing anything
+                   -- per-folio here would multiply it by that folio's entry
+                   -- count. It used to correlate on `f.id`, which was right
+                   -- only while the grouping was per folio.
                    COALESCE((
                        SELECT sum(pa.amount)
-                       FROM finance.payment_allocations pa
-                       WHERE pa.folio_id = f.id
+                         FROM finance.payment_allocations pa
+                         JOIN finance.folios pf ON pf.id = pa.folio_id
+                        WHERE pf.reservation_id = f.reservation_id
                    ), 0)
                    -- Net of refunds. A payment that was given back is not
                    -- money the property holds, and counting it made the
@@ -1062,7 +1079,19 @@ def list_reservations(
             FROM finance.folios f
             LEFT JOIN finance.folio_entries e ON e.folio_id = f.id
             WHERE f.property_id = :prop
-            GROUP BY f.reservation_id, f.id
+            -- By reservation, NOT by folio.
+            --
+            -- Grouping by `f.id` as well returned one row per folio, and
+            -- joining that to the reservation multiplied every other
+            -- aggregate on the page by the number of folios. It was
+            -- invisible while a booking only ever had one: a group booking
+            -- now opens a master plus a folio per guest, and a two-room
+            -- booking with three folios reported "Deluxe Room x6" and a
+            -- total of three times the money.
+            --
+            -- A reservation's charges and payments are the sum across all
+            -- of its folios, which is what this now says.
+            GROUP BY f.reservation_id
         ) fin ON fin.reservation_id = r.id
         WHERE r.property_id = :prop
     """

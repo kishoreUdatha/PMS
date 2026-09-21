@@ -261,6 +261,50 @@ def release_block(
     return _out(db, block_id)
 
 
+class CommitmentIn(BaseModel):
+    commitment: str
+
+
+@group_router.post("/group-blocks/{block_id}/commitment",
+                   response_model=BlockOut)
+def set_commitment(
+    block_id: uuid.UUID,
+    property_id: uuid.UUID,
+    body: CommitmentIn,
+    caller: Caller = Depends(require_permission("front_desk", "edit")),
+    db: Session = Depends(get_session),
+):
+    """Firm a block up, or let it go back to provisional.
+
+    Definite takes the rooms off sale; tentative hands them back. Bookings
+    already picked up are untouched either way.
+    """
+    assert_property_in_org(db, caller, property_id)
+    org = db.execute(
+        text("SELECT organization_id FROM iam.properties WHERE id = :p"),
+        {"p": property_id},
+    ).scalar_one()
+    try:
+        moved = group_blocks.set_commitment(
+            db, block_id=block_id, property_id=property_id,
+            organization_id=org, commitment=body.commitment)
+    except group_blocks.BlockError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except InventoryOversold as exc:
+        # The nights sold while the block was only provisional. Saying so is
+        # the honest answer -- the rooms really are gone.
+        raise HTTPException(
+            409,
+            f"Those rooms are no longer available to hold: {exc}") from exc
+
+    record_audit(
+        db, actor_subject=caller.subject,
+        action=f"group_block.{body.commitment}",
+        entity_type="group_block", entity_id=str(block_id),
+        property_id=property_id, after={"room_nights_moved": moved})
+    return _out(db, block_id)
+
+
 class BlockRate(BaseModel):
     room_type_id: uuid.UUID
     nightly_rate: Decimal
@@ -586,9 +630,14 @@ def import_rooming_list(
     """
     assert_property_in_org(db, caller, property_id)
     block = db.execute(
-        text("SELECT organization_id, arrival_date, departure_date, status, "
-             "       commercial_account_id, name "
-             "  FROM booking.group_blocks WHERE id = :b AND property_id = :p"),
+        text("SELECT b.organization_id, b.arrival_date, b.departure_date, "
+             "       b.status, b.commercial_account_id, b.name, "
+             # The folios this booking opens are priced in the property's
+             # own currency, not a default typed in here.
+             "       COALESCE(p.currency, 'INR') AS currency "
+             "  FROM booking.group_blocks b "
+             "  JOIN iam.properties p ON p.id = b.property_id "
+             " WHERE b.id = :b AND b.property_id = :p"),
         {"b": block_id, "p": property_id},
     ).mappings().first()
     if block is None:
@@ -636,6 +685,11 @@ def import_rooming_list(
     except InventoryShortage as exc:
         raise HTTPException(
             409, f"The block does not have that many rooms left: {exc}") from exc
+    except group_blocks.BlockError as exc:
+        # Raised from `draw_down` when the block holds no inventory -- a
+        # tentative block. Without this it escaped `create_hold` uncaught and
+        # the desk got a 500 instead of being told to firm the block up.
+        raise HTTPException(422, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
 
@@ -681,6 +735,55 @@ def import_rooming_list(
             text("UPDATE booking.reservations SET primary_guest_id = :g "
                  " WHERE id = :r AND primary_guest_id IS NULL"),
             {"g": first_guest, "r": result.reservation_id},
+        )
+
+    # ---- the folios this booking bills through ---------------------------
+    #
+    # A rooming list produced a booking with no folio at all, so the desk saw
+    # "No folio yet" and a dash where the money goes, and could not take a
+    # deposit on a wedding block before anybody arrived.
+    #
+    # One MASTER for the booking and one folio per guest, which is how every
+    # PMS bills a group: the organiser pays the rooms, the guest pays their
+    # own bar tab. A guest settling incidentals should never be shown three
+    # nights they are not paying for, and the organiser should never be
+    # handed a minibar bill.
+    #
+    # **Nothing is charged here**, deliberately. The nights post themselves
+    # through the night audit, one per night at the rate the unit holds, and
+    # `_folio_for` sends them to the master because it prefers a folio of
+    # type 'group'. Posting the stay total here as well would bill every
+    # group guest twice -- the same trap the settle flow documents and
+    # avoids.
+    master_id = uuid.uuid4()
+    db.execute(
+        text(
+            """
+            INSERT INTO finance.folios
+                (id, organization_id, property_id, reservation_id, group_id,
+                 commercial_account_id, type, currency, status)
+            VALUES (:id, :org, :prop, :res, :grp, :acct, 'group', :cur, 'open')
+            """
+        ),
+        {"id": master_id, "org": block["organization_id"],
+         "prop": property_id, "res": result.reservation_id,
+         "grp": block_id, "acct": block["commercial_account_id"],
+         "cur": block["currency"]},
+    )
+    for unit_id in unit_ids:
+        db.execute(
+            text(
+                """
+                INSERT INTO finance.folios
+                    (id, organization_id, property_id, reservation_id,
+                     group_id, parent_folio_id, type, currency, status)
+                VALUES (:id, :org, :prop, :res, :grp, :parent, 'guest',
+                        :cur, 'open')
+                """
+            ),
+            {"id": uuid.uuid4(), "org": block["organization_id"],
+             "prop": property_id, "res": result.reservation_id,
+             "grp": block_id, "parent": master_id, "cur": block["currency"]},
         )
 
     record_audit(

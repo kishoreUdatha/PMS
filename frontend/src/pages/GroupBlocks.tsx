@@ -22,6 +22,7 @@ import RoomingPanel from '../components/RoomingPanel'
 import { useActivePropertyId, useOrgId } from '../hooks/useProperty'
 import {
   listGroupBlocks, createGroupBlock, getGroupBlock, releaseGroupBlock,
+  setBlockCommitment,
   listRoomTypes, listCommercialAccounts,
   type GroupBlockRow, type GroupBlock,
 } from '../api'
@@ -74,8 +75,20 @@ export default function GroupBlocks() {
 
   const rows = blocks.data ?? []
   const open = rows.filter((r) => r.status === 'open')
-  const stillHeld = open.reduce(
-    (n, r) => n + Math.max(r.rooms_blocked - r.rooms_picked_up, 0), 0)
+  // Definite blocks only. The tile says "off sale", and after the
+  // commitment fix a tentative block takes nothing off sale -- counting it
+  // here reported rooms as unsellable that were on sale the whole time,
+  // which is the same lie the old behaviour told, just on a different
+  // screen.
+  const stillHeld = open
+    .filter((r) => r.commitment === 'definite')
+    .reduce((n, r) => n + Math.max(r.rooms_blocked - r.rooms_picked_up, 0), 0)
+  //: Wanted rather than held. Worth showing, because a pipeline of
+  //: tentative rooms is what a manager is deciding about -- but it is not
+  //: inventory, and it does not share a tile with rooms that are.
+  const tentativeRooms = open
+    .filter((r) => r.commitment !== 'definite')
+    .reduce((n, r) => n + Math.max(r.rooms_blocked - r.rooms_picked_up, 0), 0)
 
   return (
     <div>
@@ -98,21 +111,27 @@ export default function GroupBlocks() {
         </button>
       </div>
 
-      <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <Tile label="Open blocks" value={String(open.length)}
-          hint="Still holding rooms" />
-        <Tile label="Rooms still held" value={String(stillHeld)}
-          hint="Off sale, not yet claimed" tone="text-amber-600" />
-        <Tile label="Rooms picked up" value={String(
-          open.reduce((n, r) => n + r.rooms_picked_up, 0))}
-          hint="Named bookings from blocks" tone="text-emerald-600" />
-      </div>
-
       <div className="mt-5 rounded-2xl border border-slate-100 bg-white shadow-sm">
-        <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-3">
-          <h2 className="text-sm font-semibold text-slate-700">
-            {rows.length} block{rows.length === 1 ? '' : 's'}
-          </h2>
+        {/* The figures share the table's header line rather than sitting in
+            four cards above it. As cards they were about 350px of vertical
+            space spent on four numbers that are usually zero, pushing the
+            thing the screen is actually for -- the blocks -- below the fold
+            on a laptop. The Cashiering Centre made the same journey from
+            cards to a single line, for the same reason. */}
+        <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2 border-b border-slate-100 px-5 py-3">
+          <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1">
+            <h2 className="text-sm font-semibold text-slate-700">
+              {rows.length} block{rows.length === 1 ? '' : 's'}
+            </h2>
+            <Figure n={open.length} label="open" />
+            <Figure n={stillHeld} label="held" tone="text-amber-600"
+              title="Rooms off sale for a definite block and not yet claimed" />
+            <Figure n={tentativeRooms} label="tentative" tone="text-slate-500"
+              title="Asked for but not held — these rooms are still on sale" />
+            <Figure n={open.reduce((n, r) => n + r.rooms_picked_up, 0)}
+              label="picked up" tone="text-emerald-600"
+              title="Named bookings drawn from a block" />
+          </div>
           <Select className="w-44 rounded-lg border border-slate-200 px-3 py-2 text-sm"
             value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
             <option value="">All statuses</option>
@@ -172,15 +191,20 @@ function Th({ children, right }: { children: React.ReactNode; right?: boolean })
     {children}</th>
 }
 
-function Tile({ label, value, hint, tone }: {
-  label: string; value: string; hint: string; tone?: string
+/** One figure on a line of figures.
+ *
+ * The caption that used to sit under each card now lives on `title`: it is
+ * something you read once to learn what "held" means, not every time the
+ * page loads.
+ */
+function Figure({ n, label, tone, title }: {
+  n: number; label: string; tone?: string; title?: string
 }) {
   return (
-    <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-      <p className="text-sm text-slate-500">{label}</p>
-      <p className={`mt-1 text-3xl font-bold ${tone ?? 'text-ink'}`}>{value}</p>
-      <p className="mt-1 text-xs text-slate-400">{hint}</p>
-    </div>
+    <span className="flex items-baseline gap-1.5" title={title}>
+      <span className={`text-base font-semibold ${tone ?? 'text-ink'}`}>{n}</span>
+      <span className="text-xs text-slate-500">{label}</span>
+    </span>
   )
 }
 
@@ -322,9 +346,16 @@ function CreateBlock({ propertyId, onClose, onSaved }: {
             <option value="tentative">Tentative</option>
             <option value="definite">Definite</option>
           </Select>
+          {/* This said "Both hold the rooms. The difference is what a
+              forecast should believe." That was true of the old behaviour
+              and is now exactly backwards: tentative holds nothing, which
+              is the whole point of the distinction. A label that describes
+              the opposite of what the button does is worse than no label. */}
           <span className="mt-1 block text-xs text-slate-400">
-            Both hold the rooms. The difference is what a forecast should
-            believe.
+            {commitment === 'definite'
+              ? 'The rooms come off sale now, and can be booked against.'
+              : 'Nothing is held yet and nothing can be booked against it. '
+                + 'Mark the block definite when the group confirms.'}
           </span>
         </div>
         <div className="sm:col-span-2">
@@ -434,6 +465,22 @@ function BlockDetail({ blockId, propertyId, onClose, onChanged }: {
   })
   const b: GroupBlock | undefined = q.data
 
+  async function commit(next: 'tentative' | 'definite') {
+    setErr(''); setBusy(true)
+    try {
+      await setBlockCommitment(blockId, propertyId, next)
+      await q.refetch()
+      onChanged()
+    } catch (e) {
+      const ax = e as { response?: { data?: { detail?: string } } }
+      // Going definite can legitimately fail: the nights may have sold
+      // while the block was only provisional, and that refusal is the
+      // honest answer rather than an overbooking.
+      setErr(ax?.response?.data?.detail
+        ?? 'The commitment could not be changed.')
+    } finally { setBusy(false) }
+  }
+
   async function end(status: 'released' | 'cancelled') {
     setErr(''); setBusy(true)
     try {
@@ -458,8 +505,26 @@ function BlockDetail({ blockId, propertyId, onClose, onChanged }: {
           <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
             <Fact label="Dates" value={`${b.arrival_date} → ${b.departure_date}`} />
             <Fact label="Cut-off" value={b.cut_off_date ?? 'None agreed'} />
-            <Fact label="Commitment"
-              value={b.commitment === 'definite' ? 'Definite' : 'Tentative'} />
+            {/* Not a label any more: this is the switch that decides
+                whether the rooms are actually off sale, so it is the thing
+                you press. It read as a note for months while quietly
+                meaning nothing at all. */}
+            <div className="rounded-xl border border-slate-200 bg-white p-3">
+              <p className={lbl}>Commitment</p>
+              {b.status === 'open' ? (
+                <Select className={`${field} mt-0`} value={b.commitment}
+                  disabled={busy}
+                  onChange={(e) => void commit(
+                    e.target.value as 'tentative' | 'definite')}>
+                  <option value="tentative">Tentative — no rooms held</option>
+                  <option value="definite">Definite — rooms off sale</option>
+                </Select>
+              ) : (
+                <p className="text-sm font-semibold text-ink">
+                  {b.commitment === 'definite' ? 'Definite' : 'Tentative'}
+                </p>
+              )}
+            </div>
             <Fact label="Status" value={b.status} />
           </div>
           {b.account_name && (

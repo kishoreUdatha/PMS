@@ -42,8 +42,33 @@ from .inventory import shift_inventory
 
 #: Holding rooms and accepting pick-ups. Everything else is an ending.
 STATUSES = ("open", "released", "cancelled")
-#: What a forecast should believe. Both hold inventory.
+
+#: Whether the hotel has actually promised these rooms.
+#:
+#: This decides inventory, and it did not used to. ``commitment`` was stored,
+#: validated, returned by the API and shown on screen, and then never read
+#: again -- so a speculative "thirty rooms in March, probably" took rooms off
+#: sale exactly as hard as a signed contract, and a resort logging wedding
+#: enquiries that mostly do not convert was selling nothing on those nights.
+#:
+#: Every PMS a hotelier has used before works the other way: Opera, Maestro
+#: and Cloudbeds all hold inventory for a definite block and none for a
+#: tentative one, and require the change to definite before a room can be
+#: picked up. A field labelled "Tentative" that behaves like a confirmed
+#: contract is worse than no field, because it is believed.
 COMMITMENTS = ("tentative", "definite")
+
+
+def holds_inventory(commitment: str) -> bool:
+    """Whether a block in this state has taken rooms off sale.
+
+    One function rather than ``== "definite"`` scattered about, because the
+    create path, the release path and the pick-up path have to agree
+    perfectly: a block that takes inventory on one rule and gives it back on
+    another either leaks rooms off sale forever or credits the hotel rooms it
+    never held.
+    """
+    return commitment == "definite"
 
 
 class BlockError(Exception):
@@ -177,8 +202,14 @@ def create_block(
             delta[(ln.room_type_id, day)] = (
                 delta.get((ln.room_type_id, day), 0) + ln.rooms_blocked)
 
-    shift_inventory(db, property_id=property_id, organization_id=organization_id,
-                counter="allotment_units", delta=delta)
+    # A tentative block writes down what it WANTS -- the lines and the
+    # per-night rows are recorded either way, so making it definite later
+    # knows exactly how many rooms to take -- but it takes nothing off sale
+    # until somebody says the hotel has actually promised them.
+    if holds_inventory(commitment):
+        shift_inventory(db, property_id=property_id,
+                        organization_id=organization_id,
+                        counter="allotment_units", delta=delta)
     return block_id
 
 
@@ -214,6 +245,20 @@ def draw_down(
     whose guest stays to Saturday has bought two ordinary nights, and those
     were never off sale for anyone else to be denied.
     """
+    # A tentative block holds no inventory, so it has nothing to hand back
+    # and decrementing `allotment_units` here would free a room some OTHER
+    # block is holding on that night. Refused rather than quietly booked
+    # from general stock: the rooms the group was shown were never actually
+    # set aside, and the desk needs to be told that before it promises them.
+    commitment = db.execute(
+        text("SELECT commitment FROM booking.group_blocks WHERE id = :b"),
+        {"b": block_id},
+    ).scalar()
+    if commitment is not None and not holds_inventory(commitment):
+        raise BlockError(
+            "This block is tentative, so no rooms are actually held for it. "
+            "Mark it definite before booking against it.")
+
     taken: dict[date, int] = {}
     for day in nights:
         row = db.execute(
@@ -373,6 +418,15 @@ def release(
         {"b": block_id},
     ).mappings().all()
 
+    # What this block took off sale, which for a tentative block is nothing.
+    # Giving back rooms it never held would credit the hotel inventory twice
+    # over -- the counter is shared by every block on the night, so the
+    # rooms handed back would be another block's.
+    commitment = db.execute(
+        text("SELECT commitment FROM booking.group_blocks WHERE id = :b"),
+        {"b": block_id},
+    ).scalar_one()
+
     delta = {(r["room_type_id"], r["stay_date"]): -int(r["rooms_held"])
              for r in held}
     if delta:
@@ -381,9 +435,10 @@ def release(
                  "WHERE block_id = :b"),
             {"b": block_id},
         )
-        shift_inventory(db, property_id=property_id,
-                        organization_id=organization_id,
-                        counter="allotment_units", delta=delta)
+        if holds_inventory(commitment):
+            shift_inventory(db, property_id=property_id,
+                            organization_id=organization_id,
+                            counter="allotment_units", delta=delta)
 
     db.execute(
         text(
@@ -502,3 +557,81 @@ def summary(db: Session, block_id: uuid.UUID) -> dict:
     ).mappings().all()
 
     return {"block": dict(block), "lines": [dict(r) for r in lines]}
+
+
+def set_commitment(
+    db: Session,
+    *,
+    block_id: uuid.UUID,
+    property_id: uuid.UUID,
+    organization_id: uuid.UUID,
+    commitment: str,
+) -> int:
+    """Move a block between tentative and definite, and the rooms with it.
+
+    This is the operation the feature was missing. Commitment decided nothing
+    before, so there was nothing to change it to; now it decides whether the
+    rooms are off sale, and the sales cycle it models is exactly one of
+    changing your mind -- an enquiry firms up, or a contract falls away
+    before the cut-off.
+
+    Going definite takes the rooms the block always said it wanted. It goes
+    through ``shift_inventory`` like everything else, so a block that firmed
+    up after the nights were sold is refused with the same message any
+    overbooking gets, rather than quietly overselling the hotel -- and that
+    refusal is the honest answer, because those rooms really are gone.
+
+    Going back to tentative hands them back. Rooms already picked up are not
+    touched: they are reservations now, and a booking does not become
+    provisional because the block it came from did.
+
+    Returns the number of room-nights moved, positive taking off sale.
+    """
+    if commitment not in COMMITMENTS:
+        raise BlockError(f"Unknown commitment {commitment!r}.")
+
+    row = db.execute(
+        text("SELECT commitment, status FROM booking.group_blocks "
+             " WHERE id = :b AND property_id = :p FOR UPDATE"),
+        {"b": block_id, "p": property_id},
+    ).mappings().first()
+    if row is None:
+        raise BlockError("No such block.")
+    if row["status"] != "open":
+        raise BlockError(
+            f"This block is {row['status']} — its rooms are back on sale.")
+    if row["commitment"] == commitment:
+        return 0
+
+    # Only what the block STILL holds. A block half picked up has already
+    # handed those rooms to reservations, and taking them again would count
+    # them twice.
+    held = db.execute(
+        text(
+            """
+            SELECT room_type_id, stay_date, rooms_held
+              FROM booking.group_block_nights
+             WHERE block_id = :b AND rooms_held > 0
+             ORDER BY room_type_id, stay_date
+             FOR UPDATE
+            """
+        ),
+        {"b": block_id},
+    ).mappings().all()
+
+    going_definite = holds_inventory(commitment)
+    sign = 1 if going_definite else -1
+    delta = {(r["room_type_id"], r["stay_date"]): sign * int(r["rooms_held"])
+             for r in held}
+    if delta:
+        shift_inventory(db, property_id=property_id,
+                        organization_id=organization_id,
+                        counter="allotment_units", delta=delta)
+
+    db.execute(
+        text("UPDATE booking.group_blocks "
+             "   SET commitment = :c, updated_at = now(), version = version + 1"
+             " WHERE id = :b"),
+        {"c": commitment, "b": block_id},
+    )
+    return sum(abs(n) for n in delta.values()) * sign

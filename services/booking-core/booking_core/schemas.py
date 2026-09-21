@@ -254,6 +254,12 @@ class ArrivalOut(BaseModel):
 
 
 class DashboardOut(BaseModel):
+    #: The day these figures describe. Every number here is computed against
+    #: the property's business date, and the payload never said which day
+    #: that was -- so anything comparing the dashboard with another screen
+    #: had to assume "today", which is wrong all night and for as long as
+    #: the night audit is behind.
+    business_date: date
     occupancy_pct: int
     arrivals: int
     departures: int

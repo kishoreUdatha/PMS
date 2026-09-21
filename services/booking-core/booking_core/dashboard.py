@@ -27,6 +27,16 @@ class ArrivalRow:
 
 @dataclass
 class DashboardMetrics:
+    #: The day these figures describe.
+    #:
+    #: Every number below is computed against the property's business date,
+    #: and the response did not say which day that was -- so a caller
+    #: comparing the dashboard against any other screen had to guess, and
+    #: guessing "today" is wrong for the whole of the night and for as long
+    #: as the audit is lagging. That mismatch is exactly what made the
+    #: cross-screen test compare one day's rack with another day's
+    #: dashboard and report a disagreement neither screen had.
+    business_date: date
     occupancy_pct: int
     arrivals: int
     departures: int
@@ -297,6 +307,7 @@ def get_dashboard(
     ]
 
     return DashboardMetrics(
+        business_date=business_date,
         occupancy_pct=occupancy_pct,
         arrivals=int(arrivals),
         departures=int(departures),

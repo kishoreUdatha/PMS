@@ -201,7 +201,19 @@ def _folio_for(
             SELECT id FROM finance.folios
             WHERE property_id = :prop AND reservation_id = :res
               AND status = 'open'
-            ORDER BY created_at LIMIT 1
+            -- A group's master folio first, then the oldest.
+            --
+            -- A group booking now opens a master alongside a folio per
+            -- guest, and the room nights belong on the master: the
+            -- organiser agreed to pay for rooms, and a guest settling their
+            -- bar tab should never be shown three nights they are not
+            -- paying for. Ordering by `created_at` alone would have done
+            -- the same thing today, because the master is created first --
+            -- but only by accident of insertion order, and an accident is
+            -- not a billing rule. Said out loud, it survives somebody
+            -- reordering the inserts.
+            ORDER BY (type = 'group') DESC, created_at
+            LIMIT 1
             """
         ),
         {"prop": property_id, "res": reservation_id},
