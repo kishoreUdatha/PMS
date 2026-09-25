@@ -24,7 +24,7 @@ except ImportError:  # a system ffmpeg is just as good
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), "..", "out")
 FINAL = sys.argv[2] if len(sys.argv) > 2 else os.path.join(OUT, "pms_e2e_demo.mp4")
-RATE = 22050
+RATE = 16000  # overwritten from the first clip
 
 
 def duration(path: str) -> float:
@@ -53,7 +53,12 @@ def track(clips: list[dict], seconds: float, dest: str) -> None:
 
 
 def main() -> None:
+    global RATE
     manifest = json.load(open(os.path.join(OUT, "manifest.json")))
+    first = next((c["wav"] for seg in manifest for c in seg["clips"]), None)
+    if first:
+        with wave.open(first, "rb") as w:
+            RATE = w.getframerate()
     parts = []
     for i, seg in enumerate(manifest):
         secs = duration(seg["video"])
