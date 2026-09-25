@@ -313,54 +313,65 @@ async function guestStay(s, T) {
     // Close days until the guest's arrival night has been closed. Between
     // midnight and 05:30 in India the property's business date still reads
     // yesterday (it follows UTC), so the first close can be the day before.
-    for (let k = 0; k < 3; k++) {
-      const btnText = await p.getByRole('button', { name: 'Review & Close Day' }).count()
-      if (!btnText) break
-      await s.click(p.getByRole('button', { name: 'Review & Close Day' }), 1500)
+    let closed = ''
+    for (let k = 0; k < 3 && closed < D0; k++) {
+      await s.menu('Night Audit', 'Finance')
+      const review = p.getByRole('button', { name: 'Review & Close Day' })
+      await review.waitFor({ timeout: 15000 })
+      await s.click(review, 1500)
       const close = p.getByRole('button', { name: /close \d{1,2} \w{3} \d{4}/i })
       const label = await close.innerText()
-      const day = new Date(label.match(/\d{1,2} \w{3} \d{4}/)[0] + ' UTC').toISOString().slice(0, 10)
+      closed = new Date(label.match(/\d{1,2} \w{3} \d{4}/)[0] + ' UTC').toISOString().slice(0, 10)
       await s.click(close, 4000)
       await p.getByText('Last closed').waitFor({ timeout: 15000 })
-      if (day < D0) {
-        await s.say(`Defect found. The business date was still ${niceDay(day)}, a day behind the hotel's own date in India, so the booking made for today had nothing to charge. We close that day first, then the guest's night.`,
-          { caption: `DEFECT: business date lags the property's local (IST) date after midnight — night audit closed ${niceDay(day)} first.` })
-        await p.waitForTimeout(1500)
-        continue
+      if (closed < D0) {
+        await s.say(`Defect found. The business date was still ${niceDay(closed)}, a day behind the hotel's own date in India, so the booking made for today had nothing to charge. We close that day first, then the guest's night.`,
+          { caption: `DEFECT: business date lags the property's local (IST) date after midnight — night audit closed ${niceDay(closed)} first.` })
       }
-      break
     }
+    if (closed < D0) throw new Error(`night audit never reached ${D0} (last closed ${closed})`)
     await s.say(`${niceDay(D0)} is closed. The room night is now on the guest's folio.`)
+  })
+
+  await s.step('Reservations › In-house — generate the tax invoice', async () => {
+    await s.menu('Reservations')
+    await s.click(p.getByRole('button', { name: /^In-house/ }), 1200)
+    await s.say('The next morning the guest is leaving a day early. First, from the in house list, the desk generates the tax invoice from every charge on the folio.')
+    const row = p.locator('tr', { hasText: number })
+    await s.click(row.getByRole('button').last(), 700)
+    await s.click(p.getByRole('button', { name: /^Generate tax invoice/ }), 3500)
+    await p.getByText(/INV-\d{4}-\d+/).first().waitFor({ timeout: 15000 })
+    await s.say('The invoice is issued with the next number in the series. The room night and the room service are on it. One observation: it is marked not a GST tax invoice, because the legal name captured during onboarding does not reach the invoice settings.',
+      { caption: 'Invoice issued. DEFECT: shown as "Not a GST tax invoice" — onboarding billing details don\'t reach Invoice Settings.' })
   })
 
   await s.step('Reservations › In-house — check out, settle balance by UPI', async () => {
     await s.menu('Reservations')
     await s.click(p.getByRole('button', { name: /^In-house/ }), 1200)
-    await s.say('The next morning the guest leaves a day early. From the in house list, the desk opens check out.')
     const row = p.locator('tr', { hasText: number })
     await s.click(row.getByRole('button').last(), 700)
     await s.click(p.getByRole('button', { name: /^Check out/ }), 2000)
-    await s.say('The folio shows the room night, the room service, and the advance already paid. The balance is settled by UPI with its transaction reference.')
+    await s.say('Now check out. The folio shows the room night, the room service, and the advance already paid. The balance is settled by UPI with its transaction reference.')
     await s.click(p.getByRole('button', { name: 'UPI', exact: true }), 300)
     const full = p.getByRole('button', { name: /^Charge the full/ })
-    if (await full.count()) await s.click(full, 300)
+    if (!(await full.count())) throw new Error('no balance to settle: the room night was not charged')
+    await s.click(full, 300)
     await s.type(p.getByPlaceholder('UPI ID / Txn no.'), 'UPI-4471-2209-88')
     for (const t of ['Room key returned', 'Housekeeping notified']) await p.getByText(t).click().catch(() => {})
     await s.click(p.getByRole('button', { name: 'Complete Checkout' }), 3000)
     await p.getByText(/Checked out/).first().waitFor({ timeout: 10000 })
+    await s.say(`${T.guest.name} has checked out with nothing owing, and the room is released to housekeeping.`)
   }, { critical: true })
 
-  await s.step('Finance › Invoices — draft and issue the invoice', async () => {
+  await s.step('Finance › Invoices — issued invoice listed; settled folio cannot start a new invoice', async () => {
     await s.menu('Invoices', 'Finance')
-    await s.say('Finally the invoice. A draft is built from every charge on the folio, then issued with the next number in the series.')
+    await p.getByText(/INV-\d{4}-\d+/).first().waitFor({ timeout: 10000 })
+    await s.say('The issued invoice is listed under Finance. Defect found: the New Invoice button only offers folios with money still owing, so a guest who has paid in full, the normal case, cannot be invoiced from here.',
+      { caption: 'DEFECT: "New Invoice" lists only folios with a balance > 0 — a fully-paid guest can\'t be invoiced from this screen.' })
     await s.click(p.getByRole('button', { name: 'New Invoice' }), 1200)
-    await s.click(p.getByText('Select a folio', { exact: true }), 500)
-    await s.click(p.getByRole('option', { name: new RegExp(T.guest.name) }).first(), 400)
-    await s.click(p.getByRole('button', { name: 'Create Draft' }), 2500)
-    await s.click(p.getByRole('button', { name: 'Issue Invoice' }), 2500)
-    await p.getByText(/Issued as INV-/).waitFor({ timeout: 10000 })
-    await s.say('The invoice is issued. One observation: it is marked not a GST tax invoice, because the legal name captured during onboarding does not flow into the invoice settings.',
-      { caption: 'Invoice issued. DEFECT: shown as "Not a GST tax invoice" — onboarding billing details don\'t reach Invoice Settings.' })
+    await s.click(p.getByText('Select a folio', { exact: true }), 1200)
+    await p.keyboard.press('Escape'); await p.waitForTimeout(300)
+    await s.click(p.getByRole('button', { name: 'Cancel' }).last(), 600)
   })
   return number
 }

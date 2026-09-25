@@ -136,6 +136,8 @@ class Session {
 
   /** Click a left-hand menu entry, opening its group first if it has one. */
   async menu(label, group) {
+    // A dialog left open by an earlier step would sit over the sidebar.
+    await this.p.keyboard.press('Escape').catch(() => {})
     const aside = this.p.locator('aside')
     if (group) {
       const g = aside.getByRole('button', { name: group, exact: true })
