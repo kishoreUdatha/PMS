@@ -286,6 +286,8 @@ async function guestStay(s, T) {
     await s.click(p.getByRole('button', { name: 'Add your first category' }), 700)
     await s.type(p.getByPlaceholder(/Tiffin/), 'In-Room Dining')
     await s.click(p.getByRole('button', { name: 'Add category' }), 1400)
+    const closeCats = p.getByRole('button', { name: 'Close', exact: true })
+    if (await closeCats.count()) await s.click(closeCats.last(), 600)
     for (const [n, c, pr] of [['Andhra Veg Thali', 'THALI', '450'], ['Prawn Fry', 'PRAWN', '680'], ['Fresh Lime Soda', 'LIME', '120']]) {
       await s.click(p.getByRole('button', { name: 'Add Item' }), 600)
       await s.type(p.getByPlaceholder('What the guest orders'), n)
