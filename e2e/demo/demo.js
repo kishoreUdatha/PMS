@@ -214,9 +214,21 @@ async function onboard(s, T, verbose) {
 }
 
 // ------------------------------------------------------- guest stay, A --
+async function businessDate(p) {
+  return p.evaluate(async () => {
+    const t = localStorage.getItem('session_token')
+    const pid = JSON.parse(localStorage.getItem('session')).memberships[0].property_ids[0]
+    const r = await fetch(`/api/finance/night-audit/preview?property_id=${pid}`, { headers: { Authorization: 'Bearer ' + t } })
+    return (await r.json()).business_date
+  })
+}
+const addDays = (iso, n) => new Date(Date.parse(iso + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10)
+
 async function guestStay(s, T) {
   const p = s.p
-  const D0 = istDay(0); const D2 = istDay(2)
+  // The stay is booked on the property's own business date: night audit may
+  // only close a day that is over, so the demo needs that date, not the clock.
+  const D0 = await businessDate(p); const D2 = addDays(D0, 2)
   await s.chapter(`Tenant ${T.key} · ${T.name} · A full guest stay`)
   let number = ''
 
@@ -231,6 +243,10 @@ async function guestStay(s, T) {
 
   await s.step('Reservations › New Reservation — two nights, room assigned, cash advance', async () => {
     await s.menu('Reservations')
+    if (D0 < istDay(0)) {
+      await s.say(`Defect found. It is already ${niceDay(istDay(0))} in India, but this new property's business date is still ${niceDay(D0)}. It follows the U T C calendar until five thirty in the morning. We book on the business date, so the night audit can close it.`,
+        { caption: `DEFECT: business date is ${niceDay(D0)} while it is already ${niceDay(istDay(0))} in India (follows UTC until 05:30 IST).` })
+    }
     await s.say(`We create a reservation for ${T.guest.name}: two nights in a Deluxe Sea View room, from ${niceDay(D0)}.`)
     await s.click(p.getByRole('button', { name: 'New Reservation' }), 1500)
     const d = p.locator('input[type=date]')
@@ -321,9 +337,15 @@ async function guestStay(s, T) {
       await s.click(review, 1500)
       const close = p.getByRole('button', { name: /close \d{1,2} \w{3} \d{4}/i })
       const label = await close.innerText()
-      closed = new Date(label.match(/\d{1,2} \w{3} \d{4}/)[0] + ' UTC').toISOString().slice(0, 10)
+      const shown = new Date(label.match(/\d{1,2} \w{3} \d{4}/)[0] + ' UTC').toISOString().slice(0, 10)
       await s.click(close, 4000)
-      await p.getByText('Last closed').waitFor({ timeout: 15000 })
+      // What the server actually closed, not what the button promised: with
+      // the date lag the two can differ.
+      const last = p.getByText('Last closed').locator('..')
+      await last.waitFor({ timeout: 15000 })
+      await p.waitForTimeout(800)
+      closed = new Date((await last.innerText()).match(/\d{1,2} \w{3} \d{4}/)[0] + ' UTC').toISOString().slice(0, 10)
+      console.log(`night audit: button said ${shown}, server closed ${closed}, guest night ${D0}`)
       if (closed < D0) {
         await s.say(`Defect found. The business date was still ${niceDay(closed)}, a day behind the hotel's own date in India, so the booking made for today had nothing to charge. We close that day first, then the guest's night.`,
           { caption: `DEFECT: business date lags the property's local (IST) date after midnight — night audit closed ${niceDay(closed)} first.` })
@@ -333,16 +355,15 @@ async function guestStay(s, T) {
     await s.say(`${niceDay(D0)} is closed. The room night is now on the guest's folio.`)
   })
 
-  await s.step('Reservations › In-house — generate the tax invoice', async () => {
-    await s.menu('Reservations')
-    await s.click(p.getByRole('button', { name: /^In-house/ }), 1200)
-    await s.say('The next morning the guest is leaving a day early. First, from the in house list, the desk generates the tax invoice from every charge on the folio.')
-    const row = p.locator('tr', { hasText: number })
-    await s.click(row.getByRole('button').last(), 700)
-    await s.click(p.getByRole('button', { name: /^Generate tax invoice/ }), 3500)
-    await p.getByText(/INV-\d{4}-\d+/).first().waitFor({ timeout: 15000 })
-    await s.say('The invoice is issued with the next number in the series. The room night and the room service are on it. One observation: it is marked not a GST tax invoice, because the legal name captured during onboarding does not reach the invoice settings.',
-      { caption: 'Invoice issued. DEFECT: shown as "Not a GST tax invoice" — onboarding billing details don\'t reach Invoice Settings.' })
+  await s.step('Finance › Invoices — draft the invoice while the guest is in house', async () => {
+    await s.menu('Invoices', 'Finance')
+    await s.say('The next morning the guest is leaving a day early. The desk drafts the invoice first: it picks up every charge on the folio. A number is only given when the stay is over.')
+    await s.click(p.getByRole('button', { name: 'New Invoice' }), 1200)
+    await s.click(p.getByText('Select a folio', { exact: true }), 500)
+    await s.click(p.getByRole('option', { name: new RegExp(T.guest.name) }).first(), 400)
+    await s.click(p.getByRole('button', { name: 'Create Draft' }), 2500)
+    await p.getByRole('button', { name: 'Issue Invoice' }).waitFor({ timeout: 10000 })
+    await s.say('The draft shows the room night and the room service.')
   })
 
   await s.step('Reservations › In-house — check out, settle balance by UPI', async () => {
@@ -363,15 +384,16 @@ async function guestStay(s, T) {
     await s.say(`${T.guest.name} has checked out with nothing owing, and the room is released to housekeeping.`)
   }, { critical: true })
 
-  await s.step('Finance › Invoices — issued invoice listed; settled folio cannot start a new invoice', async () => {
+  await s.step('Finance › Invoices — issue the invoice after check-out', async () => {
     await s.menu('Invoices', 'Finance')
-    await p.getByText(/INV-\d{4}-\d+/).first().waitFor({ timeout: 10000 })
-    await s.say('The issued invoice is listed under Finance. Defect found: the New Invoice button only offers folios with money still owing, so a guest who has paid in full, the normal case, cannot be invoiced from here.',
-      { caption: 'DEFECT: "New Invoice" lists only folios with a balance > 0 — a fully-paid guest can\'t be invoiced from this screen.' })
-    await s.click(p.getByRole('button', { name: 'New Invoice' }), 1200)
-    await s.click(p.getByText('Select a folio', { exact: true }), 1200)
-    await p.keyboard.press('Escape'); await p.waitForTimeout(300)
-    await s.click(p.getByRole('button', { name: 'Cancel' }).last(), 600)
+    await s.click(p.getByRole('button', { name: 'Drafts' }), 1200)
+    await s.click(p.locator('tbody tr', { hasText: T.guest.name }).first(), 2000)
+    await s.click(p.getByRole('button', { name: 'Issue Invoice' }), 2500)
+    await p.getByText(/Issued as INV-/).waitFor({ timeout: 10000 })
+    await s.say('With the stay over, the invoice is issued with the first number in the series. Observation: it is marked not a GST tax invoice, because the legal name entered during onboarding does not reach the invoice settings.',
+      { caption: 'Invoice issued. DEFECT: shown as "Not a GST tax invoice" — onboarding billing details don\'t reach Invoice Settings.' })
+    await s.say('Also, had the desk not drafted it before check out, it could not start one now: New Invoice only offers folios that still owe money.',
+      { caption: 'DEFECT: "New Invoice" lists only folios with a balance > 0 — a fully-paid guest can\'t be invoiced from scratch.' })
   })
   return number
 }
