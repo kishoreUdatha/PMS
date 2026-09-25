@@ -310,9 +310,26 @@ async function guestStay(s, T) {
   await s.step('Finance › Night Audit — close the business day, post room charges', async () => {
     await s.menu('Night Audit', 'Finance')
     await s.say('End of day. The night audit checks for open shifts and no shows, posts tonight\'s room charge to every occupied room, and moves the business date forward.')
-    await s.click(p.getByRole('button', { name: 'Review & Close Day' }), 1500)
-    await s.click(p.getByRole('button', { name: /^Close \d/ }), 4000)
-    await p.getByText('Last closed').waitFor({ timeout: 15000 })
+    // Close days until the guest's arrival night has been closed. Between
+    // midnight and 05:30 in India the property's business date still reads
+    // yesterday (it follows UTC), so the first close can be the day before.
+    for (let k = 0; k < 3; k++) {
+      const btnText = await p.getByRole('button', { name: 'Review & Close Day' }).count()
+      if (!btnText) break
+      await s.click(p.getByRole('button', { name: 'Review & Close Day' }), 1500)
+      const close = p.getByRole('button', { name: /^Close \d/ })
+      const label = await close.innerText()
+      const day = new Date(label.match(/\d{1,2} \w{3} \d{4}/)[0] + ' UTC').toISOString().slice(0, 10)
+      await s.click(close, 4000)
+      await p.getByText('Last closed').waitFor({ timeout: 15000 })
+      if (day < D0) {
+        await s.say(`Defect found. The business date was still ${niceDay(day)}, a day behind the hotel's own date in India, so the booking made for today had nothing to charge. We close that day first, then the guest's night.`,
+          { caption: `DEFECT: business date lags the property's local (IST) date after midnight — night audit closed ${niceDay(day)} first.` })
+        await p.waitForTimeout(1500)
+        continue
+      }
+      break
+    }
     await s.say(`${niceDay(D0)} is closed. The room night is now on the guest's folio.`)
   })
 
@@ -325,7 +342,8 @@ async function guestStay(s, T) {
     await s.click(p.getByRole('button', { name: /^Check out/ }), 2000)
     await s.say('The folio shows the room night, the room service, and the advance already paid. The balance is settled by UPI with its transaction reference.')
     await s.click(p.getByRole('button', { name: 'UPI', exact: true }), 300)
-    await s.click(p.getByRole('button', { name: /^Charge the full/ }), 300)
+    const full = p.getByRole('button', { name: /^Charge the full/ })
+    if (await full.count()) await s.click(full, 300)
     await s.type(p.getByPlaceholder('UPI ID / Txn no.'), 'UPI-4471-2209-88')
     for (const t of ['Room key returned', 'Housekeeping notified']) await p.getByText(t).click().catch(() => {})
     await s.click(p.getByRole('button', { name: 'Complete Checkout' }), 3000)
