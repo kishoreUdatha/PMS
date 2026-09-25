@@ -491,7 +491,7 @@ async function uiIsolation(s, T, a) {
   await s.step('Isolation (UI) — global search for tenant A\'s guest finds nothing', async () => {
     const q = p.getByPlaceholder('Search guests, reservations, rooms...')
     await s.type(q, 'Ravi'); await p.waitForTimeout(1800)
-    const body = await p.locator('body').innerText()
+    const body = await p.locator('main').innerText()
     await s.say(`Searching for ${A.guest.name}, a guest of the other hotel, finds nothing.`)
     if (body.includes(A.guest.name)) throw new Error("tenant A's guest appeared in tenant B's search")
     await q.fill(''); await p.keyboard.press('Escape')
@@ -518,7 +518,15 @@ async function uiIsolation(s, T, a) {
     await p.goto(BASE + '/'); await p.waitForTimeout(1500)
     const sw = p.locator('header button', { hasText: T.name }).first()
     await s.click(sw, 800)
-    const body = await p.locator('body').innerText()
+    // The switcher's own list, not the page: the demo's chapter banner names
+    // both hotels and would match.
+    const body = await p.evaluate(() => {
+      const bar = document.getElementById('__demo_bar'); const keep = bar && bar.style.display
+      if (bar) bar.style.display = 'none'
+      const t = document.body.innerText
+      if (bar) bar.style.display = keep
+      return t
+    })
     await s.say(`The property switcher lists only ${T.name}.`)
     await p.keyboard.press('Escape')
     if (body.includes(A.name)) throw new Error("tenant A's property is offered in tenant B's switcher")
