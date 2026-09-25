@@ -317,7 +317,7 @@ async function guestStay(s, T) {
       const btnText = await p.getByRole('button', { name: 'Review & Close Day' }).count()
       if (!btnText) break
       await s.click(p.getByRole('button', { name: 'Review & Close Day' }), 1500)
-      const close = p.getByRole('button', { name: /^Close \d/ })
+      const close = p.getByRole('button', { name: /close \d{1,2} \w{3} \d{4}/i })
       const label = await close.innerText()
       const day = new Date(label.match(/\d{1,2} \w{3} \d{4}/)[0] + ' UTC').toISOString().slice(0, 10)
       await s.click(close, 4000)
