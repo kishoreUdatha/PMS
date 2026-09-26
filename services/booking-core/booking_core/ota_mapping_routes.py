@@ -31,7 +31,9 @@ import logging
 import uuid
 
 from chirala_common.audit import record_audit
-from chirala_common.authz import Caller, assert_property_in_org, build_authz
+from chirala_common.authz import (
+    Caller, assert_property_in_org, build_authz, require_property_permission,
+)
 from chirala_common.routing import TransactionalRoute
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -107,9 +109,15 @@ class MappingOut(BaseModel):
 
 # ---- the channel, and proof that it is this tenant's -------------------------
 
-def _context(db: Session, caller: Caller, connection_id: uuid.UUID):
+def _context(db: Session, caller: Caller, connection_id: uuid.UUID,
+             action: str):
     conn = _connection_or_404(db, caller, connection_id)
     assert_property_in_org(db, caller, conn["property_id"])
+    # The route's own permission is checked organisation-wide, because the
+    # property is only known once the connection is read. Check it again
+    # against that property, or a user of one hotel could map a sister's.
+    require_property_permission(db, caller, conn["property_id"],
+                                "distribution", action)
     link = db.execute(
         text("SELECT id, external_property_id "
              "FROM distribution.channel_manager_links "
@@ -315,7 +323,7 @@ def get_ota_mapping(
 ):
     """The OTA's rooms and rates, this property's plans, and today's pairs."""
     _require_channex()
-    conn, link, group = _context(db, caller, connection_id)
+    conn, link, group = _context(db, caller, connection_id, "view")
     with Channex() as cx:
         attrs = _channel(cx, conn, link, group)
         rooms, err = _ota_rooms(cx, attrs)
@@ -333,7 +341,7 @@ def set_ota_mapping(
 ):
     """Replace the channel's pairs with these. An empty list clears them."""
     _require_channex()
-    conn, link, group = _context(db, caller, connection_id)
+    conn, link, group = _context(db, caller, connection_id, "configure")
     plans = _plans(db, link["id"])
 
     seen: set[tuple[str, str]] = set()
@@ -402,7 +410,7 @@ def go_live(
 ):
     """Switch the OTA channel on (the hotel goes on sale there) or off."""
     _require_channex()
-    conn, link, group = _context(db, caller, connection_id)
+    conn, link, group = _context(db, caller, connection_id, "configure")
     plans = _plans(db, link["id"])
     with Channex() as cx:
         attrs = _channel(cx, conn, link, group)

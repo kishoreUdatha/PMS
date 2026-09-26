@@ -116,6 +116,12 @@ class GatewaySettings(BaseSettings):
     #: Presented on calls the gateway makes on its own behalf — a flow that
     #: has no user to borrow a token from. Shared with the services.
     service_token: str = ""
+    #: Strict-Transport-Security max-age, sent on responses to HTTPS requests
+    #: (directly, or as reported by the TLS terminator in X-Forwarded-Proto).
+    #: 0 turns it off -- the escape hatch for a deployment still moving to
+    #: HTTPS, since a browser that has seen the header refuses plain HTTP to
+    #: the host until it expires.
+    hsts_max_age_seconds: int = 180 * 24 * 3600
 
 
 settings = GatewaySettings()
@@ -140,6 +146,44 @@ app.add_middleware(
 # gateway logs under the same one. No /ready here: the gateway holds no
 # connection of its own to check, and its upstreams have theirs.
 install_observability(app, service="gateway", ready_endpoint=False)
+
+#: Everything the gateway answers with except the booking page is JSON, a PDF
+#: or an image -- none of which should ever run script, load anything, or be
+#: framed. The strict policy says exactly that.
+_CSP_STRICT = "default-src 'none'; frame-ancestors 'none'"
+#: The booking page is a real page with inline script and styles, and a
+#: policy precise enough not to break it would have to be kept in step with
+#: every edit to it. Refusing to be framed is the part that matters there
+#: (clickjacking a payment step), so that is all it gets.
+_CSP_PAGE = "frame-ancestors 'none'"
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Headers that tell a browser how little to trust what comes back.
+
+    Here rather than in each service because the gateway is the only thing a
+    browser talks to. ``setdefault`` throughout, so a route that deliberately
+    says something different keeps its own answer.
+
+    The staff SPA is built by Vite and served elsewhere, so the strict CSP
+    here cannot break it; its own host sets its page policy.
+    """
+    response = await call_next(request)
+    h = response.headers
+    h.setdefault("X-Content-Type-Options", "nosniff")
+    h.setdefault("X-Frame-Options", "DENY")
+    h.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    is_page = response.headers.get("content-type", "").startswith("text/html")
+    h.setdefault("Content-Security-Policy", _CSP_PAGE if is_page else _CSP_STRICT)
+    # Only over HTTPS: browsers ignore it on plain HTTP anyway, and a local
+    # stack on http://localhost should not learn to refuse itself.
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    if settings.hsts_max_age_seconds > 0 and proto.split(",")[0].strip() == "https":
+        h.setdefault("Strict-Transport-Security",
+                     f"max-age={settings.hsts_max_age_seconds}")
+    return response
+
 
 _ROUTES = {
     "iam": settings.iam_url,
@@ -336,7 +380,14 @@ async def _proxy(target_base: str, path: str, request: Request) -> Response:
     url = f"{target_base}/{path}"
     body = await request.body()
     fwd_headers = {
-        k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP
+        k: v for k, v in request.headers.items()
+        if k.lower() not in _HOP_BY_HOP
+        # X-Debug-Subject is "I am whoever I say I am", honoured by a service
+        # running in local mode. Nothing arriving from outside may carry it
+        # through, whatever mode the service behind happens to be in: one
+        # misconfigured ENVIRONMENT should not be the only thing between the
+        # internet and every account.
+        and not k.lower().startswith("x-debug-")
     }
     # Say who is really calling, and overwrite rather than append.
     #
@@ -449,6 +500,12 @@ async def media(bucket: str, key: str, request: Request) -> Response:
     # the cache entry would. Worth saying so: a booking page is mostly
     # photographs, and re-fetching them on every step is the difference between
     # quick and sluggish on a phone.
+    #
+    # Not for a guest's ID scan. That link is deliberately short-lived, and a
+    # shared cache holding the image for an hour would outlive it -- serving
+    # a passport to whoever asks the cache for the same URL.
+    if key.startswith("guest-docs/"):
+        passthrough["Cache-Control"] = "private, no-store"
     passthrough.setdefault("Cache-Control", "public, max-age=3600")
 
     async def body():

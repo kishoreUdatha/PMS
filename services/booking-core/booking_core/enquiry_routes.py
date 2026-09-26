@@ -40,7 +40,9 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from chirala_common.audit import record_audit
-from chirala_common.authz import Caller, assert_property_in_org, build_authz
+from chirala_common.authz import (
+    Caller, assert_property_in_org, build_authz, require_property_permission,
+)
 from chirala_common.routing import TransactionalRoute
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -383,7 +385,8 @@ def create_enquiry(
     db: Session = Depends(get_session),
 ):
     """Record someone who asked."""
-    assert_property_in_org(db, caller, body.property_id)
+    require_property_permission(db, caller, body.property_id,
+                                "reservations", "create")
     if body.channel and body.channel not in CHANNELS:
         raise HTTPException(
             status_code=422,
@@ -453,7 +456,8 @@ def update_enquiry(
     db: Session = Depends(get_session),
 ):
     """Correct the details of an enquiry. Status is moved separately."""
-    assert_property_in_org(db, caller, body.property_id)
+    require_property_permission(db, caller, body.property_id,
+                                "reservations", "edit")
     before = _load(db, enquiry_id, body.property_id)
     if before["status"] == "converted":
         raise HTTPException(
@@ -506,7 +510,8 @@ def move_enquiry(
     which has an actual booking to point at. The check constraint would refuse
     it anyway, and that is the right place for the rule to live.
     """
-    assert_property_in_org(db, caller, body.property_id)
+    require_property_permission(db, caller, body.property_id,
+                                "reservations", "edit")
     before = _load(db, enquiry_id, body.property_id)
 
     if body.status == "converted":
@@ -702,7 +707,8 @@ def convert_enquiry(
     stays on the board with the shortage reported, rather than the enquiry
     being marked converted against a booking that does not exist.
     """
-    assert_property_in_org(db, caller, body.property_id)
+    require_property_permission(db, caller, body.property_id,
+                                "reservations", "create")
     e = _load(db, enquiry_id, body.property_id)
     if e["status"] == "converted":
         raise HTTPException(

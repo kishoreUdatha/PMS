@@ -55,9 +55,7 @@ class BookingSettings(BaseServiceSettings):
     #: tight for anything walking a year of the rate calendar.
     public_rate_limit: int = 60
     public_rate_limit_seconds: int = 60
-    #: Peers whose X-Forwarded-For may be believed. Only our own gateway; a
-    #: header from anyone else is a claim, not evidence.
-    trusted_proxies: str = ""
+    # ``trusted_proxies`` is shared with iam now; see BaseServiceSettings.
     # --- channel manager (Channex) ------------------------------------
     #: Where Channex lives. Staging by default: a deployment that has not been
     #: told otherwise must not be talking to a production channel manager.

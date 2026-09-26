@@ -15,7 +15,7 @@ from chirala_common.authz import (
     caller_org,
     assert_entity_in_org,
     assert_org_matches_caller,
-    Caller, assert_property_in_org, build_authz,
+    Caller, assert_property_in_org, build_authz, require_property_permission,
 )
 from chirala_common.routing import TransactionalRoute
 from fastapi import (
@@ -57,7 +57,8 @@ router = APIRouter(route_class=TransactionalRoute)
 def create_room_type(body: schemas.RoomTypeCreate, caller: Caller = Depends(require_permission("rooms", "configure")), db: Session = Depends(get_session)):
     # The organisation is the caller's own; the body no longer
     # carries one to disagree with.
-    assert_property_in_org(db, caller, body.property_id)
+    require_property_permission(db, caller, body.property_id,
+                                "rooms", "configure")
     rt_id = uuid.uuid4()
     db.execute(
         text(
@@ -119,7 +120,8 @@ def seed_inventory(body: schemas.InventorySeed, caller: Caller = Depends(require
     """
     # The organisation is the caller's own; the body no longer
     # carries one to disagree with.
-    assert_property_in_org(db, caller, body.property_id)
+    require_property_permission(db, caller, body.property_id,
+                                "rooms", "configure")
     if body.end_date < body.start_date:
         raise HTTPException(status_code=422, detail="end_date before start_date")
 
@@ -365,7 +367,8 @@ def create_hold_endpoint(body: schemas.HoldCreate, caller: Caller = Depends(requ
     """
     # The organisation is the caller's own; the body no longer
     # carries one to disagree with.
-    assert_property_in_org(db, caller, body.property_id)
+    require_property_permission(db, caller, body.property_id,
+                                "reservations", "create")
     if body.bill_to == "company" and body.commercial_account_id is None:
         raise HTTPException(
             status_code=422,

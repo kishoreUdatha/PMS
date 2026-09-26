@@ -18,7 +18,7 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from chirala_common.authz import Caller, assert_property_in_org
+from chirala_common.authz import Caller, require_property_permission
 from chirala_common.routing import TransactionalRoute
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -64,7 +64,8 @@ def create_intent(
     db: Session = Depends(get_session),
 ):
     """Open an intent for a held booking, and an order to pay it against."""
-    assert_property_in_org(db, caller, body.property_id)
+    require_property_permission(db, caller, body.property_id,
+                                "payments", "edit")
 
     res = db.execute(
         text("SELECT number, status, organization_id FROM booking.reservations "

@@ -74,3 +74,5 @@ e2e/node_modules/
 *.bak*.xlsx
 # Excel's lock file while the workbook is open.
 ~$*.xlsx
+# Per-worktree virtualenvs
+.venv-wt/

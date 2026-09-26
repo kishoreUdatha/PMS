@@ -5,10 +5,11 @@ relationship (property scope). Every service that guards a route uses this
 module so the rule is defined once; the permission data itself lives in the
 ``iam`` schema on the shared cluster, which every service can read.
 
-Identity source: a validated OIDC token (subject) in production. For local
-development before Keycloak is fully wired, the caller subject may be supplied
-via the ``X-Debug-Subject`` header; this is accepted ONLY when ENVIRONMENT=local.
-Real deployments must reject it (the gateway/token validator provides identity).
+Identity source: a signed session token issued by iam (see
+``chirala_common.session_tokens``). For local development the caller subject
+may also be supplied via the ``X-Debug-Subject`` header; this is accepted ONLY
+when ENVIRONMENT is exactly ``local``, and the gateway strips the header on the
+way in regardless.
 
 Services wire this up once at import time::
 
@@ -19,9 +20,9 @@ Services wire this up once at import time::
 
 from __future__ import annotations
 
+from . import session_tokens
 from .db import bind_tenant_context, identity_context
 
-import base64
 import hmac
 import uuid
 from collections.abc import Callable, Iterator
@@ -90,19 +91,14 @@ def _refuse_if_suspended(caller: Caller) -> None:
         )
 
 
-def subject_from_bearer(authorization: str | None) -> str | None:
-    """Extract the subject from a dev session token (base64 ``dev:<subject>``).
+def subject_from_bearer(authorization: str | None, db: Session) -> str | None:
+    """The subject of a live session token: signed, unexpired, not signed out.
 
-    Replace with JWT ``sub`` validation (``chirala_common.auth``) when Keycloak
-    is wired; this is the single seam that has to change.
+    The one seam every service goes through; the rules live in
+    ``chirala_common.session_tokens`` so iam's own caller and ``/auth/me``
+    cannot disagree with this one about what a valid token is.
     """
-    if not authorization or not authorization.lower().startswith("bearer "):
-        return None
-    try:
-        raw = base64.urlsafe_b64decode(authorization.split(" ", 1)[1].encode()).decode()
-    except Exception:  # noqa: BLE001
-        return None
-    return raw[4:] if raw.startswith("dev:") else None
+    return session_tokens.subject_from_bearer(authorization, db)
 
 
 # Query shared by both permission dependencies. ``:prop IS NULL`` makes the
@@ -240,7 +236,7 @@ def build_authz(
                 detail="Invalid service credential",
             )
 
-        subject = subject_from_bearer(authorization)
+        subject = subject_from_bearer(authorization, db)
         if subject is None and environment() == "local":
             subject = x_debug_subject
         if not subject:
@@ -363,6 +359,15 @@ def build_authz(
                                 is_service=caller.is_service)
             _check(db, caller, resource_code, action_code, None)
             guard_request_tenancy(request, db, caller)
+            # An "organisation" route that nonetheless names a property --
+            # ``/channel-links/provision?property_id=`` and its like -- acts
+            # on that property, so the grant has to cover it. Checked with no
+            # property only, a role scoped to one hotel passed for every
+            # hotel in the organisation.
+            for src in (request.path_params, request.query_params):
+                prop = _uuid_or_none(src.get("property_id"))
+                if prop is not None:
+                    _check(db, caller, resource_code, action_code, prop)
             bind_tenant_context(db, organization_id=caller.organization_id,
                                 user_id=caller.user_id,
                                 is_service=caller.is_service)
@@ -371,6 +376,46 @@ def build_authz(
         return _dep
 
     return get_caller, require_permission, require_org_permission
+
+
+def require_property_permission(
+    db: Session, caller: Caller, property_id: uuid.UUID,
+    resource_code: str, action_code: str,
+) -> None:
+    """The permission check, again, for a property named in the request body.
+
+    The dependencies only see the path and the query string. A route that
+    takes ``property_id`` in its JSON body is checked with no property at
+    all, and the grant query reads a missing property as "anywhere in the
+    organisation" -- so a receptionist whose role covers one hotel passed the
+    check for a sister hotel, and ``assert_property_in_org`` then agreed,
+    because the sister hotel *is* in the same organisation. Same tenant is
+    not the same thing as permitted.
+
+    So a handler that writes to a body-named property calls this with the
+    same resource and action its dependency asked for: tenancy first (same
+    refusal as the other guards), then the grant, scoped to that property --
+    an organisation-wide assignment, or one on exactly this property.
+
+    A service caller is trusted for the permission, as in the dependencies,
+    but still held to its organisation.
+    """
+    assert_property_in_org(db, caller, property_id)
+    if caller.is_service:
+        return
+    if caller.user_id is None:
+        raise HTTPException(status_code=403, detail="No active membership")
+    granted = db.execute(
+        text(_GRANT_SQL),
+        {"uid": caller.user_id, "res": resource_code, "act": action_code,
+         "prop": property_id},
+    ).first()
+    if granted is None:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Permission denied: {resource_code}.{action_code} "
+                   "for this property",
+        )
 
 
 def caller_org(caller: Caller) -> uuid.UUID:

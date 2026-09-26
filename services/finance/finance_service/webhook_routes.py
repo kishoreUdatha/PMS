@@ -99,6 +99,34 @@ def verify_signature(body: bytes, signature: str, secret: str) -> bool:
     return hmac.compare_digest(expected, signature)
 
 
+def dedupe_key(event: dict, body: bytes) -> str:
+    """What makes two deliveries "the same event", read from the signed body.
+
+    This used to be the ``X-Razorpay-Event-Id`` header. The signature covers
+    the body and nothing else, so anybody holding one genuine delivery -- a
+    proxy log, a replayed capture -- could resend it with a fresh header and
+    have it treated as new every time.
+
+    So the key is the event type plus the id of the entity it is about (the
+    payment for ``payment.*``, the refund for ``refund.*``): a payment is
+    captured once, however many times it is announced. An event whose
+    payload carries no entity id falls back to a hash of the exact signed
+    bytes, which a replay cannot change without breaking the signature.
+    """
+    event_type = str(event.get("event") or "")
+    payload = event.get("payload")
+    payload = payload if isinstance(payload, dict) else {}
+    contains = event.get("contains")
+    if not isinstance(contains, list):
+        contains = list(payload)
+    for name in contains:
+        part = payload.get(name) if isinstance(name, str) else None
+        entity = part.get("entity") if isinstance(part, dict) else None
+        if isinstance(entity, dict) and entity.get("id"):
+            return f"{event_type}:{entity['id']}"[:120]
+    return f"{event_type}:sha256:{hashlib.sha256(body).hexdigest()}"[:120]
+
+
 @webhook_router.post("/razorpay/{webhook_ref}",
                      status_code=status.HTTP_200_OK)
 async def razorpay_tenant_webhook(
@@ -182,15 +210,16 @@ async def _receive(
     except ValueError:
         raise HTTPException(status_code=400, detail="Malformed body.")
 
-    # Razorpay puts the id in a header; older payloads carry it in the body.
-    event_id = (request.headers.get("x-razorpay-event-id")
-                or event.get("id") or "")
     event_type = event.get("event", "")
-    if not event_id:
-        # Without an id there is no way to tell a retry from a new event, and
-        # acting on it risks doing the same thing twice.
-        log.warning("razorpay webhook without an event id: %s", event_type)
-        raise HTTPException(status_code=400, detail="Missing event id.")
+    event_id = dedupe_key(event, body)
+    if not event_type:
+        log.warning("razorpay webhook without an event type")
+        raise HTTPException(status_code=400, detail="Missing event type.")
+    header_id = request.headers.get("x-razorpay-event-id")
+    if header_id:
+        # Logged for tracing against Razorpay's dashboard, never used to
+        # decide anything: the signature does not cover headers.
+        log.info("razorpay event %s (header id %s)", event_id, header_id)
 
     # The event log has no tenant, and the order it names has not been
     # matched to one yet: both are read in system context until the intent

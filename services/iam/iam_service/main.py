@@ -7,6 +7,7 @@ import contextlib
 from collections.abc import AsyncIterator
 
 from chirala_common.observability import install_observability
+from chirala_common.config import refuse_unsafe_boot
 from fastapi import FastAPI
 
 from .approvals_routes import approvals_router
@@ -32,6 +33,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     for the night audit. Safe to have more than one: an invoice is unique per
     subscription per period, so a second replica produces nothing.
     """
+    refuse_unsafe_boot(settings, "iam")
     task = (
         asyncio.create_task(billing_loop())
         if settings.billing_run_enabled

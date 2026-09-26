@@ -146,6 +146,17 @@ def channex_webhook(
             event_type)
         return {"status": "no_revision_id", "event": event_type,
                 "hint": "Enable 'Send Data' on the Channex webhook."}
+    # It goes into a URL path next, sent with our Channex API key. Unchecked,
+    # "../../properties/..." fetched whatever that key can read, and a "?"
+    # or "#" rewrote the request. Channex revision ids are UUIDs, so that is
+    # all that is let through -- in canonical form, so one revision cannot be
+    # claimed twice under two spellings.
+    try:
+        revision_id = str(uuid.UUID(revision_id))
+    except ValueError:
+        log.error("channex %s carried a revision_id that is not a UUID: %r",
+                  event_type, revision_id[:80])
+        return {"status": "invalid_revision_id", "event": event_type}
 
     result = ingest(db, revision_id, event_type)
     if result["status"] == "deferred":

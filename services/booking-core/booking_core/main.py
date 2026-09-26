@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from collections.abc import AsyncIterator
 
 from chirala_common.observability import install_observability
+from chirala_common.config import refuse_unsafe_boot
 from fastapi import FastAPI
 
 from .channel_routes import channel_router
@@ -54,6 +56,8 @@ from .ota_action_routes import ota_router
 from .rule_routes import rule_router
 from .routes import router
 
+log = logging.getLogger("uvicorn.error").getChild("booking-core")
+
 @contextlib.asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Own the hold reaper for as long as the service is up.
@@ -63,6 +67,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     holds it takes with SKIP LOCKED, so two workers divide the work instead of
     fighting over it.
     """
+    refuse_unsafe_boot(settings, "booking-core")
+    # Said once, at start, because the difference between staging and
+    # production Channex is the difference between test bookings and a
+    # real guest's room being sold twice, and nothing else shows which.
+    log.info("Channex API: %s (%s)", settings.channex_api_url,
+             "enabled" if settings.channex_api_key else "no API key; integration off")
     tasks = []
     if settings.hold_reaper_enabled:
         tasks.append(asyncio.create_task(hold_reaper_loop()))

@@ -4,10 +4,11 @@ Authorization = active membership AND scoped role permission AND record
 relationship (property scope). This module resolves the caller and enforces a
 required (resource, action) permission for the target property.
 
-Identity source: a validated OIDC token (subject) in production. For local
-development before Keycloak is fully wired, the caller subject may be supplied
-via the ``X-Debug-Subject`` header; this is accepted ONLY when ENVIRONMENT=local.
-Real deployments must reject it (the gateway/token validator provides identity).
+Identity source: the signed session token iam itself issues, checked by
+``chirala_common.session_tokens`` exactly as booking-core and finance check it.
+For local development the caller subject may also be supplied via the
+``X-Debug-Subject`` header; this is accepted ONLY when ENVIRONMENT is exactly
+``local``.
 """
 
 from __future__ import annotations
@@ -18,6 +19,8 @@ from dataclasses import dataclass, field
 from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+
+from chirala_common.session_tokens import subject_from_bearer
 
 from .database import get_session
 from .settings import settings
@@ -53,23 +56,11 @@ def get_caller(
 ) -> Caller:
     """Resolve the authenticated caller.
 
-    Production: derive subject from the validated bearer token. Local dev:
-    fall back to X-Debug-Subject so the flow is testable before Keycloak.
+    From the signed session token, through the same check every other service
+    uses. Local dev only: fall back to X-Debug-Subject so the flow is testable
+    without signing in.
     """
-    subject: str | None = None
-    if authorization and authorization.lower().startswith("bearer "):
-        # Dev session token (base64 'dev:<subject>'). Replace with JWT 'sub'
-        # validation (chirala_common.auth) when Keycloak is wired.
-        import base64
-
-        try:
-            raw = base64.urlsafe_b64decode(
-                authorization.split(" ", 1)[1].encode()
-            ).decode()
-            if raw.startswith("dev:"):
-                subject = raw[4:]
-        except Exception:  # noqa: BLE001
-            subject = None
+    subject = subject_from_bearer(authorization, db)
     if subject is None and settings.environment == "local":
         subject = x_debug_subject
 
@@ -121,8 +112,11 @@ def get_caller(
 # Caller also carries.
 from chirala_common.db import bind_tenant_context, identity_context
 from chirala_common.authz import (  # noqa: F401
+    _GRANT_SQL,
+    _uuid_or_none,
     assert_property_in_org,
     guard_request_tenancy,
+    require_property_permission,
 )
 
 
@@ -247,6 +241,15 @@ def require_org_permission(resource_code: str, action_code: str):
                 status_code=403,
                 detail=f"Permission denied: {resource_code}.{action_code}",
             )
+        # A route that names a property in its path or query acts on that
+        # property, so the grant has to reach it: an assignment on another
+        # hotel in the same organisation is not permission here. The same
+        # rule as the shared require_org_permission.
+        for src in (request.path_params, request.query_params):
+            prop = _uuid_or_none(src.get("property_id"))
+            if prop is not None:
+                require_property_permission(db, caller, prop,
+                                            resource_code, action_code)
         return caller
 
     return _dep
