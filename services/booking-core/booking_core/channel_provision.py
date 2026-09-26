@@ -321,9 +321,27 @@ def provision(db: Session, property_id: uuid.UUID,
         _sync_rates(db, cx, link_id, property_id, external, res)
         _register_webhook(cx, external, res)
         _sync_channels(db, cx, property_id, organization_id, external, res)
+        _first_full_sync(db, link_id)
 
     _record_outcome(db, organization_id, property_id, res)
     return res
+
+
+def _first_full_sync(db: Session, link_id) -> None:
+    """Publish everything once, when the channel manager has nothing yet.
+
+    Going live -- or coming back after the channel manager lost the property
+    -- is the one moment a full 500-day sync is right. After it, only changes
+    are sent, as the outbox records them.
+    """
+    if db.execute(text("SELECT 1 FROM distribution.channel_ari_state "
+                       "WHERE link_id = :l LIMIT 1"), {"l": link_id}).first():
+        return
+    if not db.execute(text("SELECT 1 FROM distribution.channel_room_mappings "
+                           "WHERE link_id = :l LIMIT 1"), {"l": link_id}).first():
+        return
+    from .channel_sync import sync
+    sync(db, link_id, full=True)
 
 
 
@@ -354,6 +372,10 @@ def _forget_external(db: Session, link_id) -> None:
     db.execute(text("DELETE FROM distribution.channel_room_mappings "
                     "WHERE link_id = :l"), {"l": link_id})
     db.execute(text("DELETE FROM distribution.channel_rate_mappings "
+                    "WHERE link_id = :l"), {"l": link_id})
+    # What was accepted belonged to the property that has gone; the rebuilt
+    # one starts empty and gets a full sync.
+    db.execute(text("DELETE FROM distribution.channel_ari_state "
                     "WHERE link_id = :l"), {"l": link_id})
     db.execute(
         text("UPDATE distribution.channel_manager_links "

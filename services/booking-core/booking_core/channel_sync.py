@@ -254,9 +254,62 @@ def _describe(endpoint: str, values: list[dict]) -> str:
     return f"{len(values)} range(s), {', '.join(kinds)}, {span}"
 
 
+def _dirty_scope(db: Session, conn, rows):
+    """What the outbox rows name, as channel ids and date ranges.
+
+    Returns (first night, last night, predicate over state keys). An
+    availability row names a room type; a rates row names a rate plan, or a
+    room type (every plan priced from it), or neither (every plan -- a rule
+    for all plans).
+    """
+    rooms = dict(db.execute(
+        text("SELECT room_type_id::text, external_id FROM "
+             "distribution.channel_room_mappings WHERE link_id = :l"),
+        {"l": conn["id"]}).all())
+    plans = db.execute(
+        text("SELECT m.rate_plan_id::text, m.external_id, "
+             "min(x.room_type_id::text) AS room_type_id "
+             "FROM distribution.channel_rate_mappings m "
+             "LEFT JOIN property.rate_plan_room_types x "
+             "ON x.rate_plan_id = m.rate_plan_id "
+             "WHERE m.link_id = :l GROUP BY 1, 2"),
+        {"l": conn["id"]}).all()
+    avail: dict[str, list] = {}
+    rates: dict[str, list] = {}
+    lo = hi = None
+    for r in rows:
+        span = (r["date_from"], r["date_to"])
+        lo = span[0] if lo is None else min(lo, span[0])
+        hi = span[1] if hi is None else max(hi, span[1])
+        if r["scope"] == "availability":
+            ext = rooms.get(str(r["room_type_id"]))
+            if ext:
+                avail.setdefault(ext, []).append(span)
+            continue
+        for plan_id, ext, room in plans:
+            if (r["rate_plan_id"] is not None and str(r["rate_plan_id"]) != plan_id):
+                continue
+            if (r["rate_plan_id"] is None and r["room_type_id"] is not None
+                    and str(r["room_type_id"]) != room):
+                continue
+            rates.setdefault(ext, []).append(span)
+
+    def wanted(key) -> bool:
+        field, ext, day = key
+        spans = (avail if field == "availability" else rates).get(ext, ())
+        return any(a <= day <= b for a, b in spans)
+    return lo, hi, wanted
+
+
 def sync(db: Session, link_id, *, full: bool = False,
-         trigger: str | None = None) -> dict:
-    """Send one property's changes (or everything, if ``full``)."""
+         trigger: str | None = None, dirty=None) -> dict:
+    """Send one property's changes (or everything, if ``full``).
+
+    ``dirty`` is the outbox rows being drained: only the rooms, plans and
+    nights they name are computed and compared. Returns, per endpoint, what
+    became of it -- 'ok', 'failed', 'throttled' or 'idle' -- so the drainer
+    knows which rows to clear and which to retry.
+    """
     trigger = trigger or ("full_sync" if full else "change")
     conn = db.execute(
         text("SELECT l.id, l.organization_id, l.property_id, "
@@ -287,21 +340,39 @@ def sync(db: Session, link_id, *, full: bool = False,
     # ahead of a UTC server for five and a half hours every night.
     start = conn["today"]
     end = start + timedelta(days=settings.channel_sync_days - 1)
+    wanted = None
+    if dirty is not None and not full:
+        if not db.execute(text("SELECT 1 FROM distribution.channel_ari_state "
+                               "WHERE link_id = :l LIMIT 1"),
+                          {"l": link_id}).first():
+            # Nothing accepted yet for this property -- a new link, or one
+            # rebuilt after the channel manager lost it. Everything goes, and
+            # it is recorded as the full sync it is.
+            full, trigger = True, "full_sync"
+        else:
+            lo, hi, wanted = _dirty_scope(db, conn, dirty)
+            if lo is None:
+                return {"status": "ok", "detail": "Nothing to send.",
+                        "endpoints": {}}
+            start, end = max(start, lo), min(end, hi)
+            if start > end:
+                return {"status": "ok", "detail": "Outside the window.",
+                        "endpoints": {}}
     now_values, problems = current_values(db, conn, start, end)
+    if wanted is not None:
+        now_values = {k: v for k, v in now_values.items() if wanted(k)}
     before = {} if full else _stored(db, link_id, start, end)
-    if not full and not before:
-        # Nothing accepted yet for this property -- a new link, or one rebuilt
-        # after the channel manager lost it. Everything goes, and it is
-        # recorded as the full sync it is.
-        full, trigger = True, "full_sync"
     changed = {k: v for k, v in now_values.items() if before.get(k) != v}
 
     if not changed:
-        return {"status": "ok", "detail": "Nothing changed.", "sent": 0}
+        return {"status": "ok", "detail": "Nothing changed.", "sent": 0,
+                "endpoints": {}}
 
     requests = build_requests(conn, changed)
     sent = 0
     failures: list[str] = []
+    outcome: dict[str, str] = {e: ("idle" if not items else "ok")
+                               for e, items in requests.items()}
     limit = settings.channex_requests_per_minute
     with _client() as client:
         for endpoint, items in requests.items():
@@ -312,6 +383,7 @@ def sync(db: Session, link_id, *, full: bool = False,
                     # Not an error and not logged per pass: the difference is
                     # still there and goes out when the minute allows.
                     failures.append(f"{endpoint}: waiting for the rate limit")
+                    outcome[endpoint] = "throttled"
                     break
                 try:
                     resp = client.post(endpoint, json={"values": values})
@@ -319,6 +391,7 @@ def sync(db: Session, link_id, *, full: bool = False,
                     _log(db, conn, endpoint, trigger, values, outcome="failed",
                          error=f"{type(exc).__name__}: {exc}")
                     failures.append(f"{endpoint}: {exc}")
+                    outcome[endpoint] = "failed"
                     break
                 body = None
                 try:
@@ -335,12 +408,14 @@ def sync(db: Session, link_id, *, full: bool = False,
                          error="Rate limited by the channel manager; pausing "
                                "for a minute.")
                     failures.append(f"{endpoint}: rate limited (429)")
+                    outcome[endpoint] = "throttled"
                     break
                 if resp.status_code >= 400:
                     _log(db, conn, endpoint, trigger, values,
                          status_code=resp.status_code, outcome="failed",
                          error=resp.text[:600])
                     failures.append(f"{endpoint}: {resp.status_code}")
+                    outcome[endpoint] = "failed"
                     break
                 ids = _task_ids(body)
                 _log(db, conn, endpoint, trigger, values,
@@ -351,12 +426,14 @@ def sync(db: Session, link_id, *, full: bool = False,
 
     if failures:
         return _status(db, link_id, "failed" if not sent else "partial",
-                       f"Sent {sent} range(s); not sent: " + "; ".join(failures))
+                       f"Sent {sent} range(s); not sent: " + "; ".join(failures),
+                       endpoints=outcome)
     detail = (f"{'Full sync' if full else 'Update'}: sent {sent} range(s) "
               f"for {start}..{end}.")
     if problems:
         detail += " Not priced: " + " ".join(problems)
-    return _status(db, link_id, "partial" if problems else "ok", detail, sent=sent)
+    return _status(db, link_id, "partial" if problems else "ok", detail,
+                   sent=sent, endpoints=outcome)
 
 
 def _status(db, link_id, status: str, detail: str, **extra) -> dict:
@@ -371,31 +448,108 @@ def _status(db, link_id, status: str, detail: str, **extra) -> dict:
     return {"status": status, "detail": detail, **extra}
 
 
-def sync_all(db_factory) -> list[dict]:
-    """Every linked property, each in its own transaction.
+#: Which endpoint carries each outbox scope.
+ENDPOINT = {"availability": "/availability", "rates": "/restrictions"}
 
-    One property's failure must not roll back another's receipts: the state
-    written after an accepted request is the only record that the channel
-    manager has those numbers.
+
+def _backoff_seconds(attempts: int) -> int:
+    """5s, 10s, 20s ... capped at five minutes."""
+    return min(300, 5 * 2 ** max(0, attempts))
+
+
+def drain_outbox(db_factory) -> list[dict]:
+    """Send what the outbox says changed, property by property.
+
+    A property's changes wait until it has been quiet for
+    ``channel_sync_quiet_seconds`` (or until the oldest has waited
+    ``channel_sync_max_wait_seconds``), so a person entering three prices in a
+    row produces one request, not three. Rows are removed only once the
+    channel manager accepts what they describe; a refused or failed request
+    leaves them in place with a backoff, and a 429 pauses the property for a
+    minute. Each property is its own transaction.
     """
+    quiet = settings.channel_sync_quiet_seconds
+    max_wait = settings.channel_sync_max_wait_seconds
     with db_factory() as session:
-        system_context(session, reason="channel sync: list linked properties")
-        links = session.execute(
-            text("SELECT id, organization_id, property_id "
-                 "FROM distribution.channel_manager_links "
-                 "WHERE external_property_id IS NOT NULL")
+        system_context(session, reason="channel sync: properties with changes")
+        due = session.execute(
+            text(
+                """
+                SELECT property_id, organization_id
+                FROM distribution.ari_outbox
+                WHERE next_attempt_at <= now()
+                GROUP BY property_id, organization_id
+                HAVING max(created_at) < now() - make_interval(secs => :q)
+                    OR min(created_at) < now() - make_interval(secs => :w)
+                """
+            ),
+            {"q": quiet, "w": max_wait},
         ).mappings().all()
+
     results = []
-    for link in links:
-        with db_factory() as session:
+    for p in due:
+        with db_factory() as db:
             try:
-                bind_tenant_context(session, organization_id=link["organization_id"],
-                                    property_id=link["property_id"],
+                bind_tenant_context(db, organization_id=p["organization_id"],
+                                    property_id=p["property_id"],
                                     is_service=True)
-                results.append(sync(session, link["id"]))
-                session.commit()
+                rows = db.execute(
+                    text(
+                        """
+                        SELECT id, scope, room_type_id, rate_plan_id,
+                               date_from, date_to, attempts
+                        FROM distribution.ari_outbox
+                        WHERE property_id = :p AND next_attempt_at <= now()
+                        ORDER BY id
+                        FOR UPDATE SKIP LOCKED
+                        """
+                    ),
+                    {"p": p["property_id"]},
+                ).mappings().all()
+                if not rows:
+                    db.rollback()
+                    continue
+                link = db.execute(
+                    text("SELECT id FROM distribution.channel_manager_links "
+                         "WHERE property_id = :p AND external_property_id "
+                         "IS NOT NULL"),
+                    {"p": p["property_id"]},
+                ).scalar()
+                if link is None:
+                    db.execute(text("DELETE FROM distribution.ari_outbox "
+                                    "WHERE id = ANY(:ids)"),
+                               {"ids": [r["id"] for r in rows]})
+                    db.commit()
+                    continue
+                res = sync(db, link, dirty=rows)
+                endpoints = res.get("endpoints", {})
+                for scope, endpoint in ENDPOINT.items():
+                    ids = [r["id"] for r in rows if r["scope"] == scope]
+                    if not ids:
+                        continue
+                    state = endpoints.get(endpoint) or (
+                        "throttled" if res["status"] == "deferred"
+                        else "ok" if res["status"] in ("ok", "partial")
+                        else "failed")
+                    if state in ("ok", "idle"):
+                        db.execute(text("DELETE FROM distribution.ari_outbox "
+                                        "WHERE id = ANY(:ids)"), {"ids": ids})
+                    else:
+                        attempts = max(r["attempts"] for r in rows
+                                       if r["scope"] == scope)
+                        wait = 60 if state == "throttled" else \
+                            _backoff_seconds(attempts)
+                        db.execute(
+                            text("UPDATE distribution.ari_outbox SET "
+                                 "attempts = attempts + 1, next_attempt_at = "
+                                 "now() + make_interval(secs => :w), "
+                                 "last_error = :e WHERE id = ANY(:ids)"),
+                            {"w": wait, "e": res["detail"][:400], "ids": ids})
+                db.commit()
+                results.append(res)
             except Exception:
-                session.rollback()
-                log.exception("channel sync failed for link %s", link["id"])
+                db.rollback()
+                log.exception("channel sync failed for property %s",
+                              p["property_id"])
                 results.append({"status": "failed", "detail": "exception"})
     return results

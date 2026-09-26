@@ -85,11 +85,16 @@ class BookingSettings(BaseServiceSettings):
     #: nothing, and the sweep writes inventory that channels then re-push.
     block_cutoff_sweep_enabled: bool = True
     block_cutoff_sweep_seconds: int = 3600
-    #: How often the sync looks for changes. Each pass sends only what differs
-    #: from what the channel manager last accepted, so a quiet property costs
-    #: no requests at all; the interval is the batching window, so a hotel
-    #: editing a week of rates reaches the channel as one update, not fifty.
-    channel_push_seconds: int = 20
+    #: How often the worker looks at the ARI outbox. Changes are recorded by
+    #: triggers as they are saved; this is only how quickly the queue is
+    #: picked up, not a scan for changes.
+    channel_push_seconds: int = 3
+    #: A property's changes are sent once it has been quiet this long, so a
+    #: burst of edits (three prices typed one after another) is one request.
+    channel_sync_quiet_seconds: int = 8
+    #: ...but nothing waits longer than this for a property that never goes
+    #: quiet.
+    channel_sync_max_wait_seconds: int = 60
     #: How far ahead a full sync publishes, and how far ahead changes are
     #: watched. Channex's certification asks for 500 days.
     channel_sync_days: int = 500

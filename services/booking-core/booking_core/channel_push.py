@@ -149,17 +149,18 @@ def rate_values(db: Session, conn, start: date,
     skipped: list[str] = []
 
     for p in plans:
+        overrides = _plan_overrides(db, p["rate_plan_id"], start, end, "rate")
         if p["flat_rate"] is not None:
             # A flat rate is the nightly price whatever the room, so it needs
-            # no calendar and no room type.
-            values.append({
-                "property_id": conn["external_property_id"],
-                "rate_plan_id": p["external_id"],
-                "date_from": start.isoformat(),
-                "date_to": end.isoformat(),
-                "rate": str(Decimal(str(p["flat_rate"])).quantize(
-                    Decimal("0.01"))),
-            })
+            # no calendar and no room type -- except where one night has been
+            # priced on its own.
+            flat = Decimal(str(p["flat_rate"])).quantize(Decimal("0.01"))
+            days = [{"stay_date": start + timedelta(days=i)}
+                    for i in range((end - start).days + 1)]
+            values.extend(_collapse(
+                days, conn, "rate_plan_id", "rate",
+                lambda r, f=flat, o=overrides: str(o.get(_as_date(r["stay_date"]), f)),
+                external_id=p["external_id"]))
             continue
         if p["room_types"] != 1:
             skipped.append(
@@ -193,12 +194,35 @@ def rate_values(db: Session, conn, start: date,
                 f"type has no list price either.")
             continue
 
+        # A price set on this plan for one night wins over the room's price
+        # and the plan's adjustment: Best Available and Bed & Breakfast can
+        # then differ on a night by more than their usual gap.
         values.extend(_collapse(
             priced, conn, "rate_plan_id", "rate",
-            lambda r, pl=p: str(_plan_rate(pl, Decimal(str(r["rate"])))),
+            lambda r, pl=p, o=overrides: str(
+                o[_as_date(r["stay_date"])]
+                if _as_date(r["stay_date"]) in o
+                else _plan_rate(pl, Decimal(str(r["rate"])))),
             external_id=p["external_id"]))
 
     return values, skipped
+
+
+def _plan_overrides(db: Session, rate_plan_id, start: date, end: date,
+                    field: str) -> dict:
+    """{night: value} this plan has set for itself on the rate plan calendar."""
+    assert field in {"rate", "min_stay", "max_stay", "closed_to_arrival",
+                     "closed_to_departure", "stop_sell"}
+    rows = db.execute(
+        text(f"SELECT stay_date, {field} AS v FROM property.rate_plan_calendar_days "
+             f"WHERE rate_plan_id = CAST(:p AS uuid) AND stay_date BETWEEN :s AND :e "
+             f"AND {field} IS NOT NULL"),
+        {"p": str(rate_plan_id), "s": start, "e": end},
+    ).mappings().all()
+    if field == "rate":
+        return {_as_date(r["stay_date"]):
+                Decimal(str(r["v"])).quantize(Decimal("0.01")) for r in rows}
+    return {_as_date(r["stay_date"]): r["v"] for r in rows}
 
 
 def _plan_rate(plan, base: Decimal) -> Decimal:
@@ -440,6 +464,31 @@ def restriction_values(db: Session, conn, start: date,
                 cur["min_stay_arrival"] = int(c["min_stay"])
                 cur["min_stay_through"] = int(c["min_stay"])
             cur["stop_sell"] = cur["stop_sell"] or bool(c["stop_sell"])
+
+        # And last, whatever this rate plan has set for itself on a night --
+        # the most specific setting there is. An explicit value wins either
+        # way, so a plan can be re-opened on a night a rule closed.
+        plan_nights = db.execute(
+            text("SELECT stay_date, min_stay, max_stay, closed_to_arrival, "
+                 "closed_to_departure, stop_sell "
+                 "FROM property.rate_plan_calendar_days "
+                 "WHERE rate_plan_id = CAST(:p AS uuid) "
+                 "AND stay_date BETWEEN :s AND :e"),
+            {"p": str(p["rate_plan_id"]), "s": start, "e": end},
+        ).mappings().all()
+        for o in plan_nights:
+            cur = by_day.get(_as_date(o["stay_date"]))
+            if cur is None:
+                continue
+            if o["min_stay"] is not None:
+                cur["min_stay_arrival"] = int(o["min_stay"])
+                cur["min_stay_through"] = int(o["min_stay"])
+            if o["max_stay"] is not None:
+                cur["max_stay"] = int(o["max_stay"])
+            for flag in ("closed_to_arrival", "closed_to_departure",
+                         "stop_sell"):
+                if o[flag] is not None:
+                    cur[flag] = bool(o[flag])
 
         ordered = [by_day[d] for d in sorted(by_day)]
         values.extend(_collapse_many(

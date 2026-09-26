@@ -154,11 +154,13 @@ async def hold_reaper_loop() -> None:
 
 
 async def channel_push_loop() -> None:
-    """Keep every connected channel in step with this PMS, forever.
+    """Drain the ARI outbox to the channel manager, forever.
 
-    Each pass sends only what changed since the channel manager last accepted
-    it (see ``channel_sync``), so the interval is a batching window, not a
-    resend schedule: a quiet property costs no requests.
+    Every save that moves availability, a price or a stay rule records what
+    moved in ``distribution.ari_outbox`` (database triggers, same transaction
+    as the save). This loop only picks that queue up: it never scans rates or
+    inventory looking for changes, and a property with nothing queued costs
+    nothing.
 
     The work runs in a thread. It is blocking database and HTTP work, and
     done on the event loop it stalled every request this service answers --
@@ -170,12 +172,12 @@ async def channel_push_loop() -> None:
     """
     from . import channel_sync
 
-    log.info("channel ARI sync started (every %ds, %d day window)",
-             settings.channel_push_seconds, settings.channel_sync_days)
+    log.info("channel ARI outbox worker started (every %ds, quiet %ds)",
+             settings.channel_push_seconds, settings.channel_sync_quiet_seconds)
     await asyncio.sleep(30)
     while True:
         try:
-            results = await asyncio.to_thread(channel_sync.sync_all,
+            results = await asyncio.to_thread(channel_sync.drain_outbox,
                                               SessionFactory)
             bad = [r for r in results
                    if r["status"] not in ("ok", "deferred")]
