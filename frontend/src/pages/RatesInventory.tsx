@@ -3,6 +3,8 @@ import Select from '../components/Select'
 import { FILTER_SELECT } from '../lib/controls'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import DateField from '../components/DateField'
+import RatePlanGrid from '../components/RatePlanGrid'
+import { useNavigate } from 'react-router-dom'
 import { fmtDate, fmtDayMonth, fmtWeekday } from '../lib/dates'
 import {
   AlertCircle, BarChart3, ChevronLeft, ChevronRight, Copy,
@@ -396,6 +398,7 @@ function CopyDialog({
 /* -------------------------------------------------------------------- page --- */
 export default function RatesInventory({ propertyId }: { propertyId: string }) {
   const qc = useQueryClient()
+  const navigate = useNavigate()
   const today = iso(new Date())
   const [from, setFrom] = useState(today)
   const [to, setTo] = useState(addDays(today, 13))
@@ -411,7 +414,9 @@ export default function RatesInventory({ propertyId }: { propertyId: string }) {
     queryKey: ['rateCalendar', propertyId, from, to, roomTypeId, ratePlanId],
     queryFn: () => getRateCalendar(propertyId, from, to,
       roomTypeId || undefined, ratePlanId || undefined),
-    enabled: propertyId !== '',
+    // A selected plan has its own editable calendar below; the room type
+    // grid is only fetched without one.
+    enabled: propertyId !== '' && !ratePlanId,
   })
   const plansQ = useQuery({
     queryKey: ['ratePlans', propertyId, {}],
@@ -423,8 +428,9 @@ export default function RatesInventory({ propertyId }: { propertyId: string }) {
   })
 
   const cal: RateCalendar | undefined = calQ.data
-  // Viewing a plan shows derived prices, so nothing in the grid is editable.
-  const locked = cal ? !cal.editable : false
+  // With a plan selected the plan's own grid takes over, so the room type
+  // tools (bulk update, copy) do not apply.
+  const locked = Boolean(ratePlanId) || (cal ? !cal.editable : false)
   const refresh = () => qc.invalidateQueries({ queryKey: ['rateCalendar', propertyId] })
 
   const cell = useMutation({
@@ -492,7 +498,7 @@ export default function RatesInventory({ propertyId }: { propertyId: string }) {
 
         <Select value={ratePlanId}
           onChange={(e) => { setRatePlanId(e.target.value); setSelected([]) }}
-          title="Show what a rate plan sells for on each date"
+          title="Edit a rate plan's own prices and restrictions"
           className={FILTER_SELECT}>
           <option value="">Room type rate</option>
           {(plansQ.data?.items ?? []).map((p) => (
@@ -541,7 +547,8 @@ export default function RatesInventory({ propertyId }: { propertyId: string }) {
                     trimming padding instead left five pixels of slack, which
                     wraps again on any narrower window. This is the one of the
                     four that does not act on the calendar. */}
-                <button onClick={() => { setMore(false); setNotice('Channel sync belongs to Distribution (screens 024 and 120), which is not built yet. Rates published here are stored, but nothing pushes them to an OTA.') }}
+                <button onClick={() => { setMore(false); navigate('/distribution/sales-channels') }}
+                  title="Changes go to the channel manager automatically. See what was sent, or run a full sync."
                   className="flex w-full items-center gap-2 border-t border-slate-100 px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">
                   <RefreshCw className="h-4 w-4 text-slate-400" /> Sync Channels
                 </button>
@@ -551,19 +558,6 @@ export default function RatesInventory({ propertyId }: { propertyId: string }) {
         </div>
       </div>
 
-      {locked && cal && (
-        <p className="flex items-start gap-2 rounded-lg bg-brand-light/60 px-4 py-3 text-sm text-slate-700">
-          <Info className="mt-0.5 h-4 w-4 shrink-0 text-brand" />
-          {/* One flex child, or each bold run becomes its own column. */}
-          <span>
-            Showing what <strong className="font-semibold">{cal.rate_plan_name}</strong>{' '}
-            sells for on each date. These prices come from the room type rate plus
-            the plan's pricing, so they are read-only here — switch back to{' '}
-            <strong className="font-semibold">Room type rate</strong> to change them,
-            or edit the plan itself on Rate Plans.
-          </span>
-        </p>
-      )}
       {notice && (
         <p className="flex items-start justify-between gap-3 rounded-lg bg-sky-50 px-4 py-3 text-sm text-sky-800">
           <span className="flex items-start gap-2">
@@ -581,6 +575,10 @@ export default function RatesInventory({ propertyId }: { propertyId: string }) {
         </p>
       )}
 
+      {ratePlanId ? (
+        <RatePlanGrid propertyId={propertyId} ratePlanId={ratePlanId} from={from} to={to}
+          plans={(plansQ.data?.items ?? []).map((p) => ({ id: p.id, name: p.name }))} />
+      ) : (
       <div className={`grid gap-4 ${selected.length ? 'xl:grid-cols-[minmax(0,1fr)_360px]' : ''}`}>
         <div className="min-w-0 overflow-x-auto rounded-xl border border-slate-200 bg-white">
           {calQ.isLoading && (
@@ -763,11 +761,12 @@ export default function RatesInventory({ propertyId }: { propertyId: string }) {
           </div>
         )}
       </div>
+      )}
 
-      {cal && cal.rows.length > 0 && (
+      {!ratePlanId && cal && cal.rows.length > 0 && (
         <p className="text-xs text-slate-400">
           {locked
-            ? "Rate plan prices are derived from the room type rate, so they cannot be edited here."
+            ? "These prices cannot be edited here."
             : "Click a date heading to select it. Highlighted cells were set for that date; clear a rate box to go back to the room type's own rate."}
         </p>
       )}

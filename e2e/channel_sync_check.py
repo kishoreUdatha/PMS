@@ -92,6 +92,9 @@ def main():
     deluxe, suite = rooms["Deluxe Sea View"], rooms["Premium Suite"]
     dlx_plan = next(v for k, v in plan_ext.items() if "Deluxe" in k)
     ste_plan = next(v for k, v in plan_ext.items() if "Suite" in k)
+    plan_ids = dict(r.split("|") for r in sql(
+        "SELECT m.external_id, rp.id FROM distribution.channel_rate_mappings m "
+        f"JOIN property.rate_plans rp ON rp.id=m.rate_plan_id WHERE m.link_id='{link}'").splitlines())
 
     # 1. Full sync -------------------------------------------------------
     n0 = ncalls()
@@ -175,6 +178,31 @@ def main():
     check("6. Stop sell on one date -> restrictions request with stop_sell=true",
           len(vals) == 1 and vals[0].get("stop_sell") is True and vals[0]["rate_plan_id"] == ste_plan,
           f"{len(got)} request(s): {vals}")
+
+    # 7/8. A rate plan's own calendar: several restrictions over ranges on
+    # two plans, saved together (the plan grid's range editor) -------------
+    n0 = ncalls()
+    r0 = d1 + timedelta(days=100)
+    s, _ = api("PUT", f"/booking/rate-plan-calendar?property_id={prop}", tok, {"changes": [
+        {"rate_plan_id": plan_ids[dlx_plan], "date_from": r0.isoformat(),
+         "date_to": (r0 + timedelta(days=4)).isoformat(), "rate": 4100 + bump,
+         "closed_to_arrival": True, "max_stay": 4 + bump % 3},
+        {"rate_plan_id": plan_ids[ste_plan], "date_from": (r0 + timedelta(days=2)).isoformat(),
+         "date_to": (r0 + timedelta(days=8)).isoformat(), "closed_to_departure": True,
+         "min_stay": 2 + bump % 3},
+    ]})
+    got = wait_for_calls(n0)
+    vals = [v for c in got for v in values_of(c)]
+    dlx = [v for v in vals if v["rate_plan_id"] == dlx_plan]
+    ste = [v for v in vals if v["rate_plan_id"] == ste_plan]
+    check("7. Plan calendar: CTA/CTD/max/min stay and price over ranges on two plans -> one request, one range each",
+          s == 200 and len(got) == 1 and len(dlx) == 1 and len(ste) == 1
+          and dlx[0]["closed_to_arrival"] is True and dlx[0]["max_stay"] == 4 + bump % 3
+          and str(dlx[0]["rate"]).startswith(str(4100 + bump))
+          and ste[0]["closed_to_departure"] is True and ste[0]["min_stay_arrival"] == 2 + bump % 3
+          and ste[0]["date_from"] == (r0 + timedelta(days=2)).isoformat()
+          and ste[0]["date_to"] == (r0 + timedelta(days=8)).isoformat(),
+          f"HTTP {s}; {len(got)} request(s): {vals}")
 
     # 9/10. Availability: a booking takes a room ---------------------------
     n0 = ncalls()

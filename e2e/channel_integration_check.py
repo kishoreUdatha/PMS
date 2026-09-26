@@ -394,7 +394,15 @@ def main():
     check("Isolation", "Each tenant gets its own group and property at the channel manager",
           ext_b and ext_b != ext_prop and len(groups) == 2, f"B property={ext_b}, groups={len(groups)}")
     if ext_b and ext_b_room:
-        rid_b, rev_b = revision(ext_b, [room(ext_b_room, arrive, 1, 4200)])
+        # Each run books one of B's rooms; take a night that still has one
+        # free, or repeated runs would sell the test date out.
+        arrive_b = date.fromisoformat(sql(
+            "SELECT min(d.stay_date) FROM booking.room_type_inventory_days d "
+            "JOIN distribution.channel_room_mappings m ON m.room_type_id=d.room_type_id "
+            f"WHERE m.external_id='{ext_b_room}' AND d.stay_date >= current_date + 30 "
+            "AND d.physical_capacity - d.out_of_service - d.held_units "
+            "- d.reserved_units - d.allotment_units > 0"))
+        rid_b, rev_b = revision(ext_b, [room(ext_b_room, arrive_b, 1, 4200)])
         webhook(rid_b)
         where = sql("SELECT r.property_id FROM booking.reservations r "
                     f"WHERE r.reference='{rev_b['ota_reservation_code']}'")

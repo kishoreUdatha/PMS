@@ -90,8 +90,10 @@ class BookingSettings(BaseServiceSettings):
     #: picked up, not a scan for changes.
     channel_push_seconds: int = 3
     #: A property's changes are sent once it has been quiet this long, so a
-    #: burst of edits (three prices typed one after another) is one request.
-    channel_sync_quiet_seconds: int = 8
+    #: burst of edits (three prices typed one after another, a few seconds
+    #: apart) is one request. Changes saved together -- a range edit, or the
+    #: plan calendar's "save all" -- are one request whatever this is.
+    channel_sync_quiet_seconds: int = 20
     #: ...but nothing waits longer than this for a property that never goes
     #: quiet.
     channel_sync_max_wait_seconds: int = 60

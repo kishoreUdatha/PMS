@@ -3669,6 +3669,58 @@ export async function updateCalendarCell(
   return data
 }
 
+/** One night of a rate plan's own calendar: effective values, and which
+ *  of them the plan set for itself. */
+export interface PlanNight {
+  stay_date: string
+  rate: string | null
+  min_stay: number
+  max_stay: number
+  closed_to_arrival: boolean
+  closed_to_departure: boolean
+  stop_sell: boolean
+  overridden: string[]
+}
+
+export interface PlanCalendar {
+  rate_plan_id: string
+  rate_plan_name: string
+  room_type_id: string | null
+  room_type_name: string | null
+  nights: PlanNight[]
+}
+
+export async function getRatePlanCalendar(
+  propertyId: string, ratePlanId: string, from: string, to: string,
+): Promise<PlanCalendar> {
+  const { data } = await api.get<PlanCalendar>('/booking/rate-plan-calendar', {
+    params: { property_id: propertyId, rate_plan_id: ratePlanId, date_from: from, date_to: to },
+  })
+  return data
+}
+
+export interface PlanChange {
+  rate_plan_id: string
+  date_from: string
+  date_to: string
+  weekdays?: number[]
+  rate?: number | null
+  min_stay?: number | null
+  max_stay?: number | null
+  closed_to_arrival?: boolean | null
+  closed_to_departure?: boolean | null
+  stop_sell?: boolean | null
+  clear?: string[]
+}
+
+export async function setRatePlanCalendar(
+  propertyId: string, changes: PlanChange[],
+): Promise<{ nights_changed: number }> {
+  const { data } = await api.put<{ nights_changed: number }>(
+    '/booking/rate-plan-calendar', { changes }, { params: { property_id: propertyId } })
+  return data
+}
+
 export async function bulkUpdateRates(
   propertyId: string, body: Record<string, unknown>,
 ): Promise<BulkUpdateResult> {

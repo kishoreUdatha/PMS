@@ -20,6 +20,7 @@ from .outbox_relay import outbox_relay_loop
 from .settings import settings
 from .blocks_routes import blocks_router
 from .calendar_routes import calendar_router
+from .rate_plan_calendar_routes import plan_calendar_router
 from .change_routes import change_router
 from .checkin_routes import checkin_router
 from .formc_routes import formc_router
@@ -119,6 +120,7 @@ app.include_router(public_router)
 app.include_router(channel_router)
 app.include_router(blocks_router)
 app.include_router(calendar_router)
+app.include_router(plan_calendar_router)
 app.include_router(change_router)
 app.include_router(checkin_router)
 app.include_router(formc_router)
