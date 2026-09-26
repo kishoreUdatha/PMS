@@ -21,6 +21,7 @@ nothing while that was so.
 
 from __future__ import annotations
 
+import logging
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -38,6 +39,7 @@ from chirala_common.passwords import (
 )
 from chirala_common.routing import TransactionalRoute
 from chirala_common import session_tokens
+from chirala_common.ratelimit import enforce
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -50,6 +52,30 @@ from .settings import settings
 auth_router = APIRouter(
     prefix="/auth", tags=["auth"], route_class=TransactionalRoute
 )
+log = logging.getLogger("uvicorn.error").getChild("auth")
+
+
+def _rate_limited(scope: str):
+    """A per-address allowance for one sign-in route.
+
+    The per-account lockout stops guessing at one account; it does nothing
+    about one address trying a thousand accounts once each, or asking for a
+    thousand reset emails and verification codes to be sent to strangers.
+    Each route counts separately, so a hotel's morning of password resets
+    does not also use up its sign-ins.
+    """
+
+    def _dep(request: Request) -> None:
+        if settings.auth_rate_limit_enabled:
+            enforce(
+                request, scope=f"auth:{scope}",
+                limit=settings.auth_rate_limit,
+                window_seconds=settings.auth_rate_limit_seconds,
+                redis_url=settings.redis_url,
+                trusted_proxies=settings.trusted_proxies,
+            )
+
+    return _dep
 
 
 #: How long an account is shut out after repeated wrong passwords, and how
@@ -224,7 +250,8 @@ def _normalise_email(raw: str) -> str:
     return email
 
 
-@auth_router.post("/email-otp/send", status_code=status.HTTP_202_ACCEPTED)
+@auth_router.post("/email-otp/send", status_code=status.HTTP_202_ACCEPTED,
+                  dependencies=[Depends(_rate_limited("email-otp-send"))])
 def send_email_otp(body: EmailOtpIn, db: Session = Depends(get_auth_session)) -> dict:
     """Email a six-digit code to prove the address is reachable.
 
@@ -307,7 +334,8 @@ def send_email_otp(body: EmailOtpIn, db: Session = Depends(get_auth_session)) ->
                       f"{OTP_MINUTES} minutes."}
 
 
-@auth_router.post("/email-otp/verify")
+@auth_router.post("/email-otp/verify",
+                  dependencies=[Depends(_rate_limited("email-otp-verify"))])
 def verify_email_otp(
     body: EmailOtpVerifyIn, db: Session = Depends(get_auth_session)
 ) -> dict:
@@ -797,7 +825,8 @@ def _credential_login(db: Session, body: LoginIn) -> SessionOut:
     return session
 
 
-@auth_router.post("/login", response_model=SessionOut)
+@auth_router.post("/login", response_model=SessionOut,
+                  dependencies=[Depends(_rate_limited("login"))])
 def login(body: LoginIn, db: Session = Depends(get_auth_session)) -> SessionOut:
     if body.password:
         return _credential_login(db, body)
@@ -846,7 +875,8 @@ class PlatformLoginIn(BaseModel):
     password: str = Field(min_length=1)
 
 
-@auth_router.post("/platform-login", response_model=SessionOut)
+@auth_router.post("/platform-login", response_model=SessionOut,
+                  dependencies=[Depends(_rate_limited("platform-login"))])
 def platform_login(body: PlatformLoginIn,
                    db: Session = Depends(get_auth_session)) -> SessionOut:
     """Sign in as platform staff: email and password, no property code.
@@ -967,7 +997,8 @@ class MfaVerifyIn(BaseModel):
     code: str = Field(min_length=6, max_length=10)
 
 
-@auth_router.post("/platform-login/verify", response_model=SessionOut)
+@auth_router.post("/platform-login/verify", response_model=SessionOut,
+                  dependencies=[Depends(_rate_limited("platform-verify"))])
 def platform_login_verify(body: MfaVerifyIn,
                           db: Session = Depends(get_session)) -> SessionOut:
     """Step two: the challenge from the password, plus a code from the device.
@@ -1314,7 +1345,8 @@ def set_password(
     return session
 
 
-@auth_router.post("/forgot-password", status_code=status.HTTP_202_ACCEPTED)
+@auth_router.post("/forgot-password", status_code=status.HTTP_202_ACCEPTED,
+                  dependencies=[Depends(_rate_limited("forgot-password"))])
 def forgot_password(
     body: ForgotPasswordIn, db: Session = Depends(get_auth_session)
 ) -> dict:
@@ -1355,19 +1387,21 @@ def forgot_password(
         record_delivery(SessionFactory, template_code="password_reset",
                         recipient=row["email"], subject=subject,
                         organization_id=row.get("organization_id"))
-    except MailNotConfigured:
+    except (MailNotConfigured, OSError, SMTPException) as exc:
+        detail = ("no mail server configured"
+                  if isinstance(exc, MailNotConfigured) else str(exc)[:200])
         record_delivery(SessionFactory, template_code="password_reset",
                         recipient=row["email"], status="failed",
                         organization_id=row.get("organization_id"),
-                        detail="no mail server configured")
-        # The token is still issued and the answer is still the same one, so
-        # this does not tell a stranger anything. It does need to be visible
-        # to whoever runs the service.
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No mail server is configured, so the reset link cannot be "
-                   "sent. Set SMTP_HOST and SMTP_SENDER on the iam service.",
-        ) from None
+                        detail=detail)
+        # Logged, not answered. This used to be a 503 -- and only an address
+        # that exists ever reaches this line, so the status code alone told a
+        # stranger which addresses work at the property: exactly what the
+        # identical 202 above is for. Whoever runs the service sees it here
+        # and in the delivery log instead.
+        log.error("password reset mail for user %s not sent: %s. Set "
+                  "SMTP_HOST and SMTP_SENDER on the iam service.",
+                  row["id"], detail)
     return same
 
 

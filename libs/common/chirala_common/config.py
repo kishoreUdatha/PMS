@@ -52,6 +52,16 @@ class BaseServiceSettings(BaseSettings):
 
     # Infrastructure
     redis_url: str = "redis://localhost:6379/0"
+    #: Peers whose X-Forwarded-For may be believed when rate limiting. Only
+    #: our own gateway, which overwrites the header with the socket address
+    #: it saw; a header from anyone else is a claim, not evidence.
+    #:
+    #: Defaults to the gateway's compose service name. Without it every
+    #: caller behind the gateway looks like one address and shares one
+    #: allowance -- a handful of failed sign-ins anywhere would lock the
+    #: whole deployment out. Where the name does not resolve (a service run
+    #: on the host) it matches no peer and the socket address is used.
+    trusted_proxies: str = "gateway"
     nats_url: str = "nats://localhost:4222"
 
     # OIDC (Keycloak)

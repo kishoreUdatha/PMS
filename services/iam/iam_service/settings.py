@@ -46,6 +46,15 @@ class IamSettings(BaseServiceSettings):
     #: /auth/mfa/status reports active for everybody.
     platform_mfa_required: bool = False
 
+    #: Requests per window per address to each sign-in route (login,
+    #: platform login, forgot password, email codes), counted separately per
+    #: route. Sized for a hotel whose whole shift signs in from one office
+    #: connection at 7am, not for one person: the per-account lockout is what
+    #: stops guessing at one account; this stops one address trying many.
+    auth_rate_limit_enabled: bool = True
+    auth_rate_limit: int = 30
+    auth_rate_limit_seconds: int = 300
+
     #: Tax on a subscription invoice, as a percentage. Zero by default and
     #: deliberately so: guessing 18% would produce invoices that look
     #: authoritative and are wrong for anyone the guess does not fit, whereas
