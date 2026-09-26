@@ -102,6 +102,10 @@ class Channex:
         r = self.c.post(path, json=body)
         return r.status_code, (r.json() if r.content else {})
 
+    def put(self, path: str, body: dict) -> tuple[int, dict]:
+        r = self.c.put(path, json=body)
+        return r.status_code, (r.json() if r.content else {})
+
     def groups(self) -> dict[str, str]:
         """Every group in the account, by title.
 
@@ -968,7 +972,11 @@ def _sync_channels(db: Session, cx: Channex, property_id: uuid.UUID,
     if code < 400:
         for row in out.get("data") or []:
             a = row.get("attributes") or {}
-            if a.get("group_id") != group:
+            # The group is a relationship, not an attribute: read where the
+            # channel manager actually puts it.
+            owner = (((row.get("relationships") or {}).get("group") or {})
+                     .get("data") or {}).get("id")
+            if owner != group:
                 continue
             settings_blob = a.get("settings") or {}
             key = f"{a.get('channel')}|{settings_blob.get('hotel_id')}"

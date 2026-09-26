@@ -8,6 +8,7 @@ memory, and records every request so a test can assert on what was sent.
 Control endpoints (not part of Channex) under /_fake:
   POST /_fake/revisions        body = revision attributes -> {"id": ...}
   POST /_fake/fail_fetch       {"times": n}  next n revision fetches return 500
+  POST /_fake/ota_rooms        {hotel_id: rooms}  the OTA rooms mapping_details returns
   GET  /_fake/calls            every request received, in order
   GET  /_fake/state            stored objects
   POST /_fake/reset
@@ -28,7 +29,7 @@ app = FastAPI()
 API = "/api/v1"
 store: dict[str, dict[str, dict]] = defaultdict(dict)
 calls: list[dict] = []
-control = {"fail_fetch": 0, "limit": 10}
+control = {"fail_fetch": 0, "limit": 10, "ota_rooms": {}}
 hits: dict[tuple, list[float]] = defaultdict(list)
 KEY = "fake-key"
 
@@ -41,6 +42,15 @@ def _obj(kind: str, attrs: dict) -> dict:
         rt = attrs.pop("room_type_id")
         return {"id": attrs["id"], "type": kind, "attributes": attrs,
                 "relationships": {"room_type": {"data": {"type": "room_type", "id": rt}}}}
+    # A channel's group is a relationship too; real Channex has no group_id
+    # attribute on a channel, and code reading one would never match.
+    if kind == "channel":
+        attrs = dict(attrs)
+        grp = attrs.pop("group_id", None)
+        attrs.setdefault("is_active", False)
+        attrs.setdefault("rate_plans", [])
+        return {"id": attrs["id"], "type": kind, "attributes": attrs,
+                "relationships": {"group": {"data": {"type": "group", "id": grp}}}}
     return {"id": attrs["id"], "type": kind, "attributes": attrs}
 
 
@@ -62,7 +72,10 @@ def _filtered(kind: str, request: Request) -> list[dict]:
     for field in ("property_id", "group_id"):
         v = request.query_params.get(f"filter[{field}]")
         if v:
-            items = [i for i in items if i.get(field) == v]
+            # A channel names its properties in a list, and Channex filters
+            # channels by any of them.
+            items = [i for i in items if i.get(field) == v
+                     or (field == "property_id" and v in (i.get("properties") or []))]
     return items
 
 
@@ -89,6 +102,53 @@ for _k, _s in [("groups", "group"), ("properties", "property"),
                ("room_types", "room_type"), ("rate_plans", "rate_plan"),
                ("webhooks", "webhook"), ("channels", "channel")]:
     _resource(_k, _s)
+
+
+@app.post(f"{API}/channels/mapping_details")
+async def mapping_details(request: Request):
+    """The OTA's rooms for a hotel, once the test has said it authorised."""
+    body = await request.json()
+    hotel = str(((body.get("settings") or {}).get("hotel_id")) or "")
+    rooms = control["ota_rooms"].get(hotel)
+    if rooms is None:
+        return {"errors": None}
+    return {"data": {"rooms": rooms}}
+
+
+@app.put(f"{API}/channels/{{oid}}")
+async def update_channel(oid: str, request: Request):
+    if oid not in store["channels"]:
+        return JSONResponse({"errors": {"title": "Not found"}}, 404)
+    body = (await request.json()).get("channel") or {}
+    ch = store["channels"][oid]
+    if "rate_plans" in body:
+        # Like the real one: whatever rate plan it is given, whoever's it is.
+        ch["rate_plans"] = [{"id": str(uuid.uuid4()), **rp} for rp in body["rate_plans"]]
+    return {"data": _obj("channel", ch)}
+
+
+@app.post(f"{API}/channels/{{oid}}/activate")
+async def activate_channel(oid: str):
+    if oid not in store["channels"]:
+        return JSONResponse({"errors": {"title": "Not found"}}, 404)
+    store["channels"][oid]["is_active"] = True
+    return {"meta": {"message": "Success"}}
+
+
+@app.post(f"{API}/channels/{{oid}}/deactivate")
+async def deactivate_channel(oid: str):
+    if oid not in store["channels"]:
+        return JSONResponse({"errors": {"title": "Not found"}}, 404)
+    store["channels"][oid]["is_active"] = False
+    return {"meta": {"message": "Success"}}
+
+
+@app.post("/_fake/ota_rooms")
+async def set_ota_rooms(request: Request):
+    """{"hotel_id": [...rooms...]}: that hotel has authorised; these are its
+    rooms and rates as the OTA returns them."""
+    control["ota_rooms"].update(await request.json())
+    return {"ok": True}
 
 
 @app.post(f"{API}/channels/test_connection")
@@ -188,5 +248,5 @@ async def state():
 @app.post("/_fake/reset")
 async def reset():
     store.clear(); calls.clear(); hits.clear()
-    control.update(fail_fetch=0, limit=10)
+    control.update(fail_fetch=0, limit=10, ota_rooms={})
     return {"ok": True}

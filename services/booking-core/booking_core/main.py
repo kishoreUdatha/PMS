@@ -27,6 +27,7 @@ from .formc_routes import formc_router
 from .checkout_routes import checkout_router
 from .account_routes import account_router
 from .attribute_routes import attribute_router
+from .ota_mapping_routes import ota_mapping_router
 from .assign_routes import assign_router
 from .detail_routes import detail_router
 from .enquiry_routes import enquiry_router
@@ -118,6 +119,7 @@ def health() -> dict[str, str]:
 # than the legacy /room-types collection in `router`.
 app.include_router(public_router)
 app.include_router(channel_router)
+app.include_router(ota_mapping_router)
 app.include_router(blocks_router)
 app.include_router(calendar_router)
 app.include_router(plan_calendar_router)

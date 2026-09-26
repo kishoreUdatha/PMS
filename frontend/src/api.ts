@@ -6730,6 +6730,55 @@ export interface ConnectionTest {
  * while they are still looking at the field, rather than as a silent failure
  * to sell three weeks later.
  */
+/** One of the OTA's own rates under one of its rooms, as the OTA lists it. */
+export interface OtaRate { code: string; title: string | null; occupancy: number | null }
+export interface OtaRoom { code: string; title: string | null; rates: OtaRate[] }
+
+/** An OTA room/rate sold as one of this property's rate plans. */
+export interface OtaPair {
+  ota_room_code: string
+  ota_rate_code: string
+  rate_plan_id: string
+  occupancy?: number | null
+}
+
+export interface OtaMapping {
+  connection_id: string
+  channel_id: string
+  channel: string
+  live: boolean
+  ota_rooms: OtaRoom[]
+  /** Why the OTA's rooms could not be listed -- usually not authorised yet. */
+  ota_rooms_error: string | null
+  plans: { rate_plan_id: string; code: string; name: string;
+           room_type_name: string | null; occupancy: number | null }[]
+  pairs: OtaPair[]
+  /** Pairs on the channel naming a plan this property does not own. */
+  foreign_pairs: number
+}
+
+export async function getOtaMapping(connectionId: string): Promise<OtaMapping> {
+  const { data } = await api.get<OtaMapping>(
+    `/booking/channel-connections/${connectionId}/ota-mapping`)
+  return data
+}
+
+export async function setOtaMapping(
+  connectionId: string, pairs: OtaPair[],
+): Promise<OtaMapping> {
+  const { data } = await api.put<OtaMapping>(
+    `/booking/channel-connections/${connectionId}/ota-mapping`, { pairs })
+  return data
+}
+
+export async function setOtaLive(
+  connectionId: string, live: boolean,
+): Promise<OtaMapping> {
+  const { data } = await api.post<OtaMapping>(
+    `/booking/channel-connections/${connectionId}/go-live`, { live })
+  return data
+}
+
 export async function testOtaHotelId(
   partnerId: string, otaHotelId: string,
 ): Promise<ConnectionTest> {

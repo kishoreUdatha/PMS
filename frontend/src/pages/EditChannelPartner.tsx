@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import Select from '../components/Select'
 import PartnerMark from '../components/PartnerMark'
+import OtaMappingTab from '../components/OtaMappingTab'
 import {
   listProperties, listChannelPartners, listChannelConnections,
   getChannelLink, getMappingEditor, getOtaStatus, setChannelMappings,
@@ -81,7 +82,7 @@ export default function EditChannelPartner() {
   })
   const otaRow = (ota.data?.rows ?? []).find((r) => r.partner_id === partnerId)
 
-  const [tab, setTab] = useState<'mappings' | 'sync'>('mappings')
+  const [tab, setTab] = useState<'mappings' | 'ota' | 'sync'>('mappings')
   const [name, setName] = useState('')
   const [hotelId, setHotelId] = useState('')
   const [commission, setCommission] = useState('')
@@ -402,6 +403,7 @@ export default function EditChannelPartner() {
 
           <div className="mt-4 flex gap-6 border-b border-slate-100">
             {([['mappings', 'Room & rate mappings'],
+              ['ota', `${partner.name} rooms & go live`],
               ['sync', 'Sync settings']] as const).map(([key, label]) => (
               <button key={key} onClick={() => setTab(key)}
                 className={`-mb-px border-b-2 px-1 pb-2.5 text-sm font-semibold transition-colors ${
@@ -421,6 +423,18 @@ export default function EditChannelPartner() {
               unreachable={d?.unreachable ?? null}
               partnerName={partner.name}
             />
+          ) : tab === 'ota' ? (
+            conn?.external_channel_id ? (
+              <OtaMappingTab connectionId={conn.id} partnerName={partner.name}
+                onLiveChange={() => void ota.refetch()} />
+            ) : (
+              <p className="mt-4 flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2.5 text-sm text-slate-600">
+                <Info size={15} className="mt-0.5 shrink-0" />
+                The {partner.name} channel is built at the channel manager from
+                the {partner.name} ID above, once it is saved. Its rooms can be
+                paired here after that.
+              </p>
+            )
           ) : (
             <SyncTab d={d} saving={syncing}
               onSave={(v) => void saveSync(v)} />

@@ -65,6 +65,14 @@ creates steps 1–3 through the PMS API.)
    Channex, then runs the first full sync.
 5. **Distribution → Sales Channels.** Check that *Property registered*, *Room
    mapping* and *Rates and availability* are green.
+6. **Channel Partners → edit the partner → "<OTA> rooms & go live".** Once the
+   hotel has authorised Channex in the OTA's extranet, the OTA's own rooms and
+   rates are listed; pick which rate plan each sells as, **Save mapping**,
+   then **Go live**. Before authorisation the screen says so, and codes can
+   be typed in from the extranet. Only this property's own rate plans can be
+   chosen -- Channex itself accepts any rate plan on any channel (checked on
+   staging), so the PMS is the check. `e2e/ota_mapping_check.py` covers it
+   against `fake_channex.py` (22 checks, including the cross-tenant ones).
 
 ### "Use our API to fetch IDs … set up mapping"
 
@@ -192,6 +200,7 @@ What keeps them apart:
 | OTA listing | `(ota_code, ota_hotel_id)` on `channel_connections` is unique across all tenants (migration 0062), so one Booking.com hotel id can be connected once on the whole platform. Provisioning only adopts an existing Channex channel from the tenant's own group. |
 | ARI out | Sent per link, with that link's property, room and rate ids only. |
 | Bookings in | The webhook body gives only a revision id. The PMS fetches it from Channex with its own key and routes it by the revision's property id; from there the transaction is bound to that tenant and row-level security hides every other tenant's rows. The feed poll does the same for every revision it reads. |
+| OTA mapping and go-live | Done by the hotel in the PMS (partner page, *rooms & go live*). The channel must be on the tenant's own Channex property and group; only the property's own rate plans can be paired; a pair naming another property's plan is reported and blocks going live. |
 | API | Every channel route checks the property belongs to the caller's organisation; RLS enforces it again in the database (services connect as `pms_app`, never the owner). |
 
 Checked live against Channex staging with two tenants:
