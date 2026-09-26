@@ -129,6 +129,16 @@ services:
       BOOKING_URL: http://booking-core:8002
     ports:
       - "8001:8001"
+    # /ready, not /health: ready means the database answered. urllib rather
+    # than curl because the slim Python image has no curl; a 503 raises, so
+    # the command exits non-zero. A degraded booking-core (stale loop, Redis
+    # down) still answers 200 and stays healthy -- see its main.py.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/ready', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
     depends_on:
       postgres:
@@ -189,6 +199,16 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-chirala-pms}
     ports:
       - "8002:8002"
+    # /ready, not /health: ready means the database answered. urllib rather
+    # than curl because the slim Python image has no curl; a 503 raises, so
+    # the command exits non-zero. A degraded booking-core (stale loop, Redis
+    # down) still answers 200 and stays healthy -- see its main.py.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/ready', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
     depends_on:
       postgres:
@@ -215,10 +235,16 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-chirala-pms}
     ports:
       - "8000:8000"
+    # Waits for the services to be READY, not merely started: a gateway up
+    # in front of a booking-core still connecting to Postgres answers the
+    # first requests with 502s.
     depends_on:
-      - iam
-      - booking-core
-      - finance
+      iam:
+        condition: service_healthy
+      booking-core:
+        condition: service_healthy
+      finance:
+        condition: service_healthy
 
   finance:
     build:
@@ -260,6 +286,16 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-chirala-pms}
     ports:
       - "8003:8003"
+    # /ready, not /health: ready means the database answered. urllib rather
+    # than curl because the slim Python image has no curl; a 503 raises, so
+    # the command exits non-zero. A degraded booking-core (stale loop, Redis
+    # down) still answers 200 and stays healthy -- see its main.py.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8003/ready', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
     depends_on:
       postgres:

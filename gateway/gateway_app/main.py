@@ -18,6 +18,7 @@ from pathlib import Path
 
 import hmac
 import httpx
+from chirala_common.observability import install_observability
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
@@ -132,6 +133,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Request ids and the shared log format (LOG_LEVEL). Added after CORS so it is
+# the outer layer and even a CORS refusal carries an id. The id is written
+# into the request's headers, which _proxy forwards, so the service behind the
+# gateway logs under the same one. No /ready here: the gateway holds no
+# connection of its own to check, and its upstreams have theirs.
+install_observability(app, service="gateway", ready_endpoint=False)
 
 _ROUTES = {
     "iam": settings.iam_url,

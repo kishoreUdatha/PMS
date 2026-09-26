@@ -23,6 +23,7 @@ from datetime import date
 
 from chirala_common.db import system_context
 from chirala_common.locks import run_exclusively
+from chirala_common.observability import heartbeats
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -36,6 +37,9 @@ from .settings import settings
 #: API calls and N racing writers. The hold reaper and the outbox drains are
 #: not here: they already divide their work with SKIP LOCKED. Nor is the
 #: block cut-off sweep, which is idempotent by construction.
+#:
+#: Each loop below also calls ``heartbeats.beat`` as it starts a cycle, which
+#: is what /ready reads to report a loop that has stopped cycling.
 CHANNEL_FEED_LOCK = "chirala:booking:channel-feed"
 CHANNEL_PROVISION_LOCK = "chirala:booking:channel-provision"
 OCCUPANCY_SWEEP_LOCK = "chirala:booking:occupancy-sweep"
@@ -154,6 +158,7 @@ async def hold_reaper_loop() -> None:
     log.info("hold reaper started (every %ds, holds live %d min)",
              settings.hold_reaper_seconds, settings.hold_ttl_minutes)
     while True:
+        heartbeats.beat("hold_reaper", settings.hold_reaper_seconds)
         try:
             # Blocking SQL; keep it off the event loop so requests are still
             # served while a large sweep runs.
@@ -188,6 +193,7 @@ async def channel_push_loop() -> None:
              settings.channel_push_seconds, settings.channel_sync_quiet_seconds)
     await asyncio.sleep(30)
     while True:
+        heartbeats.beat("channel_push", settings.channel_push_seconds)
         try:
             results = await asyncio.to_thread(channel_sync.drain_outbox,
                                               SessionFactory)
@@ -220,6 +226,7 @@ async def channel_feed_loop() -> None:
              settings.channel_feed_seconds)
     await asyncio.sleep(60)
     while True:
+        heartbeats.beat("channel_feed", settings.channel_feed_seconds)
         try:
             n = await asyncio.to_thread(run_exclusively, engine, CHANNEL_FEED_LOCK,
                                         channel_routes.poll_feed, SessionFactory)
@@ -255,6 +262,7 @@ async def channel_provision_loop() -> None:
              settings.channel_provision_retry_minutes)
     await asyncio.sleep(45)
     while True:
+        heartbeats.beat("channel_provision", settings.channel_provision_seconds)
         try:
             # Blocking HTTP and SQL, and a batch of it — emphatically not on
             # the event loop, or the service stops answering requests for as
@@ -304,6 +312,7 @@ async def occupancy_sweep_loop() -> None:
              settings.occupancy_sweep_seconds, rate_publish.SWEEP_DAYS)
     await asyncio.sleep(45)
     while True:
+        heartbeats.beat("occupancy_sweep", settings.occupancy_sweep_seconds)
         try:
             with SessionFactory() as session:
                 try:
@@ -355,6 +364,7 @@ async def block_cutoff_loop() -> None:
              settings.block_cutoff_sweep_seconds)
     await asyncio.sleep(60)
     while True:
+        heartbeats.beat("block_cutoff", settings.block_cutoff_sweep_seconds)
         try:
             with SessionFactory() as session:
                 try:

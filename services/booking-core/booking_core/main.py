@@ -6,9 +6,11 @@ import asyncio
 import contextlib
 from collections.abc import AsyncIterator
 
+from chirala_common.observability import install_observability
 from fastapi import FastAPI
 
 from .channel_routes import channel_router
+from .database import engine
 from .public_routes import public_router
 from .reaper import (
     channel_feed_loop, channel_provision_loop, channel_push_loop,
@@ -113,6 +115,17 @@ app = FastAPI(
 @app.get("/health", tags=["meta"])
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "booking-core"}
+
+
+# Request ids, the shared log format at settings.log_level, and GET /ready.
+# 503 when the database is unreachable. Redis and the background loops only
+# DEGRADE it (200, "status": "degraded"): the rate limiter is Redis's one user
+# here and fails open by design, and a loop with no cycle in 3x its interval
+# is a stuck job to alert on, not a reason to pull every replica out of
+# rotation. /health above stays liveness.
+install_observability(app, service="booking-core", engine=engine,
+                      log_level=settings.log_level,
+                      redis_url=settings.redis_url, report_heartbeats=True)
 
 
 # Rooms/room-types/amenities routes come first: their paths are more specific

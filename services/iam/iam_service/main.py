@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 from collections.abc import AsyncIterator
 
+from chirala_common.observability import install_observability
 from fastapi import FastAPI
 
 from .approvals_routes import approvals_router
@@ -16,6 +17,7 @@ from .routes import router
 from .onboarding_routes import onboarding_router
 from .billing_routes import platform_billing_router, tenant_billing_router
 from .billing_scheduler import billing_loop
+from .database import engine
 from .mfa_routes import mfa_router
 from .settings import settings
 from .platform_ops_routes import ops_router
@@ -55,6 +57,12 @@ app = FastAPI(
 @app.get("/health", tags=["meta"])
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "iam"}
+
+
+# Request ids, the shared log format at settings.log_level, and GET /ready
+# (503 when the database is unreachable). /health above stays liveness.
+install_observability(app, service="iam", engine=engine,
+                      log_level=settings.log_level)
 
 
 app.include_router(auth_router)

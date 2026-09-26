@@ -7,10 +7,12 @@ WORKDIR /app
 
 RUN pip install --no-cache-dir uv
 
+# libs/common for the shared request-id middleware and logging.
+COPY libs/common /app/libs/common
 COPY gateway /app/gateway
 
 WORKDIR /app/gateway
-RUN uv pip install --system --no-cache -e .
+RUN uv pip install --system --no-cache -e /app/libs/common -e .
 
 EXPOSE 8000
 
