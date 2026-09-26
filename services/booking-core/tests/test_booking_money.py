@@ -413,3 +413,147 @@ def test_the_audit_does_not_release_a_no_show_the_desk_already_released(
             business_date=arrival, basis="none")
     assert done == []
     assert t.counters(arrival, 2).reserved == 2, "b's nights are untouched"
+
+
+# --------------------------------------------------------------------------
+# 4. OTA cancellations and the cancellation policy
+# --------------------------------------------------------------------------
+def test_a_waived_cancellation_needs_no_policy(tenant):
+    """Every OTA cancellation is waived, and was still refused for want of a policy.
+
+    The quote demanded a policy before it looked at whether any penalty would
+    be charged. Without the waiver a policy is still required: that is the
+    case where a number has to come from somewhere.
+    """
+    from fastapi import HTTPException
+
+    t = tenant(policy=False)
+    arrival = date.today() + timedelta(days=1)
+    t.seed(arrival, 1)
+    a = t.hold(arrival, 1)
+    t.confirm(a.reservation_id)
+
+    with pytest.raises(HTTPException) as refused:
+        _cancel(t, a.reservation_id, waive=False)
+    assert refused.value.status_code == 422
+
+    out = _cancel(t, a.reservation_id, waive=True)
+    assert out.status == "applied" and out.penalty_amount == 0
+    assert t.counters(arrival, 1).reserved == 0
+
+
+def _channel_setup(t, reservation_id, booking_id):
+    ext = f"ext-{uuid.uuid4().hex[:10]}"
+    with t.owner.begin() as c:
+        c.execute(text(
+            "INSERT INTO distribution.channel_manager_links "
+            "(organization_id, property_id, external_property_id) "
+            "VALUES (:o, :p, :x)"), {"o": t.org, "p": t.prop, "x": ext})
+        c.execute(text(
+            "INSERT INTO distribution.channel_booking_events "
+            "(revision_id, provider, event_type, outcome, booking_id, "
+            " reservation_id, organization_id, property_id) "
+            "VALUES (:r, 'channex', 'booking_new', 'created', :b, :res, "
+            "        :o, :p)"),
+            {"r": f"rev-{uuid.uuid4()}", "b": booking_id,
+             "res": reservation_id, "o": t.org, "p": t.prop})
+    return ext
+
+
+def _deliver(t, attrs: dict) -> tuple[str, dict]:
+    """Run one revision through ``_apply`` the way ``ingest`` does."""
+    from chirala_common.db import make_session_factory, system_context
+
+    from booking_core.channel_routes import _apply
+
+    rev = f"rev-{uuid.uuid4()}"
+    s = make_session_factory(t.runtime)()
+    try:
+        system_context(s, reason="test: channel webhook")
+        s.execute(text(
+            "INSERT INTO distribution.channel_booking_events "
+            "(revision_id, provider, event_type, outcome) "
+            "VALUES (:r, 'channex', 'booking_cancellation', 'claimed')"),
+            {"r": rev})
+        out = _apply(s, rev, attrs)
+        s.commit()
+    finally:
+        s.close()
+    return rev, out
+
+
+def test_an_ota_cancellation_that_cannot_apply_is_recorded_not_raised(tenant):
+    """An OTA cancelling a guest who is already in house raised out of the webhook.
+
+    The claim row lives in the same transaction, so it rolled back too: the
+    event disappeared and the poller offered it again for ever. It is now
+    written as 'failed' with the reason, unacknowledged and replayable, and
+    the booking is untouched.
+    """
+    t = tenant()
+    arrival = date.today()
+    t.seed(arrival, 2)
+    a = t.hold(arrival, 2)
+    t.confirm(a.reservation_id)
+    with t.owner.begin() as c:
+        c.execute(text("UPDATE booking.reservation_units "
+                       "SET status = 'checked_in' WHERE id = :u"),
+                  {"u": a.reservation_unit_id})
+    booking_id = f"B-{uuid.uuid4().hex[:8]}"
+    ext = _channel_setup(t, a.reservation_id, booking_id)
+
+    rev, out = _deliver(t, {"status": "cancelled", "property_id": ext,
+                            "booking_id": booking_id,
+                            "ota_reservation_code": "OTA1",
+                            "ota_name": "Booking.com"})
+
+    assert out["status"] == "failed"
+    with t.owner.connect() as c:
+        ev = c.execute(text(
+            "SELECT outcome, detail, acknowledged FROM "
+            "distribution.channel_booking_events WHERE revision_id = :r"),
+            {"r": rev}).one()
+        status_ = c.execute(text(
+            "SELECT status FROM booking.reservations WHERE id = :r"),
+            {"r": a.reservation_id}).scalar_one()
+    assert ev.outcome == "failed" and not ev.acknowledged
+    assert "in house" in ev.detail
+    assert status_ == "confirmed"
+    assert t.counters(arrival, 2).reserved == 2
+
+
+def test_an_ota_cancellation_on_a_property_without_a_policy_applies(tenant):
+    t = tenant(policy=False)
+    arrival = date.today() + timedelta(days=3)
+    t.seed(arrival, 1)
+    a = t.hold(arrival, 1)
+    t.confirm(a.reservation_id)
+    booking_id = f"B-{uuid.uuid4().hex[:8]}"
+    ext = _channel_setup(t, a.reservation_id, booking_id)
+
+    _, out = _deliver(t, {"status": "cancelled", "property_id": ext,
+                          "booking_id": booking_id})
+    assert out["status"] == "cancelled"
+    assert t.counters(arrival, 1).reserved == 0
+
+
+def test_a_new_property_gets_a_default_cancellation_policy(tenant):
+    """Sign-up and the platform's create-tenant never seeded one."""
+    from chirala_common.db import make_session_factory, system_context
+
+    auth_routes = pytest.importorskip("iam_service.auth_routes")
+
+    t = tenant(policy=False)
+    s = make_session_factory(t.owner)()
+    try:
+        system_context(s, reason="test: seed property defaults")
+        auth_routes._seed_property_defaults(s, org_id=t.org,
+                                            property_id=t.prop)
+        s.commit()
+    finally:
+        s.close()
+    with t.owner.connect() as c:
+        n = c.execute(text(
+            "SELECT count(*) FROM property.cancellation_policies "
+            "WHERE property_id = :p AND is_default"), {"p": t.prop}).scalar()
+    assert n == 1

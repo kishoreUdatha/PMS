@@ -529,6 +529,31 @@ def _seed_property_defaults(
              "desc": description, "ord": order},
         )
 
+    # A default cancellation policy, because cancelling needs one. Without it
+    # every cancellation's quote was refused -- including the ones an OTA
+    # sends, which the channel webhook could then never record and kept
+    # retrying. The property edits it in onboarding (step "policies"), which
+    # rewrites this row in place, so the name is one of the names that
+    # screen offers. Approval is off: a new hotel has no managers set up to
+    # approve anything, and a policy that parks every refund in a queue
+    # nobody reads is worse than none.
+    db.execute(
+        text(
+            """
+            INSERT INTO property.cancellation_policies
+                (organization_id, property_id, name, free_until_days,
+                 penalty_nights, no_show_refund, requires_approval,
+                 approval_above, policy_text, is_default)
+            VALUES (:org, :prop, 'Moderate', 7, 1, false, false, 0,
+                    'Free cancellation up to 7 days before arrival. '
+                    'Cancellations within 7 days are charged 1 night per '
+                    'room. No refund for no-shows.', true)
+            ON CONFLICT DO NOTHING
+            """
+        ),
+        {"org": org_id, "prop": property_id},
+    )
+
 
 @auth_router.post("/sign-up", response_model=SignUpOut,
                   status_code=status.HTTP_201_CREATED)

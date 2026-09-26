@@ -305,12 +305,27 @@ def _current(db: Session, res, units) -> StaySide:
     )
 
 
-def _policy(db: Session, property_id: uuid.UUID):
+#: What a waived cancellation is measured against when the property has no
+#: policy of its own. Nothing is charged, so there is nothing for a policy to
+#: decide -- and refusing the cancellation for want of one is what left OTA
+#: cancellations (always waived) failing forever on such properties.
+_WAIVED_NO_POLICY = {
+    "name": "No policy (penalty waived)", "free_until_days": 0,
+    "penalty_nights": 0, "requires_approval": False,
+    "approval_above": Decimal("0"),
+    "policy_text": "This property has no cancellation policy configured; the "
+                   "penalty was waived.",
+}
+
+
+def _policy(db: Session, property_id: uuid.UUID, *, required: bool = True):
     row = db.execute(
         text("SELECT * FROM property.cancellation_policies "
              "WHERE property_id = :p AND is_default LIMIT 1"),
         {"p": property_id},
     ).mappings().first()
+    if row is None and not required:
+        return _WAIVED_NO_POLICY
     if row is None:
         raise HTTPException(
             status_code=422,
@@ -526,9 +541,20 @@ def cancel_quote(
 ):
     """The penalty the policy produces, and what would go back."""
     assert_property_in_org(db, caller, property_id)
+    return _cancel_terms(db, reservation_id, property_id)
+
+
+def _cancel_terms(db: Session, reservation_id: uuid.UUID,
+                  property_id: uuid.UUID, *, waived: bool = False
+                  ) -> CancelQuote:
+    """The quote itself, shared by the quote screen and the cancellation.
+
+    ``waived`` says the penalty will not be charged, which is the one case a
+    missing policy does not matter: there is no penalty to calculate.
+    """
     res = _reservation(db, reservation_id, property_id)
     units = _units(db, reservation_id)
-    pol = _policy(db, property_id)
+    pol = _policy(db, property_id, required=not waived)
     _, paid = _paid(db, reservation_id)
     current = _current(db, res, units)
     today = db.execute(text("SELECT CURRENT_DATE")).scalar_one()
@@ -749,7 +775,8 @@ def cancel_reservation(
     if body.reason not in {r["code"] for r in CANCEL_REASONS}:
         raise HTTPException(status_code=422, detail="Unknown cancellation reason")
 
-    quote = cancel_quote(reservation_id, property_id, caller, db)
+    quote = _cancel_terms(db, reservation_id, property_id,
+                          waived=body.waive_penalty)
     penalty = quote.penalty_amount
     approves = _may_approve(db, caller, property_id)
 

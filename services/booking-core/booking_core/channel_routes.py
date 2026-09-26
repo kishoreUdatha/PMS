@@ -358,7 +358,29 @@ def _create(db: Session, conn, a: dict, lines: list[dict], guest_id):
 
 
 def _apply(db: Session, revision_id: str, a: dict) -> dict:
-    """Turn one revision into a reservation, a change, or a cancellation."""
+    """Turn one revision into a reservation, a change, or a cancellation.
+
+    **A change this PMS cannot apply is recorded, never raised.** The claim
+    row for this revision is written in the same transaction, so an exception
+    escaping from here rolled the claim back with everything else: the event
+    vanished from the activity list, nobody could see why, and the poller
+    offered the same revision again on every pass for ever. Every call into
+    the change routes therefore runs in a savepoint -- so a refusal that
+    happens after counters have already moved leaves nothing half-applied --
+    and a refusal is written to the event as ``failed`` with its reason and
+    left unacknowledged, which keeps it replayable once somebody has fixed
+    whatever stood in the way.
+    """
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from .inventory import InventoryOversold
+
+    #: What the change routes raise when they refuse. Anything else is a bug
+    #: and should surface as one.
+    refused = (HTTPException, InventoryOversold, SQLAlchemyError)
+
+    def _why(exc: Exception) -> str:
+        return str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
     status_ = str(a.get("status") or "").lower()
     channex_property = str(a.get("property_id") or "")
     rooms = a.get("rooms") or []
@@ -422,14 +444,32 @@ def _apply(db: Session, revision_id: str, a: dict) -> dict:
                     reservation_id=existing["reservation_id"],
                     detail=f"{existing['number']} was already cancelled.")
         else:
-            cancel_reservation(
-                existing["reservation_id"], conn["property_id"],
-                CancelIn(reason="guest_request",
-                         notes=f"Cancelled on {ota} ({code}).",
-                         # The OTA's own policy settles any fee with the
-                         # guest; charging it again here would bill twice.
-                         waive_penalty=True),
-                caller=caller, db=db)
+            savepoint = db.begin_nested()
+            try:
+                cancel_reservation(
+                    existing["reservation_id"], conn["property_id"],
+                    CancelIn(reason="guest_request",
+                             notes=f"Cancelled on {ota} ({code}).",
+                             # The OTA's own policy settles any fee with the
+                             # guest; charging it again here would bill
+                             # twice.
+                             waive_penalty=True),
+                    caller=caller, db=db)
+                savepoint.commit()
+            except refused as exc:
+                # Typically the guest is already in house, or has left: the
+                # OTA says cancelled and the property says otherwise, and a
+                # person has to settle which is true. Recorded where they
+                # will see it; not acknowledged, so it can be replayed.
+                savepoint.rollback()
+                _finish(db, revision_id, "failed",
+                        reservation_id=existing["reservation_id"],
+                        detail=f"{ota} cancelled {existing['number']}, but it "
+                               f"could not be cancelled here: {_why(exc)} "
+                               f"Resolve it with {ota}, then replay.")
+                log.error("channex cancellation %s not applied: %s",
+                          revision_id, _why(exc))
+                return {"status": "failed", "revision_id": revision_id}
             _finish(db, revision_id, "cancelled",
                     reservation_id=existing["reservation_id"],
                     detail=f"Cancelled {existing['number']}; rooms released.")
@@ -470,6 +510,10 @@ def _apply(db: Session, revision_id: str, a: dict) -> dict:
                                for l in lines}) == 1)
         if same_shape:
             first = lines[0]
+            # A savepoint, because modify_reservation moves inventory before
+            # it can know the change is refused -- and a refusal caught here
+            # used to be committed along with those half-moved counters.
+            savepoint = db.begin_nested()
             try:
                 modify_reservation(
                     existing["reservation_id"], conn["property_id"],
@@ -484,11 +528,15 @@ def _apply(db: Session, revision_id: str, a: dict) -> dict:
                              # written below; a desk re-quote does not apply.
                              charge_difference=False),
                     caller=caller, db=db)
-            except HTTPException as exc:
-                _finish(db, revision_id, "no_inventory"
-                        if exc.status_code == 409 else "failed",
+                savepoint.commit()
+            except refused as exc:
+                savepoint.rollback()
+                conflict = (isinstance(exc, InventoryOversold)
+                            or getattr(exc, "status_code", None) == 409)
+                _finish(db, revision_id, "no_inventory" if conflict
+                        else "failed",
                         reservation_id=existing["reservation_id"],
-                        detail=f"Modification not applied: {exc.detail}")
+                        detail=f"Modification not applied: {_why(exc)}")
                 return {"status": "failed", "revision_id": revision_id}
             for (uid,), line in zip(units, lines):
                 if line["nightly"] is not None:
@@ -526,6 +574,15 @@ def _apply(db: Session, revision_id: str, a: dict) -> dict:
                     detail=f"Change not applied: no inventory for the new "
                            f"stay. {existing['number']} is unchanged.")
             return {"status": "no_inventory", "revision_id": revision_id}
+        except refused as exc:
+            # The old booking could not be cancelled -- the guest is in
+            # house, say. Nothing of the replacement survives the rollback.
+            savepoint.rollback()
+            _finish(db, revision_id, "failed",
+                    reservation_id=existing["reservation_id"],
+                    detail=f"Change not applied: {_why(exc)} "
+                           f"{existing['number']} is unchanged.")
+            return {"status": "failed", "revision_id": revision_id}
         _finish(db, revision_id, "updated", reservation_id=made[0].reservation_id,
                 detail=f"Replaced {existing['number']} with "
                        f"{', '.join(h.number for h in made)}.")
