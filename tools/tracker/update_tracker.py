@@ -7,11 +7,15 @@ stack. Everything else is left untouched. Status values follow Lists & Legend.
 
 from __future__ import annotations
 
+from pathlib import Path
 import sys
 
 import openpyxl
 
-FILE = "Chirala_Bay_Resort_PMS_Development_Tracker (2).xlsx"
+# Beside this script, not in the working directory: the tracker and the
+# scripts that edit it live together in tools/tracker, and a relative
+# name would quietly create or miss a copy wherever the script is run from.
+FILE = str(Path(__file__).resolve().with_name("Chirala_Bay_Resort_PMS_Development_Tracker (2).xlsx"))
 
 # Legend stage -> Progress fraction.
 STAGE = {

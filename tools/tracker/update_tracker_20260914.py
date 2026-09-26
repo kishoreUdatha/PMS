@@ -16,12 +16,16 @@ Run once. Appends are guarded by a marker so a second run is a no-op.
 
 from __future__ import annotations
 
+from pathlib import Path
 import shutil
 import sys
 
 import openpyxl
 
-FILE = "Chirala_Bay_Resort_PMS_Development_Tracker (2).xlsx"
+# Beside this script, not in the working directory: the tracker and the
+# scripts that edit it live together in tools/tracker, and a relative
+# name would quietly create or miss a copy wherever the script is run from.
+FILE = str(Path(__file__).resolve().with_name("Chirala_Bay_Resort_PMS_Development_Tracker (2).xlsx"))
 SHEET = "User Stories & Acceptance"
 COL_ID, COL_STATUS, COL_PCT, COL_NOTES = 3, 24, 25, 30
 MARKER = "[14 Sep 2026 defect sweep]"
