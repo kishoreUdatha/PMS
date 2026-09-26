@@ -228,7 +228,7 @@ export default function Guests() {
           g.last_stay, g.total_stays, g.lifetime_value, g.status_label]
           .map(cell).join(',')),
       ).join('\r\n')
-      const url = URL.createObjectURL(new Blob([`﻿${csv}`],
+      const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`],
         { type: 'text/csv;charset=utf-8' }))
       const a = document.createElement('a')
       a.href = url

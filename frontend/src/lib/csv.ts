@@ -36,7 +36,7 @@ export function toCsv(headers: string[], rows: CsvRow[]): string {
 export function downloadCsv(
   filename: string, headers: string[], rows: CsvRow[],
 ): void {
-  const blob = new Blob([`﻿${toCsv(headers, rows)}`],
+  const blob = new Blob([`\uFEFF${toCsv(headers, rows)}`],
     { type: 'text/csv;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')

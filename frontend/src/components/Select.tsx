@@ -341,7 +341,7 @@ export default function Select({
             </p>
           )}
           {options.map((o, i) => (
-            <div key={`${o.value}-${i}`} data-i={i} id={optionId(i)}
+            <div key={`${o.value}-${i}`} data-i={i} id={optionId(i)} tabIndex={-1}
               role="option" aria-selected={o.value === current}
               aria-disabled={o.disabled || undefined}
               onMouseEnter={() => !o.disabled && setActive(i)}
