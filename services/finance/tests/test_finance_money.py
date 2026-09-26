@@ -114,3 +114,49 @@ def test_a_charge_takes_its_folios_currency(engine, scratch):
         s.commit()
     finally:
         s.close()
+
+
+# --------------------------------------------------------------------------
+# The payment webhook's call to booking-core
+# --------------------------------------------------------------------------
+def test_confirming_after_payment_is_async_and_tells_refusal_from_failure(
+        monkeypatch):
+    """The webhook called booking-core with a blocking httpx.post.
+
+    Inside an async handler that stalled the event loop for up to fifteen
+    seconds. And every failure read "paid_unconfirmed", whether booking-core
+    was unreachable (retry later) or had refused because the hold expired
+    and the room was resold (refund the guest).
+    """
+    import asyncio
+    import inspect
+
+    import httpx
+
+    from finance_service import webhook_routes
+    from finance_service.settings import settings
+
+    assert inspect.iscoroutinefunction(webhook_routes.confirm_booking)
+
+    answers = iter([
+        httpx.Response(200, json={"reservation_id": "x"}),
+        httpx.Response(409, json={"detail": "The hold expired and the room "
+                                            "was sold. Refund it."}),
+        httpx.Response(503, text="unavailable"),
+    ])
+    transport = httpx.MockTransport(lambda request: next(answers))
+    real = httpx.AsyncClient
+    monkeypatch.setattr(webhook_routes.httpx, "AsyncClient",
+                        lambda **kw: real(transport=transport, **kw))
+    monkeypatch.setattr(settings, "service_token", "t0ken")
+
+    async def run():
+        return [await webhook_routes.confirm_booking(uuid.uuid4(),
+                                                     uuid.uuid4())
+                for _ in range(3)]
+
+    ok, refused, down = asyncio.run(run())
+    assert ok == (True, "", False)
+    assert refused[0] is False and refused[2] is True
+    assert "Refund" in refused[1]
+    assert down[0] is False and down[2] is False

@@ -838,3 +838,67 @@ def test_a_no_show_penalty_is_taxed_by_the_engine_it_is_quoted_from(tenant):
         ("no_show_penalty_tax", f"no_show_penalty:{u}#tax",
          Decimal("12.0000"), open_day),
     ]
+
+
+# --------------------------------------------------------------------------
+# 9. A payment that arrives after the hold expired
+# --------------------------------------------------------------------------
+def _reap(t):
+    from chirala_common.db import make_session_factory, system_context
+
+    from booking_core.reaper import expire_stale_holds
+
+    with t.owner.begin() as c:
+        c.execute(text("UPDATE booking.booking_holds SET expires_at = "
+                       "now() - interval '1 minute' WHERE property_id = :p "
+                       "AND status = 'held'"), {"p": t.prop})
+    s = make_session_factory(t.runtime)()
+    try:
+        system_context(s, reason="test: hold reaper")
+        n = expire_stale_holds(s)
+        s.commit()
+    finally:
+        s.close()
+    return n
+
+
+def test_a_late_payment_confirms_an_expired_hold_whose_rooms_are_free(tenant):
+    """Paying after the reaper ran left money on a folio for a dead booking.
+
+    confirm_reservation refused anything not 'held'. If the rooms are still
+    free, the guest now gets them.
+    """
+    t = tenant(rooms=1)
+    arrival = date.today() + timedelta(days=60)
+    t.seed(arrival, 2)
+    a = t.hold(arrival, 2)
+    assert _reap(t) == 1
+    assert tuple(t.counters(arrival, 2))[:2] == (0, 0)
+
+    assert t.confirm(a.reservation_id) is True
+    assert tuple(t.counters(arrival, 2))[:2] == (0, 2)
+    with t.owner.connect() as c:
+        st = c.execute(text(
+            "SELECT r.status, (SELECT array_agg(DISTINCT u.status) FROM "
+            "booking.reservation_units u WHERE u.reservation_id = r.id) "
+            "FROM booking.reservations r WHERE r.id = :r"),
+            {"r": a.reservation_id}).one()
+    assert st[0] == "confirmed" and st[1] == ["reserved"]
+
+
+def test_a_late_payment_for_a_resold_room_is_refused_clearly(tenant):
+    from booking_core.flow import FlowError
+
+    t = tenant(rooms=1)
+    arrival = date.today() + timedelta(days=61)
+    t.seed(arrival, 1)
+    a = t.hold(arrival, 1)
+    assert _reap(t) == 1
+    b = t.hold(arrival, 1)  # the room is sold to someone else
+    t.confirm(b.reservation_id)
+
+    with pytest.raises(FlowError) as refused:
+        t.confirm(a.reservation_id)
+    assert refused.value.conflict
+    assert "refund" in str(refused.value)
+    assert tuple(t.counters(arrival, 1))[:2] == (0, 1)

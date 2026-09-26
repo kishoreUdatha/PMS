@@ -89,7 +89,8 @@ def confirm_reservation(
     res = session.execute(
         text(
             """
-            SELECT id, organization_id, property_id, status
+            SELECT id, organization_id, property_id, status, number,
+                   group_block_id
             FROM booking.reservations
             WHERE id = :id
             FOR UPDATE
@@ -101,8 +102,20 @@ def confirm_reservation(
         raise FlowError("Reservation not found")
     if res.status == "confirmed":
         return False  # idempotent, and nothing new happened
+    if res.status == "cancelled" and _expired_hold(session, reservation_id):
+        # The guest paid after the reaper had already given the rooms back.
+        # That used to end as money on a folio for a booking that no longer
+        # existed ("paid_unconfirmed"), with nobody told why. If the rooms are
+        # still there the guest gets them; if they have been sold since, the
+        # answer is a clear refusal the payment webhook can act on.
+        _revive_expired_hold(session, res)
+        return True
     if res.status != "held":
         raise FlowError(f"Cannot confirm reservation in status '{res.status}'")
+    # A hold past its expiry that the reaper has not reached yet is still a
+    # hold: its rooms are still counted in held_units, and the reaper skips a
+    # booking that is locked -- as this one now is -- so confirming it here is
+    # safe and is exactly what a guest paying at 14:59:59 deserves.
 
     units = session.execute(
         text(
@@ -165,6 +178,93 @@ def confirm_reservation(
         payload={"reservation_id": str(reservation_id)},
     )
     return True
+
+
+def _expired_hold(session: Session, reservation_id: uuid.UUID) -> bool:
+    """Whether this booking was cancelled by the hold reaper, and nothing else.
+
+    Only a hold the reaper expired is eligible to be brought back. A booking
+    the desk cancelled (its hold is 'released'), or one a guest cancelled, is
+    a decision somebody made; a payment arriving late does not overturn it.
+    """
+    return session.execute(
+        text("SELECT 1 FROM booking.booking_holds "
+             "WHERE reservation_id = :r AND status = 'expired' LIMIT 1"),
+        {"r": reservation_id},
+    ).first() is not None
+
+
+def _revive_expired_hold(session: Session, res) -> None:
+    """Confirm a booking whose hold expired, if its rooms are still free.
+
+    The reaper gave the rooms back and cancelled the units. They are taken
+    again straight into ``reserved_units`` -- with the same oversell check a
+    new booking gets -- and the units and the booking are restored. If any
+    night has been sold in the meantime the whole thing is refused and nothing
+    changes: the guest cannot be given a room that is now somebody else's.
+    """
+    from .inventory import InventoryOversold, occupancy, shift_inventory
+    from .settings import settings
+
+    if res.group_block_id is not None:
+        # The reaper handed this booking's rooms back to its block, and
+        # taking them again would have to draw the block down under its own
+        # rules. Safer to say so than to half-do it.
+        raise FlowError(
+            f"The hold on {res.number} expired before payment arrived, and it "
+            f"was drawn from a group block. Rebook it against the block; the "
+            f"payment needs refunding or moving to the new booking.",
+            conflict=True)
+    units = session.execute(
+        text(
+            """
+            SELECT id, room_type_id, arrival_date, departure_date
+            FROM booking.reservation_units
+            WHERE reservation_id = :rid AND status = 'cancelled'
+            """
+        ),
+        {"rid": res.id},
+    ).mappings().all()
+    if not units:
+        raise FlowError(f"{res.number} has no rooms left to confirm.",
+                        conflict=True)
+    try:
+        shift_inventory(
+            session, property_id=res.property_id,
+            organization_id=res.organization_id, counter="reserved_units",
+            delta=occupancy(units),
+            overbooking_allowance=settings.overbooking_allowance)
+    except InventoryOversold as exc:
+        raise FlowError(
+            f"The hold on {res.number} expired before payment arrived, and "
+            f"{exc} The booking cannot be confirmed; the payment needs "
+            f"refunding.",
+            conflict=True) from exc
+
+    session.execute(
+        text("UPDATE booking.reservation_units SET status = 'reserved', "
+             "version = version + 1 WHERE reservation_id = :r "
+             "AND status = 'cancelled'"),
+        {"r": res.id},
+    )
+    session.execute(
+        text("UPDATE booking.reservations SET status = 'confirmed', "
+             "version = version + 1 WHERE id = :id AND status = 'cancelled'"),
+        {"id": res.id},
+    )
+    session.execute(
+        text("UPDATE booking.booking_holds SET status = 'converted', "
+             "updated_at = now() WHERE reservation_id = :id "
+             "AND status = 'expired'"),
+        {"id": res.id},
+    )
+    enqueue_event(
+        session,
+        aggregate_type="reservation",
+        aggregate_id=str(res.id),
+        event_type="booking.reservation_confirmed",
+        payload={"reservation_id": str(res.id), "revived_expired_hold": True},
+    )
 
 
 # --------------------------------------------------------------------------
