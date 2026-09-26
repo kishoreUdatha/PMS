@@ -711,3 +711,42 @@ def test_a_new_inventory_night_starts_with_out_of_service_rooms_counted(
     later = date.today() + timedelta(days=90)
     t.seed(later, 1)
     assert t.counters(later, 1).oos == 1
+
+
+# --------------------------------------------------------------------------
+# 7. Seeding with reset_counters
+# --------------------------------------------------------------------------
+def _seed_route(t, start, end, *, cap, reset):
+    from booking_core.routes import seed_inventory
+    from booking_core.schemas import InventorySeed
+
+    with t.session() as s:
+        return seed_inventory(
+            InventorySeed(property_id=t.prop, room_type_id=t.rt,
+                          start_date=start, end_date=end,
+                          physical_capacity=cap, reset_counters=reset),
+            caller=t.caller(), db=s)
+
+
+def test_resetting_counters_is_refused_under_live_bookings(tenant):
+    """reset_counters zeroed held/reserved on nights with live bookings.
+
+    Every booking on those nights went back on sale while its guest still
+    expected the room.
+    """
+    from fastapi import HTTPException
+
+    t = tenant(rooms=2)
+    arrival = date.today() + timedelta(days=50)
+    t.seed(arrival, 3)
+    a = t.hold(arrival + timedelta(days=1), 1)
+    t.confirm(a.reservation_id)
+
+    with pytest.raises(HTTPException) as refused:
+        _seed_route(t, arrival, arrival + timedelta(days=2), cap=2, reset=True)
+    assert refused.value.status_code == 409
+    assert str(arrival + timedelta(days=1)) in refused.value.detail
+    assert t.counters(arrival, 3).reserved == 1
+
+    # A night with nothing live can still be reset.
+    _seed_route(t, arrival, arrival, cap=2, reset=True)
