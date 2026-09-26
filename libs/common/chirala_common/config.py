@@ -16,7 +16,13 @@ class BaseServiceSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    environment: str = "local"
+    #: ``local`` switches on the developer conveniences -- the X-Debug-Subject
+    #: header, password-less sign-in by subject, unsigned dev tokens -- and
+    #: nothing else does. Defaults to ``production`` so that a deployment
+    #: which forgot to say what it is gets the strict behaviour; a developer
+    #: sets ``ENVIRONMENT=local`` in ``.env`` once. The comparison is always
+    #: exact: ``Local`` or ``dev`` is not local.
+    environment: str = "production"
     log_level: str = "INFO"
 
     #: Shared secret for calls between this deployment's own services.
@@ -108,3 +114,60 @@ class BaseServiceSettings(BaseSettings):
             sender=self.smtp_sender, sender_name=self.smtp_sender_name,
             starttls=self.smtp_starttls,
         )
+
+
+#: The password the repository's own examples use. A database URL carrying it
+#: outside local is a deployment that copied ``.env.example`` and stopped.
+_DEV_DB_PASSWORD = "pms_dev_password"
+
+
+def unsafe_for_deployment(settings: BaseServiceSettings) -> list[str]:
+    """What is wrong with these settings for anything but a developer's machine.
+
+    Empty in local mode: the repository's defaults are meant for exactly
+    that. Everywhere else each entry is a plain sentence naming the variable
+    to set, because the person reading it is at a terminal with a service
+    that will not start.
+    """
+    if settings.environment == "local":
+        return []
+    problems = []
+    if not settings.session_signing_key.strip():
+        problems.append(
+            "SESSION_SIGNING_KEY is not set, so sessions could not be signed.")
+    elif min(len(k.strip()) for k in settings.session_signing_key.split(",")
+             if k.strip()) < 32:
+        problems.append("SESSION_SIGNING_KEY is shorter than 32 characters.")
+    if "minioadmin" in (settings.minio_access_key, settings.minio_secret_key):
+        problems.append(
+            "MINIO_ACCESS_KEY / MINIO_SECRET_KEY are still the MinIO defaults "
+            "(minioadmin), which anyone can guess.")
+    if not settings.credential_encryption_keys.strip():
+        problems.append(
+            "CREDENTIAL_ENCRYPTION_KEYS is not set, so stored credentials "
+            "and second-factor secrets cannot be sealed.")
+    # Every service names its database URLs differently (IAM_DATABASE_URL,
+    # BOOKING_MIGRATION_DATABASE_URL, ...), so they are found by shape rather
+    # than listed here, where a new one would be missed.
+    for name, value in settings.model_dump().items():
+        if (name.endswith("database_url") and isinstance(value, str)
+                and _DEV_DB_PASSWORD in value):
+            problems.append(
+                f"{name.upper()} uses the example database password.")
+    return problems
+
+
+def refuse_unsafe_boot(settings: BaseServiceSettings, service: str) -> None:
+    """Stop a service starting with settings only fit for a laptop.
+
+    Called first thing in each service's lifespan. A refusal to start is
+    loud, immediate and seen by whoever deployed it; the same mistake left
+    running is a forgeable session or a guessable object store, seen first by
+    somebody else.
+    """
+    problems = unsafe_for_deployment(settings)
+    if problems:
+        raise RuntimeError(
+            f"{service} will not start with ENVIRONMENT={settings.environment!r}:"
+            "\n  - " + "\n  - ".join(problems)
+            + "\nFix these, or set ENVIRONMENT=local on a development machine.")

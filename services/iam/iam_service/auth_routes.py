@@ -792,7 +792,10 @@ def login(body: LoginIn, db: Session = Depends(get_auth_session)) -> SessionOut:
         return _credential_login(db, body)
 
     # --- the subject shortcut -------------------------------------------
-    if settings.environment == "production":
+    # Allowed in local mode only, compared exactly. It used to be refused
+    # only when the environment was exactly "production", so "prod", "staging"
+    # or a typo handed out sessions for any password-less account by name.
+    if settings.environment != "local":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Sign in with your property code, email and password.",

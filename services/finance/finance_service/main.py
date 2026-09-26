@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 from collections.abc import AsyncIterator
 
+from chirala_common.config import refuse_unsafe_boot
 from fastapi import FastAPI
 
 from .adjustment_routes import adjustment_router
@@ -38,6 +39,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     the audit is idempotent per room per night and only one run per day can
     complete.
     """
+    refuse_unsafe_boot(settings, "finance")
     task = (
         asyncio.create_task(night_audit_loop())
         if settings.night_audit_enabled

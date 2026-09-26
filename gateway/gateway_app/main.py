@@ -328,7 +328,14 @@ async def _proxy(target_base: str, path: str, request: Request) -> Response:
     url = f"{target_base}/{path}"
     body = await request.body()
     fwd_headers = {
-        k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP
+        k: v for k, v in request.headers.items()
+        if k.lower() not in _HOP_BY_HOP
+        # X-Debug-Subject is "I am whoever I say I am", honoured by a service
+        # running in local mode. Nothing arriving from outside may carry it
+        # through, whatever mode the service behind happens to be in: one
+        # misconfigured ENVIRONMENT should not be the only thing between the
+        # internet and every account.
+        and not k.lower().startswith("x-debug-")
     }
     # Say who is really calling, and overwrite rather than append.
     #
