@@ -714,6 +714,22 @@ class MappingsIn(BaseModel):
     rates: list[MappingIn] | None = None
 
 
+def _ota_listing_taken(exc: IntegrityError) -> str | None:
+    """The message for an OTA listing another connection already has.
+
+    Every tenant shares one channel-manager account, so one listing connected
+    twice is two hotels selling through somebody else's Booking.com page. The
+    unique index sees across tenants; this only says so in words, and names
+    nobody -- the other connection may belong to another customer.
+    """
+    diag = getattr(getattr(exc, "orig", None), "diag", None)
+    if getattr(diag, "constraint_name", None) != "uq_channel_connection_ota_hotel":
+        return None
+    return ("That property id is already connected on this platform. Check "
+            "the id with the OTA; if this hotel really is that listing, the "
+            "other connection has to be removed first.")
+
+
 def _require_ota_id(db: Session, partner_id: uuid.UUID,
                     ota_hotel_id: str | None) -> str | None:
     """An online channel needs the OTA's own id for this hotel. Enforced here.
@@ -907,10 +923,11 @@ def create_connection(
              "hid": hotel_id,
              "by": caller.user_id},
         ).scalar_one()
-    except IntegrityError:
+    except IntegrityError as exc:
         raise HTTPException(
             status_code=409,
-            detail="This partner is already connected to this property.",
+            detail=_ota_listing_taken(exc)
+            or "This partner is already connected to this property.",
         ) from None
 
     record_audit(
@@ -963,9 +980,11 @@ def update_connection(
              "notes": body.notes, "hid": hotel_id,
              "by": caller.user_id, "i": connection_id},
         )
-    except IntegrityError:
+    except IntegrityError as exc:
         raise HTTPException(
-            status_code=409, detail="Could not save those terms.") from None
+            status_code=409,
+            detail=_ota_listing_taken(exc) or "Could not save those terms.",
+        ) from None
     return _present(db, _connection_or_404(db, caller, connection_id))
 
 

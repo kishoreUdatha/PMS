@@ -176,3 +176,34 @@ uvicorn e2e.fake_channex:app --port 9100   # CHANNEX_API_URL=http://localhost:91
 python e2e/channel_sync_check.py --creds creds_a.json        # ARI: 11 scenarios
 python e2e/channel_integration_check.py --a creds_a.json --b creds_b.json   # partners, provisioning, bookings, isolation: 31
 ```
+
+---
+
+## 6. Many tenants, one Channex account
+
+Every tenant shares one Channex account: one API key, one webhook secret, one
+booking feed. Two hotels on different tenants can both sell on Booking.com.
+What keeps them apart:
+
+| Layer | How |
+|---|---|
+| Channex groups | One group per organisation (`channel_manager_groups`), one Channex property per PMS property, created inside that group. |
+| Property ownership | `channel_manager_links.external_property_id` is unique: a Channex property belongs to one PMS property. Claiming another's is a 409. |
+| OTA listing | `(ota_code, ota_hotel_id)` on `channel_connections` is unique across all tenants (migration 0062), so one Booking.com hotel id can be connected once on the whole platform. Provisioning only adopts an existing Channex channel from the tenant's own group. |
+| ARI out | Sent per link, with that link's property, room and rate ids only. |
+| Bookings in | The webhook body gives only a revision id. The PMS fetches it from Channex with its own key and routes it by the revision's property id; from there the transaction is bound to that tenant and row-level security hides every other tenant's rows. The feed poll does the same for every revision it reads. |
+| API | Every channel route checks the property belongs to the caller's organisation; RLS enforces it again in the database (services connect as `pms_app`, never the owner). |
+
+Checked live against Channex staging with two tenants:
+
+```bash
+python e2e/channel_isolation_live_check.py --a e2e/out/creds_owner.json --b e2e/out/creds_b.json
+```
+
+It sets up tenant B through the PMS API, tries to take A's Booking.com hotel id
+and A's Channex property, reads and writes A's channel data with B's login,
+edits prices in each tenant and checks only that tenant's Channex property
+moves, then sends one OTA booking per tenant through Booking CRS and checks
+each lands in its own tenant only. Needs `CHANNEX_API_KEY` and the services
+connected as the runtime role (with the owner role, RLS is bypassed and the
+test proves nothing).

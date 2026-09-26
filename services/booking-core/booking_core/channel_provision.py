@@ -959,11 +959,17 @@ def _sync_channels(db: Session, cx: Channex, property_id: uuid.UUID,
     # What already exists there, so a re-run adopts rather than duplicates.
     # Two channels for one OTA on one hotel is two systems pushing different
     # prices at the same listing.
+    #
+    # Only this tenant's group. The account is shared by every tenant, and a
+    # channel found by hotel id anywhere in it could be another customer's
+    # listing -- adopting it would attach this hotel to their Booking.com page.
     existing: dict[str, str] = {}
     code, out = cx.get("/channels")
     if code < 400:
         for row in out.get("data") or []:
             a = row.get("attributes") or {}
+            if a.get("group_id") != group:
+                continue
             settings_blob = a.get("settings") or {}
             key = f"{a.get('channel')}|{settings_blob.get('hotel_id')}"
             existing[key] = a.get("id")
