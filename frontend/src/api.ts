@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { announceSessionExpired } from './auth/sessionEvents'
 
 // All requests go through the gateway (/api/{service}/...).
 // In dev, Vite proxies /api -> http://localhost:8000 (see vite.config.ts).
@@ -60,9 +61,27 @@ function flattenDetail(detail: unknown): string {
   return ''
 }
 
+/** A 401 on an ordinary call means the session behind the stored token has
+ *  ended (expired, revoked, signed out elsewhere). The auth endpoints are left
+ *  alone: a wrong password or a stale token being checked at start-up answers
+ *  401 too, and the caller handles those itself. A request sent without a
+ *  token is left alone as well — there was no session to expire, and raising
+ *  the event for it could bounce the sign-in page onto itself. */
+function isExpiredSession(error: unknown): boolean {
+  const e = error as {
+    response?: { status?: number }
+    config?: { url?: string; headers?: Record<string, unknown> }
+  }
+  if (e?.response?.status !== 401) return false
+  const url = e.config?.url ?? ''
+  if (url.includes('iam/auth/')) return false
+  return Boolean(e.config?.headers?.Authorization)
+}
+
 api.interceptors.response.use(
   (r) => r,
   (error) => {
+    if (isExpiredSession(error)) announceSessionExpired()
     const data = error?.response?.data
     if (data && typeof data === 'object' && 'detail' in data) {
       const flat = flattenDetail((data as { detail: unknown }).detail)
@@ -222,6 +241,15 @@ export async function verifyEmailOtp(
 export async function fetchMe(): Promise<Session> {
   const { data } = await api.get<Session>('/iam/auth/me')
   return data
+}
+
+/** Ends the session server-side. The token is passed in rather than read by
+ *  the request interceptor, because the caller clears storage straight after
+ *  and the interceptor runs a tick later. */
+export async function logoutSession(token: string): Promise<void> {
+  await api.post('/iam/auth/logout', null, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
 }
 
 // Example typed calls (booking-core availability).

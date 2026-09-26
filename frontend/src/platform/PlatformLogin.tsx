@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { AlertTriangle, Loader2, ShieldCheck } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext'
+import { returnPath } from '../auth/sessionEvents'
 import { MfaRequired } from '../api'
 
 /**
@@ -18,7 +19,7 @@ import { MfaRequired } from '../api'
 export default function PlatformLogin() {
   const { signInPlatform, verifyPlatform } = useAuth()
   const navigate = useNavigate()
-  const location = useLocation() as { state?: { from?: string } }
+  const location = useLocation()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -41,7 +42,7 @@ export default function PlatformLogin() {
       } else {
         await signInPlatform(email.trim(), password)
       }
-      navigate(location.state?.from || '/platform', { replace: true })
+      navigate(returnPath(location, '/platform'), { replace: true })
     } catch (err) {
       if (err instanceof MfaRequired) {
         setChallenge(err.challenge)
