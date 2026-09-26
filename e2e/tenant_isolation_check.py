@@ -137,7 +137,7 @@ def run(a: dict, b: dict) -> list[dict]:
         print(f"{tag}  [{group}] {name} -> {detail}")
 
     a_ids = harvest(a)
-    b_ids = harvest(b)
+    harvest(b)  # tenant B reads its own records first, as a real user would
 
     # 0. Sanity: each tenant can read its own data, or the refusals below
     # would prove nothing.
@@ -202,7 +202,7 @@ def run(a: dict, b: dict) -> list[dict]:
                           "property.rooms", "finance.folios",
                           "finance.folio_entries", "finance.payments",
                           "finance.invoices", "iam.memberships"):
-                def count_a_rows(bound_org):
+                def count_a_rows(bound_org, table=table):
                     with conn.transaction():
                         conn.execute(
                             "SELECT set_config('app.organization_id', %s, true),"
@@ -220,7 +220,7 @@ def run(a: dict, b: dict) -> list[dict]:
                       own > 0 and seen == 0,
                       f"{seen} of {own} rows" if own else
                       "tenant A has no rows here to hide (inconclusive)")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         check("Database row-level security", "connect as runtime role",
               False, f"could not run: {exc}")
 

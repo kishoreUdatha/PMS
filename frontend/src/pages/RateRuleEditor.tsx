@@ -16,6 +16,7 @@ import {
   type RateRule,
 } from '../api'
 import { useActivePropertyId } from '../hooks/useProperty'
+import { errorText } from '../lib/forms'
 
 /**
  * Screen 119 — creating and editing one rate rule.
@@ -48,10 +49,7 @@ const STATUS_STYLE: Record<string, string> = {
 }
 
 function apiError(e: unknown): string {
-  const d = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
-  if (typeof d === 'string') return d
-  if (Array.isArray(d)) return 'Some fields are invalid. Check the highlighted values.'
-  return 'Could not save. Please try again.'
+  return errorText(e, 'Could not save. Please try again.')
 }
 
 function Field({ label, required, hint, children }: {

@@ -9,25 +9,25 @@ somebody up for.
 
 **The subject shortcut.** ``{"subject": "admin-user"}`` with no password, kept
 because every seeded fixture and every developer session in this repository
-uses it. It is refused outright when the environment is production, and it is
-refused for any user who has a password set — otherwise adding credentials
+uses it. It is accepted only when the environment is exactly ``local``, and it
+is refused for any user who has a password set — otherwise adding credentials
 would have achieved nothing, since anyone could go around them.
 
-The token is still a base64 of the subject rather than a signed JWT. That is
-the remaining hole and it is deliberate to leave it visible: a credential check
-in front of a forgeable token buys less than it looks like, so this is the next
-thing to do, not a finished job.
+The session token is a signed, expiring JWT (``chirala_common.session_tokens``)
+and ``/auth/logout`` revokes it. It used to be a base64 of the subject, which
+anyone could write for themselves; the credential check in front of it bought
+nothing while that was so.
 """
 
 from __future__ import annotations
 
-import base64
+import logging
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from smtplib import SMTPException
 
-from fastapi import Request
+from fastapi import Request, Response
 from chirala_common.db import identity_context, system_context
 from chirala_common.db import bind_tenant_context
 from chirala_common.audit import record_audit
@@ -38,6 +38,8 @@ from chirala_common.passwords import (
     verify_password,
 )
 from chirala_common.routing import TransactionalRoute
+from chirala_common import session_tokens
+from chirala_common.ratelimit import enforce
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -50,6 +52,30 @@ from .settings import settings
 auth_router = APIRouter(
     prefix="/auth", tags=["auth"], route_class=TransactionalRoute
 )
+log = logging.getLogger("uvicorn.error").getChild("auth")
+
+
+def _rate_limited(scope: str):
+    """A per-address allowance for one sign-in route.
+
+    The per-account lockout stops guessing at one account; it does nothing
+    about one address trying a thousand accounts once each, or asking for a
+    thousand reset emails and verification codes to be sent to strangers.
+    Each route counts separately, so a hotel's morning of password resets
+    does not also use up its sign-ins.
+    """
+
+    def _dep(request: Request) -> None:
+        if settings.auth_rate_limit_enabled:
+            enforce(
+                request, scope=f"auth:{scope}",
+                limit=settings.auth_rate_limit,
+                window_seconds=settings.auth_rate_limit_seconds,
+                redis_url=settings.redis_url,
+                trusted_proxies=settings.trusted_proxies,
+            )
+
+    return _dep
 
 
 #: How long an account is shut out after repeated wrong passwords, and how
@@ -133,16 +159,11 @@ class SessionOut(BaseModel):
 
 
 def _make_token(subject: str) -> str:
-    return base64.urlsafe_b64encode(f"dev:{subject}".encode()).decode()
-
-
-def _subject_from_token(token: str) -> str | None:
-    try:
-        raw = base64.urlsafe_b64decode(token.encode()).decode()
-    except Exception:  # noqa: BLE001
-        return None
-    return raw[4:] if raw.startswith("dev:") else None
-
+    return session_tokens.issue(
+        subject, key=settings.session_signing_key,
+        ttl_seconds=settings.session_ttl_minutes * 60,
+        environment=settings.environment,
+    )
 
 
 def get_auth_session(request: Request, db: Session = Depends(get_session)) -> Session:
@@ -229,7 +250,8 @@ def _normalise_email(raw: str) -> str:
     return email
 
 
-@auth_router.post("/email-otp/send", status_code=status.HTTP_202_ACCEPTED)
+@auth_router.post("/email-otp/send", status_code=status.HTTP_202_ACCEPTED,
+                  dependencies=[Depends(_rate_limited("email-otp-send"))])
 def send_email_otp(body: EmailOtpIn, db: Session = Depends(get_auth_session)) -> dict:
     """Email a six-digit code to prove the address is reachable.
 
@@ -312,7 +334,8 @@ def send_email_otp(body: EmailOtpIn, db: Session = Depends(get_auth_session)) ->
                       f"{OTP_MINUTES} minutes."}
 
 
-@auth_router.post("/email-otp/verify")
+@auth_router.post("/email-otp/verify",
+                  dependencies=[Depends(_rate_limited("email-otp-verify"))])
 def verify_email_otp(
     body: EmailOtpVerifyIn, db: Session = Depends(get_auth_session)
 ) -> dict:
@@ -529,6 +552,31 @@ def _seed_property_defaults(
              "desc": description, "ord": order},
         )
 
+    # A default cancellation policy, because cancelling needs one. Without it
+    # every cancellation's quote was refused -- including the ones an OTA
+    # sends, which the channel webhook could then never record and kept
+    # retrying. The property edits it in onboarding (step "policies"), which
+    # rewrites this row in place, so the name is one of the names that
+    # screen offers. Approval is off: a new hotel has no managers set up to
+    # approve anything, and a policy that parks every refund in a queue
+    # nobody reads is worse than none.
+    db.execute(
+        text(
+            """
+            INSERT INTO property.cancellation_policies
+                (organization_id, property_id, name, free_until_days,
+                 penalty_nights, no_show_refund, requires_approval,
+                 approval_above, policy_text, is_default)
+            VALUES (:org, :prop, 'Moderate', 7, 1, false, false, 0,
+                    'Free cancellation up to 7 days before arrival. '
+                    'Cancellations within 7 days are charged 1 night per '
+                    'room. No refund for no-shows.', true)
+            ON CONFLICT DO NOTHING
+            """
+        ),
+        {"org": org_id, "prop": property_id},
+    )
+
 
 @auth_router.post("/sign-up", response_model=SignUpOut,
                   status_code=status.HTTP_201_CREATED)
@@ -710,6 +758,17 @@ def _record_failure(user_id, attempts: int) -> None:
         conn.commit()
 
 
+def _refuse_if_locked(locked_until) -> None:
+    """429 while an account is locked out after too many wrong answers."""
+    if locked_until is not None and locked_until > _now():
+        minutes = max(1, int((locked_until - _now()).total_seconds() // 60) + 1)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many attempts. Try again in {minutes} minute"
+                   f"{'' if minutes == 1 else 's'}, or reset your password.",
+        )
+
+
 def _credential_login(db: Session, body: LoginIn) -> SessionOut:
     """Property code, email and password, checked properly."""
     wrong = HTTPException(
@@ -791,13 +850,17 @@ def _credential_login(db: Session, body: LoginIn) -> SessionOut:
     return session
 
 
-@auth_router.post("/login", response_model=SessionOut)
+@auth_router.post("/login", response_model=SessionOut,
+                  dependencies=[Depends(_rate_limited("login"))])
 def login(body: LoginIn, db: Session = Depends(get_auth_session)) -> SessionOut:
     if body.password:
         return _credential_login(db, body)
 
     # --- the subject shortcut -------------------------------------------
-    if settings.environment == "production":
+    # Allowed in local mode only, compared exactly. It used to be refused
+    # only when the environment was exactly "production", so "prod", "staging"
+    # or a typo handed out sessions for any password-less account by name.
+    if settings.environment != "local":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Sign in with your property code, email and password.",
@@ -837,7 +900,8 @@ class PlatformLoginIn(BaseModel):
     password: str = Field(min_length=1)
 
 
-@auth_router.post("/platform-login", response_model=SessionOut)
+@auth_router.post("/platform-login", response_model=SessionOut,
+                  dependencies=[Depends(_rate_limited("platform-login"))])
 def platform_login(body: PlatformLoginIn,
                    db: Session = Depends(get_auth_session)) -> SessionOut:
     """Sign in as platform staff: email and password, no property code.
@@ -958,27 +1022,64 @@ class MfaVerifyIn(BaseModel):
     code: str = Field(min_length=6, max_length=10)
 
 
-@auth_router.post("/platform-login/verify", response_model=SessionOut)
+@auth_router.post("/platform-login/verify", response_model=SessionOut,
+                  dependencies=[Depends(_rate_limited("platform-verify"))])
 def platform_login_verify(body: MfaVerifyIn,
                           db: Session = Depends(get_session)) -> SessionOut:
     """Step two: the challenge from the password, plus a code from the device.
 
-    The challenge carries the user id and its own expiry, sealed with the
-    deployment's key, so this route never has to trust anything the client
-    says about who it is.
+    The challenge carries the user id, a one-time nonce and its own expiry,
+    sealed with the deployment's key, so this route never has to trust
+    anything the client says about who it is.
+
+    **The lockout applies here too.** Wrong codes are counted against the
+    same limit as wrong passwords, and that count used to lock only the
+    password step: a challenge obtained before the lock kept accepting
+    guesses, and a correct one signed in a locked account.
+
+    **A challenge is good for one session.** It used to be reusable until it
+    expired, so one captured challenge plus any code -- a recovery code read
+    off a printout -- minted as many sessions as its holder liked for five
+    minutes.
     """
     from .mfa_routes import check_second_factor, read_challenge
 
-    user_id = read_challenge(body.challenge)
+    user_id, nonce, expires = read_challenge(body.challenge)
     system_context(db, reason="sign-in: verify second factor")
 
     row = db.execute(
-        text("SELECT subject_id, status FROM iam.users WHERE id = :u"),
+        text("SELECT u.subject_id, u.status, c.locked_until "
+             "FROM iam.users u "
+             "LEFT JOIN iam.user_credentials c ON c.user_id = u.id "
+             "WHERE u.id = :u"),
         {"u": user_id},
     ).mappings().first()
     if row is None or row["status"] != "active":
         raise HTTPException(status_code=401,
                             detail="Those sign-in details were not recognised.")
+    _refuse_if_locked(row["locked_until"])
+
+    # Spent before the code is checked, so a replay is refused without
+    # burning a recovery code or counting as a guess. A wrong code rolls this
+    # back with the rest of the transaction, leaving the challenge usable for
+    # a retry -- the guess limit, not the challenge, is what bounds guessing.
+    # Kept beside revoked sessions: both are "a token we signed that must no
+    # longer be honoured", keyed and expiring the same way.
+    spent = db.execute(
+        text(
+            """
+            INSERT INTO iam.revoked_sessions (jti, subject, expires_at)
+            VALUES (:j, :s, to_timestamp(:e))
+            ON CONFLICT (jti) DO NOTHING
+            RETURNING jti
+            """
+        ),
+        {"j": f"mfa:{nonce}", "s": row["subject_id"], "e": expires},
+    ).first()
+    if spent is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="That sign-in attempt has already been used. Start again.")
 
     if not check_second_factor(db, user_id, body.code):
         # Counted like a wrong password: a second factor with unlimited
@@ -991,6 +1092,12 @@ def platform_login_verify(body: MfaVerifyIn,
 
     db.execute(text("UPDATE iam.users SET last_login_at = now() WHERE id = :u"),
                {"u": user_id})
+    # Proven twice over; earlier wrong codes stop counting toward a lockout.
+    db.execute(
+        text("UPDATE iam.user_credentials SET failed_attempts = 0, "
+             "locked_until = NULL, updated_at = now() WHERE user_id = :u"),
+        {"u": user_id},
+    )
     record_audit(
         db, action="platform.signed_in", entity_type="user",
         entity_id=str(user_id), actor_subject=row["subject_id"],
@@ -1263,7 +1370,8 @@ def set_password(
     return session
 
 
-@auth_router.post("/forgot-password", status_code=status.HTTP_202_ACCEPTED)
+@auth_router.post("/forgot-password", status_code=status.HTTP_202_ACCEPTED,
+                  dependencies=[Depends(_rate_limited("forgot-password"))])
 def forgot_password(
     body: ForgotPasswordIn, db: Session = Depends(get_auth_session)
 ) -> dict:
@@ -1304,19 +1412,21 @@ def forgot_password(
         record_delivery(SessionFactory, template_code="password_reset",
                         recipient=row["email"], subject=subject,
                         organization_id=row.get("organization_id"))
-    except MailNotConfigured:
+    except (MailNotConfigured, OSError, SMTPException) as exc:
+        detail = ("no mail server configured"
+                  if isinstance(exc, MailNotConfigured) else str(exc)[:200])
         record_delivery(SessionFactory, template_code="password_reset",
                         recipient=row["email"], status="failed",
                         organization_id=row.get("organization_id"),
-                        detail="no mail server configured")
-        # The token is still issued and the answer is still the same one, so
-        # this does not tell a stranger anything. It does need to be visible
-        # to whoever runs the service.
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No mail server is configured, so the reset link cannot be "
-                   "sent. Set SMTP_HOST and SMTP_SENDER on the iam service.",
-        ) from None
+                        detail=detail)
+        # Logged, not answered. This used to be a 503 -- and only an address
+        # that exists ever reaches this line, so the status code alone told a
+        # stranger which addresses work at the property: exactly what the
+        # identical 202 above is for. Whoever runs the service sees it here
+        # and in the delivery log instead.
+        log.error("password reset mail for user %s not sent: %s. Set "
+                  "SMTP_HOST and SMTP_SENDER on the iam service.",
+                  row["id"], detail)
     return same
 
 
@@ -1327,7 +1437,7 @@ def me(
 ) -> SessionOut:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Missing bearer token")
-    subject = _subject_from_token(authorization.split(" ", 1)[1])
+    subject = session_tokens.subject_from_bearer(authorization, db)
     if not subject:
         raise HTTPException(status_code=401, detail="Invalid token")
     # A session reads only its own subject's identity.
@@ -1335,4 +1445,48 @@ def me(
     session = _load_session(db, subject)
     if session is None:
         raise HTTPException(status_code=401, detail="Unknown or inactive user")
+    # /me answers "who am I", not "give me a new session": the caller keeps
+    # the token it already holds, with the expiry it came with. Handing back a
+    # fresh one here would let any live token renew itself forever.
+    session.token = authorization.split(" ", 1)[1].strip()
     return session
+
+
+@auth_router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_session),
+) -> Response:
+    """End this session everywhere, not just in this browser.
+
+    A signed token stays valid until it expires however many times the client
+    forgets it, and a copy may be sitting in a proxy log or another tab. So
+    its ``jti`` is recorded as revoked and every service refuses it from the
+    next request on.
+
+    Always 204, including for a token that is already expired, revoked or
+    malformed: the caller wanted to be signed out, and they are. A local dev
+    token has no identity of its own to revoke and is simply forgotten by the
+    client, as before.
+    """
+    claims = None
+    if authorization and authorization.lower().startswith("bearer "):
+        claims = session_tokens.decode(authorization.split(" ", 1)[1])
+    if claims is not None and claims.jti is not None:
+        system_context(db, reason="sign-out")
+        db.execute(
+            text(
+                """
+                INSERT INTO iam.revoked_sessions (jti, subject, expires_at)
+                VALUES (:j, :s, to_timestamp(:e))
+                ON CONFLICT (jti) DO NOTHING
+                """
+            ),
+            {"j": claims.jti, "s": claims.subject, "e": claims.expires_at},
+        )
+        # Housekeeping while we are here: a revoked token that has also
+        # expired is refused on its expiry alone, so its row is dead weight
+        # in a table every request reads.
+        db.execute(text("DELETE FROM iam.revoked_sessions "
+                        "WHERE expires_at < now()"))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

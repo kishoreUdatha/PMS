@@ -20,6 +20,7 @@ import { AlertTriangle, CreditCard, Loader2, ShieldCheck, X } from 'lucide-react
 import Select from './Select'
 import { usePaymentMethods } from '../lib/paymentMethods'
 import { collectFolioPayment, ensureFolio } from '../api'
+import { errorText } from '../lib/forms'
 
 const field = 'w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-brand'
 const lbl = 'mb-1 block text-xs font-medium text-slate-600'
@@ -82,8 +83,7 @@ export default function AddPaymentDialog({
       })
       onSaved()
     } catch (e) {
-      const ax = e as { response?: { data?: { detail?: string } } }
-      setErr(ax?.response?.data?.detail ?? 'The payment could not be taken.')
+      setErr(errorText(e, 'The payment could not be taken.'))
     } finally { setBusy(false) }
   }
 

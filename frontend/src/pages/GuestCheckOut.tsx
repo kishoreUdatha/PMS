@@ -15,6 +15,7 @@ import {
 } from '../api'
 import { useActivePropertyId, usePropertyToday } from '../hooks/useProperty'
 import { usePaymentMethods } from '../lib/paymentMethods'
+import { errorText } from '../lib/forms'
 
 /**
  * Screen 007 — Checkout & Guest Folio.
@@ -227,8 +228,7 @@ export default function GuestCheckOut() {
       setDone({ room: r.room, warnings: r.warnings })
     },
     onError: (e) => {
-      const er = e as { response?: { data?: { detail?: string } } }
-      setError(er.response?.data?.detail ?? 'The checkout could not be completed.')
+      setError(errorText(e, 'The checkout could not be completed.'))
     },
   })
 

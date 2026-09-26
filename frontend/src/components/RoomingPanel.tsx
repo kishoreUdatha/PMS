@@ -20,6 +20,7 @@ import {
   getRoomingList, setRoomGuest, importRoomingList,
   type GroupBlock, type RoomingRow,
 } from '../api'
+import { errorText } from '../lib/forms'
 
 const field = 'w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-brand'
 const lbl = 'mb-1 block text-xs font-medium text-slate-500'
@@ -209,8 +210,7 @@ function AddNames({ blockId, propertyId, block, onClose, onDone, onError }: {
       })
       onDone()
     } catch (e) {
-      const ax = e as { response?: { data?: { detail?: string } } }
-      onError(ax?.response?.data?.detail ?? 'The names could not be added.')
+      onError(errorText(e, 'The names could not be added.'))
     } finally { setBusy(false) }
   }
 

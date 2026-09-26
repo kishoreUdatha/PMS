@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:16
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-pms}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pms_dev_password}
@@ -18,6 +19,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "6379:6379"
     healthcheck:
@@ -28,6 +30,7 @@ services:
 
   nats:
     image: nats:2.10-alpine
+    restart: unless-stopped
     command: ["-js"]
     ports:
       - "4222:4222"
@@ -35,6 +38,7 @@ services:
 
   minio:
     image: minio/minio:latest
+    restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
@@ -47,6 +51,7 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:24.0
+    restart: unless-stopped
     command: ["start-dev", "--import-realm"]
     environment:
       KEYCLOAK_ADMIN: admin
@@ -55,6 +60,35 @@ services:
       - "8080:8080"
     volumes:
       - ./infra/keycloak:/opt/keycloak/data/import:ro
+
+  # Every schema migration, once, in order, before any service starts.
+  #
+  # Each service used to run `alembic upgrade head` as its own container
+  # started, all three at once and in no particular order. The migrations are
+  # not independent -- booking-core's reference finance.folios, finance's
+  # reference iam -- so on a fresh database booking-core could fail at 0023
+  # because finance had not got there yet, and nothing restarted it. This runs
+  # iam -> finance -> booking-core and then grants the runtime login; the
+  # services wait for it to EXIT 0 (service_completed_successfully), so a
+  # failed migration keeps the app down rather than serving a half-built
+  # schema.
+  #
+  # One-shot: no restart policy, it is meant to exit. `docker compose up`
+  # re-runs it every time, which is a no-op when there is nothing new.
+  migrate:
+    build:
+      context: .
+      dockerfile: infra/migrate/Dockerfile
+    env_file: .env
+    environment:
+      IAM_MIGRATION_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-pms}:${POSTGRES_PASSWORD:-pms_dev_password}@postgres:5432/${POSTGRES_DB:-chirala_pms}
+      FINANCE_MIGRATION_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-pms}:${POSTGRES_PASSWORD:-pms_dev_password}@postgres:5432/${POSTGRES_DB:-chirala_pms}
+      BOOKING_MIGRATION_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-pms}:${POSTGRES_PASSWORD:-pms_dev_password}@postgres:5432/${POSTGRES_DB:-chirala_pms}
+      APP_DB_USER: ${APP_DB_USER:-pms_app}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-pms_app_dev_password}
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   iam:
     build:
@@ -95,6 +129,17 @@ services:
       BOOKING_URL: http://booking-core:8002
     ports:
       - "8001:8001"
+    # /ready, not /health: ready means the database answered. urllib rather
+    # than curl because the slim Python image has no curl; a 503 raises, so
+    # the command exits non-zero. A degraded booking-core (stale loop, Redis
+    # down) still answers 200 and stays healthy -- see its main.py.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/ready', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
@@ -102,6 +147,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_started
+      migrate:
+        condition: service_completed_successfully
 
   booking-core:
     build:
@@ -152,6 +199,17 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-chirala-pms}
     ports:
       - "8002:8002"
+    # /ready, not /health: ready means the database answered. urllib rather
+    # than curl because the slim Python image has no curl; a 503 raises, so
+    # the command exits non-zero. A degraded booking-core (stale loop, Redis
+    # down) still answers 200 and stays healthy -- see its main.py.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/ready', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
@@ -159,11 +217,14 @@ services:
         condition: service_healthy
       minio:
         condition: service_started
+      migrate:
+        condition: service_completed_successfully
 
   gateway:
     build:
       context: .
       dockerfile: gateway/Dockerfile
+    restart: unless-stopped
     env_file: .env
     environment:
       IAM_URL: http://iam:8001
@@ -174,10 +235,16 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-chirala-pms}
     ports:
       - "8000:8000"
+    # Waits for the services to be READY, not merely started: a gateway up
+    # in front of a booking-core still connecting to Postgres answers the
+    # first requests with 502s.
     depends_on:
-      - iam
-      - booking-core
-      - finance
+      iam:
+        condition: service_healthy
+      booking-core:
+        condition: service_healthy
+      finance:
+        condition: service_healthy
 
   finance:
     build:
@@ -219,6 +286,17 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-chirala-pms}
     ports:
       - "8003:8003"
+    # /ready, not /health: ready means the database answered. urllib rather
+    # than curl because the slim Python image has no curl; a 503 raises, so
+    # the command exits non-zero. A degraded booking-core (stale loop, Redis
+    # down) still answers 200 and stays healthy -- see its main.py.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8003/ready', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
@@ -226,6 +304,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_started
+      migrate:
+        condition: service_completed_successfully
 
   # A public HTTPS address for the gateway, for when something on the internet
   # has to reach in -- which in practice means a payment gateway's webhook.
@@ -246,6 +326,7 @@ services:
   cloudflared:
     image: cloudflare/cloudflared:latest
     profiles: ["tunnel"]
+    restart: unless-stopped
     command: ["tunnel", "--url", "http://gateway:8000",
               "--metrics", "0.0.0.0:2000", "--no-autoupdate"]
     depends_on:
@@ -273,6 +354,7 @@ services:
   cloudflared-named:
     image: cloudflare/cloudflared:latest
     profiles: ["named-tunnel"]
+    restart: unless-stopped
     command: ["tunnel", "--no-autoupdate",
               "--config", "/etc/cloudflared/config.yml", "run"]
     volumes:

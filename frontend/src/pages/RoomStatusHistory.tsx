@@ -16,6 +16,7 @@ import {
   type StatusEvent, type RoomStatusSummary, type StatusHistoryFilters,
 } from '../api'
 import { useActivePropertyId } from '../hooks/useProperty'
+import { errorText } from '../lib/forms'
 
 /**
  * Screen 064 — Room Status History.
@@ -84,9 +85,7 @@ function elapsed(iso: string | null): string {
 }
 
 function apiError(e: unknown): string {
-  const d = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
-  if (typeof d === 'string') return d
-  return 'Could not record the correction. Please try again.'
+  return errorText(e, 'Could not record the correction. Please try again.')
 }
 
 function Badge({ status, label }: { status: string; label: string }) {

@@ -5,19 +5,19 @@
 export const inputCls =
   'w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-brand'
 
-/** The server's reason, in words: FastAPI sends a string for refusals it
- *  explains and a list of field errors for a body it could not read. */
+/** The server's reason for a failed request, or `fallback`.
+ *
+ *  The one helper every screen uses to turn a caught error into words. The
+ *  HTTP client's response interceptor (api.ts) has already flattened FastAPI's
+ *  `detail` -- a string for refusals it explains, a list of field errors for a
+ *  body it could not read -- into a single string, so all that is left is to
+ *  take it when it is there. Anything else (a network failure, a 500 with an
+ *  HTML body, a bug) gets the caller's own wording rather than axios's
+ *  "Request failed with status code 500". */
 export function errorText(e: unknown, fallback = 'Could not save.'): string {
-  const er = e as { response?: { data?: { detail?: unknown } }; message?: string }
-  const detail = er.response?.data?.detail
-  if (typeof detail === 'string') return detail
-  if (Array.isArray(detail)) {
-    const msgs = detail
-      .map((d) => (d as { msg?: string }).msg ?? '')
-      .filter(Boolean)
-    if (msgs.length) return msgs.join(' ')
-  }
-  return er.message ?? fallback
+  const detail = (e as { response?: { data?: { detail?: unknown } } } | null)
+    ?.response?.data?.detail
+  return typeof detail === 'string' && detail.trim() ? detail : fallback
 }
 
 /** An empty text box is "not given", not an empty string. */

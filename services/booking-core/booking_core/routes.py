@@ -15,7 +15,7 @@ from chirala_common.authz import (
     caller_org,
     assert_entity_in_org,
     assert_org_matches_caller,
-    Caller, assert_property_in_org, build_authz,
+    Caller, assert_property_in_org, build_authz, require_property_permission,
 )
 from chirala_common.routing import TransactionalRoute
 from fastapi import (
@@ -57,7 +57,8 @@ router = APIRouter(route_class=TransactionalRoute)
 def create_room_type(body: schemas.RoomTypeCreate, caller: Caller = Depends(require_permission("rooms", "configure")), db: Session = Depends(get_session)):
     # The organisation is the caller's own; the body no longer
     # carries one to disagree with.
-    assert_property_in_org(db, caller, body.property_id)
+    require_property_permission(db, caller, body.property_id,
+                                "rooms", "configure")
     rt_id = uuid.uuid4()
     db.execute(
         text(
@@ -112,16 +113,68 @@ def list_room_types(property_id: uuid.UUID, caller: Caller = Depends(require_org
 def seed_inventory(body: schemas.InventorySeed, caller: Caller = Depends(require_permission("rooms", "configure")), db: Session = Depends(get_session)):
     """Set physical_capacity for each night in [start_date, end_date].
 
-    - reset_counters=True: also zero held/reserved/allotment (setup/demo).
+    - reset_counters=True: also zero held/reserved/allotment (setup/demo),
+      and only on nights nothing is live on -- see below.
     - reset_counters=False (default): preserve counters; reject if the new
       capacity would drop below units already consumed (would make sellable
       negative), guarding against inconsistent inventory (§4).
     """
     # The organisation is the caller's own; the body no longer
     # carries one to disagree with.
-    assert_property_in_org(db, caller, body.property_id)
+    require_property_permission(db, caller, body.property_id,
+                                "rooms", "configure")
     if body.end_date < body.start_date:
         raise HTTPException(status_code=422, detail="end_date before start_date")
+
+    if body.reset_counters:
+        # Zeroing a night that has a live hold, booking or group block on it
+        # does not reset anything -- it forgets rooms that are still taken.
+        # Every one of them went back on sale while its guest still expected
+        # it, and the booking's own later release then drove the counter
+        # below the truth. A reset is for clearing counters that have drifted
+        # from nothing, so it is refused wherever something is still live.
+        live = db.execute(
+            text(
+                """
+                SELECT d::date AS night
+                  FROM generate_series(CAST(:s AS date), CAST(:e AS date),
+                                       interval '1 day') AS d
+                 WHERE EXISTS (
+                       SELECT 1 FROM booking.reservation_units u
+                         JOIN booking.reservations r ON r.id = u.reservation_id
+                        WHERE u.property_id = :prop
+                          AND u.room_type_id = :rt
+                          AND u.status IN ('reserved', 'checked_in')
+                          AND r.status NOT IN ('cancelled', 'completed')
+                          AND d::date >= u.arrival_date
+                          AND d::date < u.departure_date)
+                    OR EXISTS (
+                       SELECT 1 FROM booking.group_block_nights n
+                         JOIN booking.group_blocks b ON b.id = n.block_id
+                        WHERE n.property_id = :prop
+                          AND n.room_type_id = :rt
+                          AND n.stay_date = d::date
+                          AND n.rooms_held > 0
+                          AND b.status = 'open')
+                 ORDER BY 1
+                 LIMIT 5
+                """
+            ),
+            {"s": body.start_date, "e": body.end_date,
+             "prop": body.property_id, "rt": body.room_type_id},
+        ).scalars().all()
+        if live:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Counters cannot be reset on nights that still have "
+                    "bookings, holds or group blocks on them ("
+                    + ", ".join(str(n) for n in live)
+                    + (", ..." if len(live) == 5 else "")
+                    + "). Cancel or move those first, or set capacity "
+                    "without resetting."
+                ),
+            )
 
     day = body.start_date
     count = 0
@@ -137,8 +190,8 @@ def seed_inventory(body: schemas.InventorySeed, caller: Caller = Depends(require
                     VALUES (:org, :prop, :rt, :d, :cap, 0, 0, 0, 0)
                     ON CONFLICT (property_id, room_type_id, stay_date)
                     DO UPDATE SET physical_capacity = EXCLUDED.physical_capacity,
-                                  out_of_service = 0, held_units = 0,
-                                  reserved_units = 0, allotment_units = 0
+                                  held_units = 0, reserved_units = 0,
+                                  allotment_units = 0
                     """
                 ),
                 {
@@ -176,8 +229,8 @@ def seed_inventory(body: schemas.InventorySeed, caller: Caller = Depends(require
                         status_code=409,
                         detail=(
                             f"Capacity {body.physical_capacity} on {day} is below "
-                            f"already-consumed units ({consumed}). Use "
-                            f"reset_counters=true to force, or raise capacity."
+                            f"already-consumed units ({consumed}). Raise "
+                            f"capacity, or free those rooms first."
                         ),
                     )
                 db.execute(
@@ -217,6 +270,17 @@ def seed_inventory(body: schemas.InventorySeed, caller: Caller = Depends(require
                 )
         count += 1
         day += timedelta(days=1)
+    if body.reset_counters:
+        # Out of service is not a counter anyone books against: it is derived
+        # from blocks and room status, so a reset re-derives it rather than
+        # zeroing rooms that are still under repair back onto sale.
+        db.execute(
+            text("SELECT booking.recount_out_of_service("
+                 "CAST(:prop AS uuid), CAST(:rt AS uuid), "
+                 "CAST(:s AS date), CAST(:e AS date))"),
+            {"prop": body.property_id, "rt": body.room_type_id,
+             "s": body.start_date, "e": body.end_date},
+        )
     return {"nights_seeded": count}
 
 
@@ -365,7 +429,8 @@ def create_hold_endpoint(body: schemas.HoldCreate, caller: Caller = Depends(requ
     """
     # The organisation is the caller's own; the body no longer
     # carries one to disagree with.
-    assert_property_in_org(db, caller, body.property_id)
+    require_property_permission(db, caller, body.property_id,
+                                "reservations", "create")
     if body.bill_to == "company" and body.commercial_account_id is None:
         raise HTTPException(
             status_code=422,

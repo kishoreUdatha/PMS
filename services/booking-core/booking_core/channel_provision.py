@@ -102,6 +102,10 @@ class Channex:
         r = self.c.post(path, json=body)
         return r.status_code, (r.json() if r.content else {})
 
+    def put(self, path: str, body: dict) -> tuple[int, dict]:
+        r = self.c.put(path, json=body)
+        return r.status_code, (r.json() if r.content else {})
+
     def groups(self) -> dict[str, str]:
         """Every group in the account, by title.
 
@@ -321,9 +325,27 @@ def provision(db: Session, property_id: uuid.UUID,
         _sync_rates(db, cx, link_id, property_id, external, res)
         _register_webhook(cx, external, res)
         _sync_channels(db, cx, property_id, organization_id, external, res)
+        _first_full_sync(db, link_id)
 
     _record_outcome(db, organization_id, property_id, res)
     return res
+
+
+def _first_full_sync(db: Session, link_id) -> None:
+    """Publish everything once, when the channel manager has nothing yet.
+
+    Going live -- or coming back after the channel manager lost the property
+    -- is the one moment a full 500-day sync is right. After it, only changes
+    are sent, as the outbox records them.
+    """
+    if db.execute(text("SELECT 1 FROM distribution.channel_ari_state "
+                       "WHERE link_id = :l LIMIT 1"), {"l": link_id}).first():
+        return
+    if not db.execute(text("SELECT 1 FROM distribution.channel_room_mappings "
+                           "WHERE link_id = :l LIMIT 1"), {"l": link_id}).first():
+        return
+    from .channel_sync import sync
+    sync(db, link_id, full=True)
 
 
 
@@ -354,6 +376,10 @@ def _forget_external(db: Session, link_id) -> None:
     db.execute(text("DELETE FROM distribution.channel_room_mappings "
                     "WHERE link_id = :l"), {"l": link_id})
     db.execute(text("DELETE FROM distribution.channel_rate_mappings "
+                    "WHERE link_id = :l"), {"l": link_id})
+    # What was accepted belonged to the property that has gone; the rebuilt
+    # one starts empty and gets a full sync.
+    db.execute(text("DELETE FROM distribution.channel_ari_state "
                     "WHERE link_id = :l"), {"l": link_id})
     db.execute(
         text("UPDATE distribution.channel_manager_links "
@@ -559,16 +585,23 @@ def _sync_rates(db: Session, cx: Channex, link_id, property_id, external,
         {"p": property_id},
     ).mappings().all()
 
-    # What the channel manager already has, by title. Normalised, because a
-    # title that came back with different spacing is still the same plan.
+    # What the channel manager already has, by room and title. Normalised,
+    # because a title that came back with different spacing is still the
+    # same plan. By room too, because titles repeat across rooms: Channex's
+    # own certification property has a "Best Available Rate" on the Twin
+    # *and* on the Double, and keyed on title alone the Double's plan was
+    # paired with the Twin's -- then refused as a clash, never mapped.
     code, out = cx.get(f"/rate_plans?filter%5Bproperty_id%5D={external}")
-    theirs: dict[str, str] = {}
+    theirs: dict[tuple[str, str], str] = {}
     if code < 400:
         for r in out.get("data") or []:
             a = r["attributes"]
             key = re.sub(r"[^a-z0-9]+", "", (a.get("title") or "").lower())
+            room_of = a.get("room_type_id") or (
+                ((r.get("relationships") or {}).get("room_type") or {})
+                .get("data") or {}).get("id")
             if key:
-                theirs.setdefault(key, a["id"])
+                theirs.setdefault((str(room_of), key), a["id"])
 
     priced: set[str] = set()
 
@@ -591,7 +624,8 @@ def _sync_rates(db: Session, cx: Channex, link_id, property_id, external,
             continue
 
         title = plan["name"]
-        key = re.sub(r"[^a-z0-9]+", "", title.lower())
+        key = (str(room["external_id"]),
+               re.sub(r"[^a-z0-9]+", "", title.lower()))
         theirs_id = theirs.get(key)
 
         if not theirs_id:
@@ -929,11 +963,21 @@ def _sync_channels(db: Session, cx: Channex, property_id: uuid.UUID,
     # What already exists there, so a re-run adopts rather than duplicates.
     # Two channels for one OTA on one hotel is two systems pushing different
     # prices at the same listing.
+    #
+    # Only this tenant's group. The account is shared by every tenant, and a
+    # channel found by hotel id anywhere in it could be another customer's
+    # listing -- adopting it would attach this hotel to their Booking.com page.
     existing: dict[str, str] = {}
     code, out = cx.get("/channels")
     if code < 400:
         for row in out.get("data") or []:
             a = row.get("attributes") or {}
+            # The group is a relationship, not an attribute: read where the
+            # channel manager actually puts it.
+            owner = (((row.get("relationships") or {}).get("group") or {})
+                     .get("data") or {}).get("id")
+            if owner != group:
+                continue
             settings_blob = a.get("settings") or {}
             key = f"{a.get('channel')}|{settings_blob.get('hotel_id')}"
             existing[key] = a.get("id")

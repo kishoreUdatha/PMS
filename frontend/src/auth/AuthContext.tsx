@@ -1,9 +1,13 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   login as apiLogin, loginWithPassword as apiLoginWithPassword,
   platformLogin as apiPlatformLogin,
-  platformLoginVerify as apiPlatformVerify, fetchMe, type Session,
+  platformLoginVerify as apiPlatformVerify, fetchMe, logoutSession,
+  type Session,
 } from '../api'
+import { onSessionExpired } from './sessionEvents'
 
 interface AuthState {
   session: Session | null
@@ -44,6 +48,20 @@ function persist(session: Session) {
   }
 }
 
+/** The stored session, or null when there is none or it cannot be read. A
+ *  truncated or hand-edited value used to throw out of JSON.parse during the
+ *  first render and leave a blank page; now it is simply "signed out". */
+function readStoredSession(): Session | null {
+  const raw = localStorage.getItem('session')
+  if (!raw) return null
+  try {
+    const s = JSON.parse(raw) as Session | null
+    return s && typeof s === 'object' && typeof s.token === 'string' ? s : null
+  } catch {
+    return null
+  }
+}
+
 function clearSession() {
   localStorage.removeItem('session_token')
   localStorage.removeItem('session')
@@ -56,13 +74,15 @@ function clearSession() {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
+  const queryClient = useQueryClient()
+  const navigate = useNavigate()
 
   // Restore session on load and re-validate against the backend.
   useEffect(() => {
-    const raw = localStorage.getItem('session')
+    const stored = readStoredSession()
     const token = localStorage.getItem('session_token')
-    if (raw && token) {
-      setSession(JSON.parse(raw))
+    if (stored && token) {
+      setSession(stored)
       fetchMe()
         .then((s) => {
           setSession(s)
@@ -74,9 +94,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         })
         .finally(() => setLoading(false))
     } else {
+      // Half a session (or an unreadable one) is no session.
+      if (token || localStorage.getItem('session')) clearSession()
       setLoading(false)
     }
   }, [])
+
+  // The HTTP client saw a 401 on an ordinary call: the session is over.
+  // Drop it, drop every cached screen (it belongs to that session), and send
+  // the user to sign in, remembering where they were. Several requests in
+  // flight will all fail together; only the first one acts.
+  useEffect(() => onSessionExpired(() => {
+    if (!localStorage.getItem('session_token')) return
+    clearSession()
+    setSession(null)
+    queryClient.clear()
+    const { pathname, search } = window.location
+    const platform = pathname.startsWith('/platform')
+    const loginPath = platform ? '/platform/login' : '/login'
+    if (pathname === loginPath) return
+    navigate(`${loginPath}?from=${encodeURIComponent(pathname + search)}`, {
+      replace: true,
+      state: { from: pathname + search, expired: true },
+    })
+  }), [queryClient, navigate])
 
   async function login(subject: string) {
     const s = await apiLogin(subject)
@@ -108,8 +149,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   function logout() {
+    const token = localStorage.getItem('session_token')
+    const platform = session?.is_platform ?? false
+    // Tell the server, but never wait on it or fail because of it: an older
+    // backend has no such endpoint (404) and a dead network must not keep
+    // anybody signed in on a shared front-desk machine.
+    if (token) logoutSession(token).catch(() => undefined)
     clearSession()
     setSession(null)
+    queryClient.clear()
+    navigate(platform ? '/platform/login' : '/login', { replace: true })
   }
 
   return (

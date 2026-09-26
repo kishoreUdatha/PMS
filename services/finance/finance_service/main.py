@@ -6,9 +6,12 @@ import asyncio
 import contextlib
 from collections.abc import AsyncIterator
 
+from chirala_common.observability import install_observability
+from chirala_common.config import refuse_unsafe_boot
 from fastapi import FastAPI
 
 from .adjustment_routes import adjustment_router
+from .database import engine
 from .folio_ops_routes import folio_ops_router
 from .invoice_routes import invoice_router
 from .reversal_routes import reversal_router
@@ -38,6 +41,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     the audit is idempotent per room per night and only one run per day can
     complete.
     """
+    refuse_unsafe_boot(settings, "finance")
     task = (
         asyncio.create_task(night_audit_loop())
         if settings.night_audit_enabled
@@ -63,6 +67,12 @@ app = FastAPI(
 @app.get("/health", tags=["meta"])
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "finance"}
+
+
+# Request ids, the shared log format at settings.log_level, and GET /ready
+# (503 when the database is unreachable). /health above stays liveness.
+install_observability(app, service="finance", engine=engine,
+                      log_level=settings.log_level)
 
 
 app.include_router(adjustment_router)

@@ -12,6 +12,7 @@ import {
 } from '../api'
 import { usePaymentMethods } from '../lib/paymentMethods'
 import { useActivePropertyId } from '../hooks/useProperty'
+import { errorText } from '../lib/forms'
 
 const money = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })
 // Tax components are shown to the paisa: rounding 162.50 to 163 twice makes
@@ -69,8 +70,7 @@ export default function CheckoutFolio() {
       setPayAmount(0)
       refresh()
     } catch (e) {
-      const er = e as { response?: { data?: { detail?: string } } }
-      flash(er.response?.data?.detail ?? 'Payment failed')
+      flash(errorText(e, 'Payment failed'))
     } finally { setBusy(false) }
   }
 
@@ -206,7 +206,7 @@ function ChargeModal({ fv, onClose, onDone }: { fv: FolioView; onClose: () => vo
         source_line_key: `manual:${dept}:${crypto.randomUUID()}`,
       })
       onDone('Charge added.'); onClose()
-    } catch (e) { const er = e as { response?: { data?: { detail?: string } } }; setErr(er.response?.data?.detail ?? 'Failed') } finally { setBusy(false) }
+    } catch (e) { const er = e as { response?: { data?: { detail?: string } } }; setErr(errorText(er, 'Failed')) } finally { setBusy(false) }
   }
   const inp = 'w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-brand'
   return (

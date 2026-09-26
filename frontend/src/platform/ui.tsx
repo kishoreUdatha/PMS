@@ -1,6 +1,7 @@
 import { type ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { sameThing } from '../lib/crumbs'
+import { errorText as baseErrorText } from '../lib/forms'
 import { AlertTriangle, ChevronRight, Info, Loader2 } from 'lucide-react'
 
 /** Shared primitives for the platform console.
@@ -500,14 +501,7 @@ export function ErrorNote({ children }: { children: ReactNode }) {
  *  — and a generic "Request failed" would throw all of it away.
  */
 export function errorText(err: unknown, fallback = 'Something went wrong.'): string {
-  const detail = (err as { response?: { data?: { detail?: unknown } } })
-    .response?.data?.detail
-  if (typeof detail === 'string') return detail
-  if (Array.isArray(detail) && detail.length) {
-    const first = detail[0] as { msg?: string }
-    if (first?.msg) return first.msg
-  }
-  return fallback
+  return baseErrorText(err, fallback)
 }
 
 /** Re-exported so the console's screens keep importing it from one place.

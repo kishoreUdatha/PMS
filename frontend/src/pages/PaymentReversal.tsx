@@ -15,6 +15,7 @@ import {
   type RevContext, type RevRow, type RevRule,
 } from '../api'
 import { useActivePropertyId } from '../hooks/useProperty'
+import { errorText } from '../lib/forms'
 
 /**
  * Screen 115 — Payment Details and Reversal.
@@ -173,8 +174,7 @@ export default function PaymentReversal() {
   const errorRef = useRef<HTMLParagraphElement>(null)
   const refresh = () => qc.invalidateQueries({ queryKey: ['rev-context'] })
   const fail = (e: unknown) => {
-    const er = e as { response?: { data?: { detail?: string } } }
-    setError(er.response?.data?.detail ?? 'That did not work. Please try again.')
+    setError(errorText(e, 'That did not work. Please try again.'))
     setToast('')
     // The banner lives at the top of a page tall enough that the button which
     // caused the error is usually off screen by the time it appears. A refusal
@@ -227,7 +227,7 @@ export default function PaymentReversal() {
     return (
       <p className="flex items-start gap-2 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-        {er?.response?.data?.detail ?? 'This payment could not be loaded.'}
+        {errorText(er, 'This payment could not be loaded.')}
       </p>
     )
   }

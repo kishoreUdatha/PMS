@@ -16,6 +16,9 @@ dependencies = [
     # extras is not something to keep those in.
     "cryptography>=42",
     "httpx>=0.27",
+    # Rate limiting (chirala_common.ratelimit): the public booking API and
+    # iam's sign-in routes count requests in the same Redis.
+    "redis>=5.0",
     "boto3>=1.34",
     # Thumbnails. A room photograph is uploaded at whatever size the camera
     # produced -- a few megabytes is normal -- and a booking page that sends

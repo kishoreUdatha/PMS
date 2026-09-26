@@ -10,6 +10,7 @@ import {
 import { getAssignBoard, assignRoomToUnit, type AssignUnit } from '../api'
 
 import DateField from '../components/DateField'
+import { errorText } from '../lib/forms'
 const dayNum = (d: string) => new Date(`${d}T00:00:00`).getDate()
 const monthShort = (d: string) => fmtMonth(d).toUpperCase()
 const weekday = (d: string) => fmtWeekday(d)
@@ -193,9 +194,7 @@ function UnitCard({ unit, editing, canAssign, onEdit, onDone, onFail }: {
       onDone(`${unit.guest_name ?? unit.number} assigned to room ${code}.`)
       if (thenCheckIn) nav(`/front-desk/check-in/${unit.unit_id}`)
     } catch (e) {
-      const er = e as { response?: { data?: { detail?: string } }; message?: string }
-      onFail(er.response?.data?.detail
-        ?? er.message ?? 'That room could not be assigned.')
+      onFail(errorText(e, 'That room could not be assigned.'))
     } finally { setBusy(false) }
   }
 

@@ -501,7 +501,15 @@ def create_hold(
                  company_name, travel_agent, reference, special_requests,
                  business_source_id, bill_to, commercial_account_id,
                  group_block_id, cancellation_policy_id)
-            VALUES (:id, :org, :prop, :number, 'held', 'INR', :guest,
+            -- The property's own currency. This was the literal 'INR', and
+            -- the folio opens in the reservation's currency and every
+            -- posting inherits the folio's -- so one hard-coded string made
+            -- a dollar property's entire ledger claim to be rupees. The
+            -- fallback is only for a property row this session cannot see.
+            VALUES (:id, :org, :prop, :number, 'held',
+                    COALESCE((SELECT currency FROM iam.properties
+                               WHERE id = :prop), 'INR'),
+                    :guest,
                     :source, :segment, :purpose, :company, :agent, :ref,
                     :requests, :bizsrc, :billto, :acct, :block,
                     (SELECT id FROM property.cancellation_policies
@@ -649,24 +657,42 @@ def active_room_count(
 
 def capacity_shortfall(
     session: Session, *, property_id: uuid.UUID, room_type_id: uuid.UUID,
-    new_capacity: int,
+    new_capacity: int, leaving: list[uuid.UUID] | None = None,
 ) -> list[date]:
-    """Nights already sold beyond ``new_capacity``.
+    """Nights already committed beyond ``new_capacity``.
 
     Asked *before* a room is removed, so a delete that would leave the type
     holding more bookings than it has rooms is refused rather than discovered
     later as an oversell nobody can explain.
+
+    Committed means everything the sellable count subtracts, not only
+    bookings: rooms a group block is holding and rooms out of service are
+    just as unavailable. Counting only held and reserved let a room be
+    removed from a type whose remaining rooms were all promised to a group,
+    leaving the block holding rooms that no longer existed.
+
+    ``leaving`` names the rooms being removed. One of them may itself be out
+    of service, and it takes its out-of-service night with it -- counting it
+    against the rooms that remain would refuse a delete that is safe.
     """
     rows = session.execute(
         text(
             """
-            SELECT stay_date FROM booking.room_type_inventory_days
-            WHERE property_id = :p AND room_type_id = :rt
-              AND held_units + reserved_units > :cap
-            ORDER BY stay_date
+            SELECT i.stay_date FROM booking.room_type_inventory_days i
+            WHERE i.property_id = :p AND i.room_type_id = :rt
+              AND i.held_units + i.reserved_units + i.allotment_units
+                  + GREATEST(i.out_of_service - (
+                        SELECT count(*) FROM unnest(CAST(:leaving AS uuid[]))
+                               AS gone(id)
+                         WHERE booking.room_out_of_service(
+                                   gone.id, i.stay_date,
+                                   booking.local_today(:p))), 0)
+                  > :cap
+            ORDER BY i.stay_date
             """
         ),
-        {"p": property_id, "rt": room_type_id, "cap": new_capacity},
+        {"p": property_id, "rt": room_type_id, "cap": new_capacity,
+         "leaving": list(leaving or [])},
     ).scalars().all()
     return list(rows)
 
@@ -696,8 +722,13 @@ def sync_capacity(
     left alone: what was sellable last week is history, not something to
     restate.
     """
+    from chirala_common.property_time import local_today
+
     count = active_room_count(
         session, property_id=property_id, room_type_id=room_type_id)
+    # From the property's own today. CURRENT_DATE is UTC, so between midnight
+    # and 05:30 in India it left tonight's night out of the resync entirely.
+    today = local_today(session, property_id)
     session.execute(
         text(
             """
@@ -708,19 +739,24 @@ def sync_capacity(
             SELECT p.organization_id, :p, :rt, d::date, :n, 0, 0, 0, 0
             FROM iam.properties p
             CROSS JOIN generate_series(
-                CURRENT_DATE, CURRENT_DATE + :days, interval '1 day') AS d
+                CAST(:today AS date), CAST(:today AS date) + :days,
+                interval '1 day') AS d
             WHERE p.id = :p
             ON CONFLICT (property_id, room_type_id, stay_date) DO UPDATE
                 SET physical_capacity = EXCLUDED.physical_capacity
-                -- Never below what is already sold: a room being removed must
-                -- not turn existing bookings into an oversell. Callers check
-                -- capacity_shortfall first and refuse; this is the backstop.
+                -- Never below what is already committed: a room being
+                -- removed must not turn existing bookings, a group's block or
+                -- rooms under repair into an oversell. Callers check
+                -- capacity_shortfall first and refuse; this is the backstop,
+                -- and it counts what that check counts.
                 WHERE booking.room_type_inventory_days.held_units
                     + booking.room_type_inventory_days.reserved_units
+                    + booking.room_type_inventory_days.allotment_units
+                    + booking.room_type_inventory_days.out_of_service
                     <= EXCLUDED.physical_capacity
             """
         ),
-        {"n": count, "p": property_id, "rt": room_type_id,
+        {"n": count, "p": property_id, "rt": room_type_id, "today": today,
          "days": settings.inventory_horizon_days},
     )
     return count

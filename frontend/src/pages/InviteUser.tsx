@@ -13,6 +13,7 @@ import {
 } from '../api'
 import { Crumbs } from '../components/Crumbs'
 import { useActivePropertyId } from '../hooks/useProperty'
+import { errorText } from '../lib/forms'
 
 
 // Access levels shown in the preview per role (simple derivation).
@@ -136,7 +137,7 @@ export default function InviteUser() {
       setError(
         st === 403 ? 'You do not have permission for this action.'
           : st === 409 ? 'This user changed since you loaded it. Reload and retry.'
-          : (err.response?.data?.detail ?? err.message ?? 'Failed to save'),
+          : (errorText(err, 'Failed to save')),
       )
     } finally {
       setBusy(false)

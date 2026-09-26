@@ -91,5 +91,5 @@ exactly one success; a single-night shortage rolls back the whole request).
 
 ## Status
 
-Scaffolding in progress. See `Chirala_Bay_Resort_PMS_Development_Tracker.xlsx`
+Scaffolding in progress. See `tools/tracker/Chirala_Bay_Resort_PMS_Development_Tracker (2).xlsx`
 and the in-repo task plan for progress across the 120 screens.

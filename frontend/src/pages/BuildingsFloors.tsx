@@ -12,6 +12,7 @@ import {
   listUnassignedRooms, assignRoomsToFloor,
   type BuildingRow, type FloorRow,
 } from '../api'
+import { errorText } from '../lib/forms'
 
 /** Screen 061 — Buildings & Floors. */
 
@@ -26,10 +27,7 @@ function Label({ children, required }: { children: React.ReactNode; required?: b
 }
 
 function apiError(e: unknown): string {
-  const d = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
-  if (typeof d === 'string') return d
-  if (Array.isArray(d)) return 'Some fields are invalid. Check the highlighted values.'
-  return 'Could not save. Please try again.'
+  return errorText(e, 'Could not save. Please try again.')
 }
 
 function StatusPill({ status }: { status: string }) {

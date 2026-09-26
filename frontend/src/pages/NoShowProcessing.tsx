@@ -12,6 +12,7 @@ import {
 } from '../api'
 import { Crumbs } from '../components/Crumbs'
 import { useActivePropertyId } from '../hooks/useProperty'
+import { errorText } from '../lib/forms'
 
 /**
  * Screen 051 — No-Show Processing.
@@ -176,8 +177,7 @@ export default function NoShowProcessing() {
         room: r.room_released, warnings: r.warnings })
     },
     onError: (e) => {
-      const er = e as { response?: { data?: { detail?: string } } }
-      setError(er.response?.data?.detail ?? 'That could not be completed.')
+      setError(errorText(e, 'That could not be completed.'))
     },
   })
 

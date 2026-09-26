@@ -1,6 +1,6 @@
 import {
-  Children, isValidElement, useEffect, useLayoutEffect, useRef, useState,
-  type ReactNode,
+  Children, isValidElement, useEffect, useId, useLayoutEffect, useMemo, useRef,
+  useState, type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown } from 'lucide-react'
@@ -24,11 +24,17 @@ import { Check, ChevronDown } from 'lucide-react'
  *
  * * **Type-ahead** — typing "del" jumps to Deluxe, as a native select does.
  * * **Keyboard** — Up/Down, Enter, Escape, Home/End, and Tab takes the
- *   highlighted row, matching native behaviour.
+ *   highlighted row and then moves focus on as usual, matching native
+ *   behaviour. Escape closes only the list, never an enclosing dialog.
  * * **Disabled options stay listed**, greyed, because an option missing
  *   entirely is a worse answer than one you can see you cannot pick.
- * * `role="listbox"` / `role="option"` / `aria-selected`, so a screen reader
- *   hears a listbox rather than a pile of buttons.
+ * * The WAI-ARIA select-only combobox pattern: the trigger is
+ *   `role="combobox"` with `aria-expanded`, `aria-controls` and
+ *   `aria-activedescendant`; the list is a labelled `role="listbox"` of
+ *   `role="option"` rows with ids. Focus stays on the trigger throughout.
+ * * **Forms** — given `name` or `required`, a visually hidden native input
+ *   carries the value, so the browser's required check and a plain form
+ *   submission behave as they would for a native select.
  *
  * What it does not do, on purpose: no `multiple`, no `optgroup`, no `size`.
  * Nothing in this app uses them, and guessing at semantics nobody needs is
@@ -93,7 +99,7 @@ type ButtonRest = Omit<
 >
 
 export default function Select({
-  value = '', onChange, children, className = '', required,
+  value = '', onChange, children, className = '', required, name,
   blankIsChoice = false, ...rest
 }: {
   /** Optional, like a native select used purely to display a fixed choice. */
@@ -119,7 +125,7 @@ export default function Select({
    */
   blankIsChoice?: boolean
 } & ButtonRest) {
-  const options = readOptions(children)
+  const options = useMemo(() => readOptions(children), [children])
   const current = String(value ?? '')
   const chosen = options.find((o) => o.value === current) ?? null
 
@@ -132,6 +138,10 @@ export default function Select({
     width: number; maxHeight: number
   } | null>(null)
   const typed = useRef({ text: '', at: 0 })
+  const uid = useId()
+  const triggerId = rest.id ?? `${uid}-trigger`
+  const listboxId = `${uid}-listbox`
+  const optionId = (i: number) => `${uid}-opt-${i}`
 
   // Measured, never assumed: these sit in panels and tables that scroll, and
   // the room below the control decides whether the list opens down or up.
@@ -211,7 +221,7 @@ export default function Select({
     setActive(i)
   }
 
-  const take = (i: number) => {
+  const take = (i: number, refocus = true) => {
     const opt = options[i]
     if (!opt || opt.disabled) return
     // Only `target.value` is ever read by a select handler; the cast says so
@@ -219,7 +229,7 @@ export default function Select({
     onChange?.({ target: { value: opt.value } } as unknown as
       React.ChangeEvent<HTMLSelectElement>)
     setOpen(false)
-    btnRef.current?.focus()
+    if (refocus) btnRef.current?.focus()
   }
 
   const onKey = (e: React.KeyboardEvent) => {
@@ -230,12 +240,20 @@ export default function Select({
       }
       return
     }
-    if (e.key === 'Escape') { e.preventDefault(); setOpen(false); return }
+    // Escape belongs to the list while it is open. Without stopping it here
+    // the same keypress also reached the dialog around the field and closed
+    // that, throwing away a half-filled form.
+    if (e.key === 'Escape') {
+      e.preventDefault(); e.stopPropagation(); setOpen(false); return
+    }
     if (e.key === 'ArrowDown') { e.preventDefault(); step(1); return }
     if (e.key === 'ArrowUp') { e.preventDefault(); step(-1); return }
     if (e.key === 'Home') { e.preventDefault(); setActive(0); return }
     if (e.key === 'End') { e.preventDefault(); setActive(options.length - 1); return }
-    if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); take(active); return }
+    if (e.key === 'Enter') { e.preventDefault(); take(active); return }
+    // Tab takes the highlighted row and closes, then lets the browser move
+    // focus on. Swallowing it trapped keyboard users on an open list.
+    if (e.key === 'Tab') { take(active, false); setOpen(false); return }
 
     if (e.key.length === 1 && /\S/.test(e.key)) {
       const now = Date.now()
@@ -254,8 +272,11 @@ export default function Select({
       {/* Everything else the caller passed — onWheel, onBlur, title, id,
           tabIndex — goes straight through, because a select in a form is
           wired up in ways this component has no business knowing about. */}
-      <button {...rest} ref={btnRef} type="button" aria-required={required}
+      <button {...rest} id={triggerId} ref={btnRef} type="button"
+        role="combobox" aria-required={required}
         aria-haspopup="listbox" aria-expanded={open}
+        aria-controls={open ? listboxId : undefined}
+        aria-activedescendant={open && options[active] ? optionId(active) : undefined}
         onClick={() => (open ? setOpen(false) : openAt())}
         onKeyDown={onKey}
         // The caller's classes still describe the control: they were written
@@ -285,12 +306,30 @@ export default function Select({
           className={`shrink-0 text-slate-400 ${open ? 'rotate-180' : ''}`} />
       </button>
 
+      {/* The value as a form sees it. A button takes no part in validation or
+          submission, so `required` on its own was only ever a hint; this input
+          is what the browser checks and posts. Visually hidden, out of the tab
+          order, and if validation tries to focus it, focus goes to the
+          control the user can actually operate. */}
+      {(name !== undefined || required) && (
+        <input tabIndex={-1} aria-hidden="true" name={name} required={required}
+          value={current} onChange={() => undefined}
+          disabled={rest.disabled}
+          onFocus={() => btnRef.current?.focus()}
+          style={{ position: 'absolute', width: 1, height: 1, padding: 0,
+                   margin: -1, overflow: 'hidden', clip: 'rect(0 0 0 0)',
+                   whiteSpace: 'nowrap', border: 0, opacity: 0 }} />
+      )}
+
       {open && createPortal(
         // Rendered as soon as the control opens, but hidden until measured:
         // its own height decides whether it opens down or up, and that cannot
         // be known until it exists. Hidden rather than unmounted so there is
         // no flash of a list in the wrong place.
-        <div ref={listRef} role="listbox" tabIndex={-1}
+        <div ref={listRef} id={listboxId} role="listbox" tabIndex={-1}
+          aria-label={rest['aria-label']}
+          aria-labelledby={rest['aria-label'] ? undefined
+            : rest['aria-labelledby'] ?? triggerId}
           style={{ position: 'fixed', top: pos?.top, bottom: pos?.bottom,
                    left: pos?.left ?? 0, width: pos?.width,
                    maxHeight: pos?.maxHeight,
@@ -302,18 +341,21 @@ export default function Select({
             </p>
           )}
           {options.map((o, i) => (
-            <button key={`${o.value}-${i}`} type="button" data-i={i}
+            <div key={`${o.value}-${i}`} data-i={i} id={optionId(i)} tabIndex={-1}
               role="option" aria-selected={o.value === current}
-              disabled={o.disabled}
+              aria-disabled={o.disabled || undefined}
               onMouseEnter={() => !o.disabled && setActive(i)}
+              // Keep focus on the trigger, which owns the keyboard and the
+              // active-descendant; a click on a row must not steal it.
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => take(i)}
               // The full text on hover: the row is only as wide as the
               // field, so a long name can still be clipped.
               title={o.hint ? `${o.label} — ${o.hint}` : o.label}
               className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm ${
                 o.disabled ? 'cursor-not-allowed text-slate-300'
-                  : active === i ? 'bg-brand/10 text-slate-800'
-                  : 'text-slate-700'}`}>
+                  : active === i ? 'cursor-pointer bg-brand/10 text-slate-800'
+                  : 'cursor-pointer text-slate-700'}`}>
               <span className="min-w-0 flex-1 truncate">
                 {o.label || <span className="text-slate-300">—</span>}
               </span>
@@ -326,7 +368,7 @@ export default function Select({
               <Check size={14}
                 className={o.value === current ? 'shrink-0 text-brand'
                                                : 'shrink-0 opacity-0'} />
-            </button>
+            </div>
           ))}
         </div>,
         document.body,

@@ -33,6 +33,7 @@ import FormCFields from '../components/FormCFields'
 import { needsFormC, type FormCValues } from '../lib/formC'
 import { Crumbs } from '../components/Crumbs'
 import { useActivePropertyId } from '../hooks/useProperty'
+import { errorText } from '../lib/forms'
 
 
 /**
@@ -1480,9 +1481,5 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 function extractError(e: unknown): string {
-  const err = e as { response?: { data?: { detail?: unknown } }; message?: string }
-  const detail = err.response?.data?.detail
-  if (typeof detail === 'string') return detail
-  if (detail) return JSON.stringify(detail)
-  return err.message ?? 'Something went wrong'
+  return errorText(e, 'Something went wrong')
 }

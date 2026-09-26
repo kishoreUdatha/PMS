@@ -1,4 +1,6 @@
 import axios from 'axios'
+import { announceSessionExpired } from './auth/sessionEvents'
+import { markAllStale } from './lib/queryClient'
 
 // All requests go through the gateway (/api/{service}/...).
 // In dev, Vite proxies /api -> http://localhost:8000 (see vite.config.ts).
@@ -60,9 +62,31 @@ function flattenDetail(detail: unknown): string {
   return ''
 }
 
+/** A 401 on an ordinary call means the session behind the stored token has
+ *  ended (expired, revoked, signed out elsewhere). The auth endpoints are left
+ *  alone: a wrong password or a stale token being checked at start-up answers
+ *  401 too, and the caller handles those itself. A request sent without a
+ *  token is left alone as well — there was no session to expire, and raising
+ *  the event for it could bounce the sign-in page onto itself. */
+function isExpiredSession(error: unknown): boolean {
+  const e = error as {
+    response?: { status?: number }
+    config?: { url?: string; headers?: Record<string, unknown> }
+  }
+  if (e?.response?.status !== 401) return false
+  const url = e.config?.url ?? ''
+  if (url.includes('iam/auth/')) return false
+  return Boolean(e.config?.headers?.Authorization)
+}
+
 api.interceptors.response.use(
-  (r) => r,
+  (r) => {
+    const method = (r.config?.method ?? 'get').toLowerCase()
+    if (method !== 'get' && method !== 'head' && method !== 'options') markAllStale()
+    return r
+  },
   (error) => {
+    if (isExpiredSession(error)) announceSessionExpired()
     const data = error?.response?.data
     if (data && typeof data === 'object' && 'detail' in data) {
       const flat = flattenDetail((data as { detail: unknown }).detail)
@@ -71,6 +95,11 @@ api.interceptors.response.use(
     return Promise.reject(error)
   },
 )
+
+/** The orchestration endpoints (/flows/*) live at the gateway root, not under
+ *  /api. They go through the same client, so the same token, 401 handling and
+ *  `detail` flattening apply; only the base differs. */
+const FLOWS = { baseURL: '/flows' } as const
 
 /* ---------------- Auth (dev session) ---------------- */
 export interface SessionMembership {
@@ -222,6 +251,15 @@ export async function verifyEmailOtp(
 export async function fetchMe(): Promise<Session> {
   const { data } = await api.get<Session>('/iam/auth/me')
   return data
+}
+
+/** Ends the session server-side. The token is passed in rather than read by
+ *  the request interceptor, because the caller clears storage straight after
+ *  and the interceptor runs a tick later. */
+export async function logoutSession(token: string): Promise<void> {
+  await api.post('/iam/auth/logout', null, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
 }
 
 // Example typed calls (booking-core availability).
@@ -1019,9 +1057,8 @@ export async function getDashboard(
   propertyId: string,
   businessDate?: string,
 ): Promise<DashboardData> {
-  // /flows/* lives at the gateway root, not under /api.
   const { data } = await api.get<DashboardData>('/dashboard', {
-    baseURL: '/flows',
+    ...FLOWS,
     params: { property_id: propertyId, business_date: businessDate },
   })
   return data
@@ -1741,7 +1778,7 @@ export interface FolioView {
 }
 
 export async function getFolioView(reservationId: string): Promise<FolioView> {
-  const { data } = await api.get<FolioView>(`/reservations/${reservationId}/folio-view`, { baseURL: '/flows' })
+  const { data } = await api.get<FolioView>(`/reservations/${reservationId}/folio-view`, FLOWS)
   return data
 }
 /** The reservation's folio, creating it if this is the first thing on it.
@@ -1760,7 +1797,7 @@ export async function ensureFolio(
       property_id: propertyId,
       reservation_id: reservationId,
     },
-    { baseURL: '/flows' },
+    FLOWS,
   )
   return data
 }
@@ -1905,7 +1942,7 @@ export async function settleReservation(
   const { data } = await api.post<SettleResult>(
     `/reservations/${reservationId}/settle`,
     body,
-    { baseURL: '/flows' },
+    FLOWS,
   )
   return data
 }
@@ -3669,6 +3706,58 @@ export async function updateCalendarCell(
   return data
 }
 
+/** One night of a rate plan's own calendar: effective values, and which
+ *  of them the plan set for itself. */
+export interface PlanNight {
+  stay_date: string
+  rate: string | null
+  min_stay: number
+  max_stay: number
+  closed_to_arrival: boolean
+  closed_to_departure: boolean
+  stop_sell: boolean
+  overridden: string[]
+}
+
+export interface PlanCalendar {
+  rate_plan_id: string
+  rate_plan_name: string
+  room_type_id: string | null
+  room_type_name: string | null
+  nights: PlanNight[]
+}
+
+export async function getRatePlanCalendar(
+  propertyId: string, ratePlanId: string, from: string, to: string,
+): Promise<PlanCalendar> {
+  const { data } = await api.get<PlanCalendar>('/booking/rate-plan-calendar', {
+    params: { property_id: propertyId, rate_plan_id: ratePlanId, date_from: from, date_to: to },
+  })
+  return data
+}
+
+export interface PlanChange {
+  rate_plan_id: string
+  date_from: string
+  date_to: string
+  weekdays?: number[]
+  rate?: number | null
+  min_stay?: number | null
+  max_stay?: number | null
+  closed_to_arrival?: boolean | null
+  closed_to_departure?: boolean | null
+  stop_sell?: boolean | null
+  clear?: string[]
+}
+
+export async function setRatePlanCalendar(
+  propertyId: string, changes: PlanChange[],
+): Promise<{ nights_changed: number }> {
+  const { data } = await api.put<{ nights_changed: number }>(
+    '/booking/rate-plan-calendar', { changes }, { params: { property_id: propertyId } })
+  return data
+}
+
 export async function bulkUpdateRates(
   propertyId: string, body: Record<string, unknown>,
 ): Promise<BulkUpdateResult> {
@@ -5397,10 +5486,11 @@ export interface DayBookRow {
   description: string
   note: string | null
   entry_type: 'debit' | 'credit'
-  amount: number
+  /** Money arrives as a decimal string, as everywhere else in this API. */
+  amount: string
   /** Exactly one of these is set on every row. */
-  debit: number | null
-  credit: number | null
+  debit: string | null
+  credit: string | null
   posted_by: string | null
   reverses_entry_id: string | null
 }
@@ -5408,10 +5498,10 @@ export interface DayBook {
   business_date: string
   rows: DayBookRow[]
   totals: {
-    charges: number; payments: number; refunds: number
-    adjustments: number; deposits: number; net: number; count: number
+    charges: string; payments: string; refunds: string
+    adjustments: string; deposits: string; net: string; count: number
   }
-  kinds: { value: string; label: string; count: number; total: number }[]
+  kinds: { value: string; label: string; count: number; total: string }[]
   rooms: string[]
 }
 export async function getDayBook(
@@ -6678,6 +6768,55 @@ export interface ConnectionTest {
  * while they are still looking at the field, rather than as a silent failure
  * to sell three weeks later.
  */
+/** One of the OTA's own rates under one of its rooms, as the OTA lists it. */
+export interface OtaRate { code: string; title: string | null; occupancy: number | null }
+export interface OtaRoom { code: string; title: string | null; rates: OtaRate[] }
+
+/** An OTA room/rate sold as one of this property's rate plans. */
+export interface OtaPair {
+  ota_room_code: string
+  ota_rate_code: string
+  rate_plan_id: string
+  occupancy?: number | null
+}
+
+export interface OtaMapping {
+  connection_id: string
+  channel_id: string
+  channel: string
+  live: boolean
+  ota_rooms: OtaRoom[]
+  /** Why the OTA's rooms could not be listed -- usually not authorised yet. */
+  ota_rooms_error: string | null
+  plans: { rate_plan_id: string; code: string; name: string;
+           room_type_name: string | null; occupancy: number | null }[]
+  pairs: OtaPair[]
+  /** Pairs on the channel naming a plan this property does not own. */
+  foreign_pairs: number
+}
+
+export async function getOtaMapping(connectionId: string): Promise<OtaMapping> {
+  const { data } = await api.get<OtaMapping>(
+    `/booking/channel-connections/${connectionId}/ota-mapping`)
+  return data
+}
+
+export async function setOtaMapping(
+  connectionId: string, pairs: OtaPair[],
+): Promise<OtaMapping> {
+  const { data } = await api.put<OtaMapping>(
+    `/booking/channel-connections/${connectionId}/ota-mapping`, { pairs })
+  return data
+}
+
+export async function setOtaLive(
+  connectionId: string, live: boolean,
+): Promise<OtaMapping> {
+  const { data } = await api.post<OtaMapping>(
+    `/booking/channel-connections/${connectionId}/go-live`, { live })
+  return data
+}
+
 export async function testOtaHotelId(
   partnerId: string, otaHotelId: string,
 ): Promise<ConnectionTest> {
@@ -6810,6 +6949,65 @@ export async function getMappingEditor(
 }
 
 /** Send this property's rates and availability to the channel manager now. */
+/** One request sent to the channel manager, with the task ids it returned. */
+export interface ChannelSyncLogRow {
+  id: string
+  created_at: string
+  endpoint: string
+  trigger: 'change' | 'full_sync' | 'manual'
+  outcome: 'sent' | 'failed' | 'throttled'
+  status_code: number | null
+  value_count: number
+  date_from: string | null
+  date_to: string | null
+  task_ids: string[]
+  summary: string | null
+  error: string | null
+  request_excerpt: string | null
+}
+
+export async function getChannelSyncLog(
+  linkId: string, limit = 50,
+): Promise<ChannelSyncLogRow[]> {
+  const { data } = await api.get<ChannelSyncLogRow[]>(
+    `/booking/channel-links/${linkId}/sync-log`, { params: { limit } })
+  return data
+}
+
+/** One booking revision the channel manager delivered. */
+export interface ChannelBookingEvent {
+  revision_id: string
+  event_type: string | null
+  outcome: string
+  status: string | null
+  ota_name: string | null
+  ota_reservation_code: string | null
+  reservation_id: string | null
+  reservation_number: string | null
+  detail: string | null
+  acknowledged: boolean
+  created_at: string
+  updated_at: string | null
+  can_replay: boolean
+}
+
+export async function listChannelBookingEvents(
+  propertyId: string, limit = 50,
+): Promise<ChannelBookingEvent[]> {
+  const { data } = await api.get<ChannelBookingEvent[]>(
+    '/booking/channels/events', { params: { property_id: propertyId, limit } })
+  return data
+}
+
+export async function replayChannelBookingEvent(
+  revisionId: string, propertyId: string,
+): Promise<{ status: string; reservation_number?: string }> {
+  const { data } = await api.post<{ status: string; reservation_number?: string }>(
+    `/booking/channels/events/${encodeURIComponent(revisionId)}/replay`, null,
+    { params: { property_id: propertyId } })
+  return data
+}
+
 export async function pushChannelLink(
   linkId: string,
 ): Promise<{ status: string; detail: string }> {

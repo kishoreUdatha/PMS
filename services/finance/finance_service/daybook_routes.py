@@ -29,6 +29,7 @@ would show it on a day whose totals do not include it.
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 from datetime import date
 
 from chirala_common import charge_types
@@ -99,12 +100,12 @@ class Movement(BaseModel):
     description: str
     note: str | None = None
     entry_type: str
-    amount: float
+    amount: Decimal
     #: One of these is null on every row. A day book is read as two money
     #: columns, and deriving them in the client means every consumer deriving
     #: them the same way or the page not adding up.
-    debit: float | None = None
-    credit: float | None = None
+    debit: Decimal | None = None
+    credit: Decimal | None = None
     posted_by: str | None = None
     #: A reversing entry and the entry it reverses are both real and both
     #: shown; saying which is which is what stops the pair reading as two
@@ -113,15 +114,15 @@ class Movement(BaseModel):
 
 
 class Totals(BaseModel):
-    charges: float = 0
-    payments: float = 0
-    refunds: float = 0
-    adjustments: float = 0
-    deposits: float = 0
+    charges: Decimal = Decimal("0")
+    payments: Decimal = Decimal("0")
+    refunds: Decimal = Decimal("0")
+    adjustments: Decimal = Decimal("0")
+    deposits: Decimal = Decimal("0")
     #: Charges less everything that reduced them. The change in what the house
     #: is owed across the day, which is the one figure that ties this screen
     #: to the balance on a folio.
-    net: float = 0
+    net: Decimal = Decimal("0")
     count: int = 0
 
 
@@ -129,7 +130,7 @@ class KindCount(BaseModel):
     value: str
     label: str
     count: int
-    total: float
+    total: Decimal
 
 
 class DayBook(BaseModel):
@@ -215,7 +216,7 @@ def day_book(
 
     out: list[Movement] = []
     for e in rows:
-        debit = float(e["amount"]) if e["entry_type"] == "debit" else None
+        debit = e["amount"] if e["entry_type"] == "debit" else None
         out.append(Movement(
             entry_id=e["entry_id"],
             posted_at=e["posted_at"].isoformat(),
@@ -232,9 +233,9 @@ def day_book(
                          ("payment", "refund", "adjustment", "deposit")
                          else charge_types.label(e["source_type"])),
             note=e["note"], entry_type=e["entry_type"],
-            amount=float(e["amount"]),
+            amount=e["amount"],
             debit=debit,
-            credit=None if debit is not None else float(e["amount"]),
+            credit=None if debit is not None else e["amount"],
             posted_by=e["posted_by"],
             reverses_entry_id=e["reverses_entry_id"],
         ))
@@ -261,11 +262,14 @@ def day_book(
     ).mappings().all()
     by_kind = {a["kind"]: a for a in agg}
 
-    def tot(k: str) -> float:
-        return float(by_kind[k]["total"]) if k in by_kind else 0.0
+    # Decimal, like every other money figure this API returns. A float here
+    # is a binary approximation of a rupee amount, and the day book is the
+    # screen a cashier reconciles a drawer against.
+    def tot(k: str) -> Decimal:
+        return by_kind[k]["total"] if k in by_kind else Decimal("0")
 
-    def signed(k: str) -> float:
-        return float(by_kind[k]["signed"]) if k in by_kind else 0.0
+    def signed(k: str) -> Decimal:
+        return by_kind[k]["signed"] if k in by_kind else Decimal("0")
 
     totals = Totals(
         # Charges, payments, refunds and deposits each only ever go one way,
@@ -281,7 +285,7 @@ def day_book(
         # entries, so it cannot disagree with them however the kinds are
         # classified. Debits less credits is the change in what the house is
         # owed, which is what a day book is for.
-        net=sum(signed(k) for k in KINDS),
+        net=sum((signed(k) for k in KINDS), Decimal("0")),
         count=sum(int(a["n"]) for a in agg),
     )
 

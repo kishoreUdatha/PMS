@@ -5,6 +5,7 @@ import { AlertCircle, BarChart3, Loader2, X } from 'lucide-react'
 import { simulateRate, type SimulateResult } from '../api'
 
 import DateField from '../components/DateField'
+import { errorText } from '../lib/forms'
 /**
  * "Simulate Rate" from screen 119, shared by the rule list and the rule editor.
  *
@@ -19,9 +20,7 @@ const money = (v: string | null) =>
   v === null ? '—' : `₹${Number(v).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`
 
 function apiError(e: unknown): string {
-  const d = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
-  if (typeof d === 'string') return d
-  return 'Could not simulate. Please try again.'
+  return errorText(e, 'Could not simulate. Please try again.')
 }
 
 function Field({ label, hint, children }: {

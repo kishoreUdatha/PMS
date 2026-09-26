@@ -1291,6 +1291,13 @@ def test_a_webhook_is_verified_and_never_acted_on_twice(engine, scratch):
                             headers=headers)
         assert again.status_code == 200, "a duplicate must not be an error"
         assert again.json()["status"] == "duplicate"
+        # And a replay of the same signed body under a new event-id header.
+        # The signature does not cover headers, so the header cannot be what
+        # decides that this is the same event.
+        replay = client.post("/webhooks/razorpay", content=payload,
+                             headers={**headers, "x-razorpay-event-id": "evt_new"})
+        assert replay.json()["status"] == "duplicate"
+        event_id = first.json()["event_id"]
 
         # The other refusal, and the reason both are worth separating. This
         # one names an order the gateway really captured against and we have
@@ -1310,6 +1317,7 @@ def test_a_webhook_is_verified_and_never_acted_on_twice(engine, scratch):
                      "x-razorpay-event-id": loose_id,
                      "content-type": "application/json"})
         assert lost.status_code == 200
+        loose_id = lost.json()["event_id"]
         assert lost.json()["status"] == "unmatched", (
             "a capture against an order we never opened is money to chase, "
             "not a malformed payload")
@@ -1325,6 +1333,7 @@ def test_a_webhook_is_verified_and_never_acted_on_twice(engine, scratch):
                      "x-razorpay-event-id": other_id,
                      "content-type": "application/json"})
         assert ch.status_code == 200 and ch.json()["status"] == "ignored"
+        other_id = ch.json()["event_id"]
 
         # Every event is kept, whatever became of it -- that is what makes a
         # retry recognisable rather than reconsidered forever, and it is what

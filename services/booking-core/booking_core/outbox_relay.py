@@ -28,6 +28,7 @@ import json
 import logging
 
 from chirala_common.db import system_context
+from chirala_common.observability import heartbeats
 from chirala_common.outbox import claim_batch, mark_published, subject_for
 
 from .database import SessionFactory
@@ -137,6 +138,7 @@ async def outbox_relay_loop() -> None:
     log.info("outbox relay started, every %ds, batches of %d",
              poll, settings.outbox_batch_size)
     while True:
+        heartbeats.beat("outbox_relay", poll)
         try:
             n = await drain_once()
             if n:

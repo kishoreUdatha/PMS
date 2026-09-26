@@ -436,7 +436,11 @@ def test_property_ids_in_a_request_body_are_checked_by_hand():
     body there would mean an async dependency doing synchronous database work
     on the event loop.
 
-    So these handlers check their own, and this keeps them honest.
+    So these handlers check their own, and this keeps them honest. The check
+    is ``require_property_permission``, not ``assert_property_in_org``: the
+    dependency's grant query ran with no property and so matched a role on
+    any hotel in the organisation, and "same organisation" is all the older
+    assert establishes.
     """
     models = _body_models()
     offenders = []
@@ -446,13 +450,14 @@ def test_property_ids_in_a_request_body_are_checked_by_hand():
         # already vetted it; only body-only values are this test's business.
         if "property_id" not in carried or "property_id" in h.args:
             continue
-        if "assert_property_in_org" not in ast.unparse(h.fn):
+        if "require_property_permission" not in ast.unparse(h.fn):
             offenders.append(h.where)
 
     assert not offenders, (
         f"\n{len(offenders)} handler(s) take `property_id` only in the request "
         "body, which guard_request_tenancy cannot see, and never check it.\n"
-        "Call assert_property_in_org(db, caller, body.property_id).\n\n  "
+        "Call require_property_permission(db, caller, body.property_id, "
+        "<resource>, <action>).\n\n  "
         + "\n  ".join(offenders)
         + "\n"
     )

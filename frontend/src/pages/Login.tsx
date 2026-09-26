@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { AlertTriangle, Loader2, LogIn, Mail } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext'
+import { returnPath } from '../auth/sessionEvents'
 import { forgotPassword } from '../api'
 
 /**
@@ -19,7 +20,7 @@ import { forgotPassword } from '../api'
 export default function Login() {
   const { login, signIn } = useAuth()
   const navigate = useNavigate()
-  const location = useLocation() as { state?: { from?: string } }
+  const location = useLocation()
 
   const [mode, setMode] = useState<'password' | 'subject' | 'forgot'>('password')
   const [propertyCode, setPropertyCode] = useState('')
@@ -28,7 +29,11 @@ export default function Login() {
   const [subject, setSubject] = useState('admin-user')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [notice, setNotice] = useState('')
+  // Arriving here because the session ended mid-work deserves a word, or the
+  // sign-in page just appears and looks like something broke.
+  const [notice, setNotice] = useState(
+    (location.state as { expired?: boolean } | null)?.expired
+      ? 'Your session has ended. Please sign in again.' : '')
 
   const field = 'w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm '
     + 'outline-none focus:border-brand'
@@ -46,7 +51,7 @@ export default function Login() {
       }
       if (mode === 'subject') await login(subject.trim())
       else await signIn(propertyCode.trim(), email.trim(), password)
-      navigate(location.state?.from ?? '/', { replace: true })
+      navigate(returnPath(location, '/'), { replace: true })
     } catch (err) {
       const e2 = err as { response?: { status?: number; data?: { detail?: string } } }
       setError(e2.response?.data?.detail

@@ -7,6 +7,7 @@ import {
 } from '../api'
 import { useActivePropertyId, useOrgId } from '../hooks/useProperty'
 import { Crumbs } from '../components/Crumbs'
+import { errorText } from '../lib/forms'
 
 /** What the top-bar search box actually does.
  *
@@ -27,9 +28,7 @@ const CAP = 50
 type Result<T> = { rows: T[]; error: string } | null
 
 function errText(e: unknown, fallback: string): string {
-  const detail = (e as { response?: { data?: { detail?: unknown } } })
-    ?.response?.data?.detail
-  return typeof detail === 'string' ? detail : fallback
+  return errorText(e, fallback)
 }
 
 function Section({ title, count, head, children }: {

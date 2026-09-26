@@ -41,7 +41,11 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from chirala_common.folio_posting import post_charge, resolve_currency
+from chirala_common.property_time import local_today, trading_day
+
 from .database import get_session
+from .folio_money import primary_folio
 from .inventory import (
     InventoryOversold,
     counter_for,
@@ -188,7 +192,7 @@ class ChangeOut(BaseModel):
 # --------------------------------------------------------------------------
 _RES_SQL = """
     SELECT r.id, r.number, r.status, r.currency, r.organization_id,
-           r.property_id, r.primary_guest_id,
+           r.property_id, r.primary_guest_id, r.group_block_id,
            g.full_name AS guest_name, g.phone AS guest_phone,
            g.email AS guest_email
     FROM booking.reservations r
@@ -196,9 +200,27 @@ _RES_SQL = """
 """
 
 
-def _reservation(db: Session, rid: uuid.UUID, property_id: uuid.UUID):
+def _reservation(db: Session, rid: uuid.UUID, property_id: uuid.UUID, *,
+                 lock: bool = False):
+    """The reservation, optionally locked for the rest of the transaction.
+
+    Every path that *changes* a booking passes ``lock=True``. Without it two
+    writers -- a desk cancelling while the OTA's redelivered cancellation
+    arrives, say -- both read ``confirmed``, both pass ``_blocked`` and both
+    give the rooms back, so ``reserved_units`` went down twice for one
+    booking and the property sold a room it did not have. With the row
+    locked the second writer waits, then reads the status the first one
+    committed and is refused by the same check.
+
+    The lock is taken before the units are read, so the units a writer acts
+    on are the ones the winner left behind, not a snapshot from before it.
+    ``OF r``: the guest row is joined for display and must not be locked --
+    an outer join's nullable side cannot be, and a guest shared by two
+    bookings would serialise unrelated changes.
+    """
     row = db.execute(
-        text(_RES_SQL + " WHERE r.id = :id AND r.property_id = :prop"),
+        text(_RES_SQL + " WHERE r.id = :id AND r.property_id = :prop"
+             + (" FOR UPDATE OF r" if lock else "")),
         {"id": rid, "prop": property_id},
     ).mappings().first()
     if row is None:
@@ -272,7 +294,7 @@ def _side(db: Session, property_id, *, room_type_id, room_type, arrival,
 
 def _current(db: Session, res, units) -> StaySide:
     if not units:
-        today = db.execute(text("SELECT CURRENT_DATE")).scalar_one()
+        today = local_today(db, res["property_id"])
         return _side(db, res["property_id"], room_type_id=None, room_type="—",
                      arrival=today, departure=today, adults=0, children=0,
                      rooms=0)
@@ -287,12 +309,27 @@ def _current(db: Session, res, units) -> StaySide:
     )
 
 
-def _policy(db: Session, property_id: uuid.UUID):
+#: What a waived cancellation is measured against when the property has no
+#: policy of its own. Nothing is charged, so there is nothing for a policy to
+#: decide -- and refusing the cancellation for want of one is what left OTA
+#: cancellations (always waived) failing forever on such properties.
+_WAIVED_NO_POLICY = {
+    "name": "No policy (penalty waived)", "free_until_days": 0,
+    "penalty_nights": 0, "requires_approval": False,
+    "approval_above": Decimal("0"),
+    "policy_text": "This property has no cancellation policy configured; the "
+                   "penalty was waived.",
+}
+
+
+def _policy(db: Session, property_id: uuid.UUID, *, required: bool = True):
     row = db.execute(
         text("SELECT * FROM property.cancellation_policies "
              "WHERE property_id = :p AND is_default LIMIT 1"),
         {"p": property_id},
     ).mappings().first()
+    if row is None and not required:
+        return _WAIVED_NO_POLICY
     if row is None:
         raise HTTPException(
             status_code=422,
@@ -303,25 +340,16 @@ def _policy(db: Session, property_id: uuid.UUID):
 
 
 def _paid(db: Session, reservation_id: uuid.UUID):
-    row = db.execute(
-        text(
-            """
-            SELECT f.id AS folio_id,
-                   COALESCE(SUM(e.amount) FILTER (WHERE e.entry_type='credit'), 0)
-                     AS paid
-            FROM finance.folios f
-            LEFT JOIN finance.folio_entries e ON e.folio_id = f.id
-            WHERE f.reservation_id = :r
-            GROUP BY f.id LIMIT 1
-            """
-        ),
-        {"r": reservation_id},
-    ).mappings().first()
-    return (row["folio_id"], Decimal(row["paid"])) if row else (None, Decimal("0"))
+    """The booking's primary folio and what is net paid on it."""
+    return primary_folio(db, reservation_id)
 
 
 def _may_approve(db: Session, caller: Caller, property_id: uuid.UUID) -> bool:
     from chirala_common.authz import _GRANT_SQL
+    if caller.is_service:
+        # The platform acting on a fact from outside -- an OTA cancellation
+        # the hotel must honour -- not a clerk asking for an exception.
+        return True
     if caller.user_id is None:
         return False
     return bool(db.execute(text(_GRANT_SQL), {
@@ -504,21 +532,44 @@ def cancel_quote(
 ):
     """The penalty the policy produces, and what would go back."""
     assert_property_in_org(db, caller, property_id)
+    return _cancel_terms(db, reservation_id, property_id)
+
+
+def _cancel_terms(db: Session, reservation_id: uuid.UUID,
+                  property_id: uuid.UUID, *, waived: bool = False
+                  ) -> CancelQuote:
+    """The quote itself, shared by the quote screen and the cancellation.
+
+    ``waived`` says the penalty will not be charged, which is the one case a
+    missing policy does not matter: there is no penalty to calculate.
+    """
     res = _reservation(db, reservation_id, property_id)
     units = _units(db, reservation_id)
-    pol = _policy(db, property_id)
+    pol = _policy(db, property_id, required=not waived)
     _, paid = _paid(db, reservation_id)
     current = _current(db, res, units)
-    today = db.execute(text("SELECT CURRENT_DATE")).scalar_one()
+    # The property's calendar, not the database's. CURRENT_DATE is UTC, which
+    # lags India by five and a half hours: from midnight to 05:30 a guest two
+    # days out was counted as three, and cancelled free inside the window.
+    today = local_today(db, property_id)
 
     days_before = (current.arrival_date - today).days
     within = days_before < pol["free_until_days"]
     penalty = Decimal("0")
     if within:
-        # One night per room, at the arrival night's rate — the policy's words
-        # turned into arithmetic, nothing more.
-        penalty = (current.nightly_rate * pol["penalty_nights"]
-                   * max(current.rooms, 1))
+        # The policy's nights, per room, at the rate each room was SOLD at.
+        # This used the rate calendar's arrival-night price for every room,
+        # so a guest who booked on a discount was fined at rack rate, and a
+        # booking of a suite and a standard room was fined as two of the
+        # first. The calendar is the fallback only for a room with no
+        # recorded rate.
+        per_night = sum(
+            (Decimal(u["nightly_rate"]) if u["nightly_rate"] is not None
+             else _rate(db, property_id, u["room_type_id"],
+                        u["arrival_date"])
+             for u in units),
+            Decimal("0"))
+        penalty = per_night * pol["penalty_nights"]
     refund = max(paid - penalty, Decimal("0"))
     return CancelQuote(
         original=current, days_before_arrival=days_before,
@@ -556,7 +607,7 @@ def modify_reservation(
     """Apply the change, in one transaction, only if it can be accommodated."""
     assert_property_in_org(db, caller, property_id)
     _check_reason(body.reason)
-    res = _reservation(db, reservation_id, property_id)
+    res = _reservation(db, reservation_id, property_id, lock=True)
     units = _units(db, reservation_id)
     warnings: list[str] = []
 
@@ -648,7 +699,24 @@ def modify_reservation(
 
     folio_entry_id = None
     folio_id, _ = _paid(db, reservation_id)
-    if body.charge_difference and difference != 0 and folio_id is not None:
+    if body.charge_difference and difference > 0 and folio_id is not None:
+        # A dearer stay is room revenue: posted through the shared ledger
+        # path so it is taxed as a room, dated on the ledger's open day and
+        # kept in the folio's currency. It was a raw untaxed row stamped with
+        # UTC's CURRENT_DATE.
+        folio_entry_id = post_charge(
+            db, organization_id=res["organization_id"],
+            property_id=property_id, folio_id=folio_id, amount=difference,
+            business_date=trading_day(db, property_id),
+            source_type="reservation_change", tax_category="rooms",
+            source_line_key=f"reservation_change:{uuid.uuid4()}",
+            tax_units=max(proposed.nights, 1), posted_by=caller.subject,
+        ).entry_id
+    elif body.charge_difference and difference < 0 and folio_id is not None:
+        # A cheaper stay is an allowance, not a negative charge, and the
+        # ledger has no shared path for one yet -- finance's adjustments own
+        # tax reversal. Recorded as the untaxed credit it always was, but on
+        # the right day and in the right currency.
         folio_entry_id = uuid.uuid4()
         db.execute(
             text(
@@ -657,14 +725,15 @@ def modify_reservation(
                     (id, organization_id, property_id, folio_id, entry_type,
                      amount, currency, business_date, source_type,
                      source_line_key)
-                VALUES (:id, :org, :prop, :folio, :etype, :amt, :cur,
-                        CURRENT_DATE, 'reservation_change', :slk)
+                VALUES (:id, :org, :prop, :folio, 'credit', :amt, :cur,
+                        :bd, 'reservation_change', :slk)
                 """
             ),
             {"id": folio_entry_id, "org": res["organization_id"],
              "prop": property_id, "folio": folio_id,
-             "etype": "debit" if difference > 0 else "credit",
-             "amt": abs(difference), "cur": res["currency"],
+             "amt": abs(difference),
+             "cur": resolve_currency(db, stated=None, folio_ids=[folio_id]),
+             "bd": trading_day(db, property_id),
              "slk": f"reservation_change:{uuid.uuid4()}"},
         )
     elif body.charge_difference and difference != 0:
@@ -717,7 +786,7 @@ def cancel_reservation(
     """Cancel the booking, charge the policy's penalty, release the rooms."""
     assert_property_in_org(db, caller, property_id)
     _check_reason(body.reason)
-    res = _reservation(db, reservation_id, property_id)
+    res = _reservation(db, reservation_id, property_id, lock=True)
     units = _units(db, reservation_id)
     warnings: list[str] = []
 
@@ -727,7 +796,8 @@ def cancel_reservation(
     if body.reason not in {r["code"] for r in CANCEL_REASONS}:
         raise HTTPException(status_code=422, detail="Unknown cancellation reason")
 
-    quote = cancel_quote(reservation_id, property_id, caller, db)
+    quote = _cancel_terms(db, reservation_id, property_id,
+                          waived=body.waive_penalty)
     penalty = quote.penalty_amount
     approves = _may_approve(db, caller, property_id)
 
@@ -796,6 +866,20 @@ def cancel_reservation(
         delta={k: -n for k, n in occupancy(units).items()},
         overbooking_allowance=settings.overbooking_allowance,
     )
+    # A booking picked up from a group block gives its rooms back to the
+    # block, not to general sale -- the group agreed those rooms and still
+    # has them until its cut-off. ``give_back`` decides whether the block can
+    # still take them (it must be open and definite) and otherwise leaves
+    # them on sale where the release above put them.
+    if res["group_block_id"] is not None and units:
+        from . import group_blocks
+
+        returned = group_blocks.give_back(
+            db, block_id=res["group_block_id"], property_id=property_id,
+            organization_id=res["organization_id"], units=units)
+        if returned:
+            warnings.append(
+                f"{returned} room-night(s) went back to the group block.")
     for u in units:
         db.execute(
             text("UPDATE booking.room_calendar_entries "
@@ -803,15 +887,26 @@ def cancel_reservation(
                  "WHERE reservation_unit_id = :u AND status = 'active'"),
             {"u": u["id"]},
         )
+        # Guarded on state as well as locked above: a unit something else
+        # already ended is not ended again.
         db.execute(
             text("UPDATE booking.reservation_units SET status = 'cancelled', "
                  "assigned_room_id = NULL, version = version + 1 "
-                 "WHERE id = :id"),
+                 "WHERE id = :id AND status NOT IN ('cancelled', 'no_show')"),
             {"id": u["id"]},
         )
     db.execute(
         text("UPDATE booking.reservations SET status = 'cancelled', "
-             "version = version + 1 WHERE id = :id"),
+             "version = version + 1 WHERE id = :id AND status <> 'cancelled'"),
+        {"id": reservation_id},
+    )
+    # A booking cancelled while still held leaves its hold row 'held', and
+    # the reaper would later find it expired and try to give its rooms back
+    # again. Closed here, where the rooms actually went back.
+    db.execute(
+        text("UPDATE booking.booking_holds SET status = 'released', "
+             "updated_at = now() WHERE reservation_id = :id "
+             "AND status = 'held'"),
         {"id": reservation_id},
     )
 
@@ -823,23 +918,18 @@ def cancel_reservation(
                 "The penalty was not charged: this reservation has no folio."
             )
         else:
-            folio_entry_id = uuid.uuid4()
-            db.execute(
-                text(
-                    """
-                    INSERT INTO finance.folio_entries
-                        (id, organization_id, property_id, folio_id,
-                         entry_type, amount, currency, business_date,
-                         source_type, source_line_key)
-                    VALUES (:id, :org, :prop, :folio, 'debit', :amt, :cur,
-                            CURRENT_DATE, 'cancellation_fee', :slk)
-                    """
-                ),
-                {"id": folio_entry_id, "org": res["organization_id"],
-                 "prop": property_id, "folio": folio_id, "amt": penalty,
-                 "cur": res["currency"],
-                 "slk": f"cancellation_fee:{reservation_id}"},
-            )
+            # Through the shared ledger path: taxed as the room it stands in
+            # for (finance taxes 'cancellation_fee' as rooms), on the ledger's
+            # open day, in the folio's currency. Idempotent on its key, so a
+            # replayed cancellation cannot charge twice.
+            folio_entry_id = post_charge(
+                db, organization_id=res["organization_id"],
+                property_id=property_id, folio_id=folio_id, amount=penalty,
+                business_date=trading_day(db, property_id),
+                source_type="cancellation_fee",
+                source_line_key=f"cancellation_fee:{reservation_id}",
+                posted_by=caller.subject,
+            ).entry_id
     if refund > 0:
         warnings.append(
             f"A refund of {refund} is due. Process it from the folio — "
@@ -1138,7 +1228,7 @@ def extend_stay(
     """Keep the guest where they are for longer. One transaction."""
     assert_property_in_org(db, caller, property_id)
     _check_reason(body.reason)
-    res = _reservation(db, reservation_id, property_id)
+    res = _reservation(db, reservation_id, property_id, lock=True)
     units = _units(db, reservation_id)
     warnings: list[str] = []
 

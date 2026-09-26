@@ -372,7 +372,16 @@ def _schedule(
         organization_id=head["organization_id"] if head else None,
         property_id=head["property_id"] if head else None,
         folio_id=next((r["folio_id"] for r in rows if r["folio_id"]), None),
-        currency="INR",
+        # The booking's own currency. This was the literal "INR", so a
+        # schedule for a booking sold in any other currency showed the right
+        # numbers under the wrong unit.
+        currency=db.execute(
+            text("SELECT coalesce(r.currency, p.currency, 'INR') "
+                 "FROM iam.properties p "
+                 "LEFT JOIN booking.reservations r ON r.id = :res "
+                 "WHERE p.id = :p"),
+            {"res": reservation_id, "p": property_id},
+        ).scalar() or "INR",
         booking_value=_q(booking_value),
         installments=shown,
         totals=ScheduleTotals(
@@ -883,8 +892,11 @@ def refund(
                     (id, organization_id, property_id, folio_id, entry_type,
                      amount, currency, business_date, source_type, source_id,
                      source_line_key)
-                VALUES (:id, :org, :prop, :folio, 'debit', :amt, 'INR', :bd,
-                        'deposit_refund', :src, :slk)
+                -- In the folio's own currency: a refund line labelled
+                -- rupees on a dollar folio is a line nobody can add up.
+                SELECT :id, :org, :prop, :folio, 'debit', :amt, f.currency,
+                       :bd, 'deposit_refund', :src, :slk
+                  FROM finance.folios f WHERE f.id = :folio
                 """
             ),
             {
@@ -928,8 +940,11 @@ def refund(
                 INSERT INTO finance.refunds
                     (id, organization_id, property_id, payment_id, amount,
                      currency, reason, status, cashier_shift_id, method)
-                VALUES (:id, :org, :prop, :pay, :amt, 'INR', :reason,
-                        'succeeded', :shift, :method)
+                -- The payment's currency: what is given back is given
+                -- back in the money it came in.
+                SELECT :id, :org, :prop, :pay, :amt, p.currency, :reason,
+                       'succeeded', :shift, :method
+                  FROM finance.payments p WHERE p.id = :pay
                 """
             ),
             {
