@@ -655,3 +655,59 @@ def test_a_released_block_does_not_take_rooms_back(tenant):
     _cancel(t, a.reservation_id, waive=True)
     assert tuple(t.counters(arrival, 1))[:3] == (0, 0, 0)
     assert _block_held(t, block) == 0
+
+
+# --------------------------------------------------------------------------
+# 6. Out-of-service rooms are off sale
+# --------------------------------------------------------------------------
+def test_a_room_marked_out_of_service_is_not_sold(tenant):
+    """Only room blocks reached out_of_service; the room's own flag reached nothing.
+
+    A room set out of service on the room screen stayed bookable at the desk
+    and on every channel. A room that is both blocked and out of service is
+    one room off sale, not two.
+    """
+    from booking_core.inventory import InventoryShortage
+
+    t = tenant(rooms=2)
+    arrival = date.today() + timedelta(days=10)
+    t.seed(arrival, 3)
+    assert t.counters(arrival, 3).oos == 0
+
+    with t.session() as s:
+        s.execute(text("UPDATE property.rooms SET service_status = "
+                       "'out_of_service' WHERE id = :r"), {"r": t.rooms[0]})
+    assert t.counters(arrival, 3).oos == 3, "one room off sale on each night"
+
+    with pytest.raises(InventoryShortage):
+        t.hold(arrival, 1, units=2)
+
+    # A block on the same room, first night only: still one room, not two.
+    with t.session() as s:
+        s.execute(text(
+            """
+            INSERT INTO booking.room_blocks
+                (organization_id, property_id, room_id, group_id, block_type,
+                 reason_category, start_date, end_date)
+            VALUES (:o, :p, :r, gen_random_uuid(), 'room_block', 'other',
+                    :d, :d)
+            """), {"o": t.org, "p": t.prop, "r": t.rooms[0], "d": arrival})
+    assert t.counters(arrival, 3).oos == 3
+
+    # Back in service: only the blocked night stays off sale.
+    with t.session() as s:
+        s.execute(text("UPDATE property.rooms SET service_status = "
+                       "'in_service' WHERE id = :r"), {"r": t.rooms[0]})
+    assert t.counters(arrival, 3).oos == 1
+    t.hold(arrival + timedelta(days=1), 1, units=2)
+
+
+def test_a_new_inventory_night_starts_with_out_of_service_rooms_counted(
+        tenant):
+    t = tenant(rooms=2)
+    with t.session() as s:
+        s.execute(text("UPDATE property.rooms SET service_status = "
+                       "'maintenance' WHERE id = :r"), {"r": t.rooms[1]})
+    later = date.today() + timedelta(days=90)
+    t.seed(later, 1)
+    assert t.counters(later, 1).oos == 1
