@@ -105,26 +105,30 @@ def main():
     check("   No change -> no requests (nothing is resent on a timer)",
           not calls_since(n0), f"{len(calls_since(n0))} requests while idle")
 
-    d1 = date.today() + timedelta(days=40)
+    # A fresh date and fresh values every run: setting what is already set is
+    # (correctly) not a change, and would send nothing.
+    import random
+    d1 = date.today() + timedelta(days=40 + random.randint(0, 300))
+    bump = random.randint(1, 89)
 
     # 2. Single date, single rate ---------------------------------------
     n0 = ncalls()
     api("PUT", f"/booking/rate-calendar/cell?property_id={prop}", tok,
-        {"room_type_id": deluxe, "stay_date": d1.isoformat(), "rate": 6333})
+        {"room_type_id": deluxe, "stay_date": d1.isoformat(), "rate": 6300 + bump})
     got = wait_for_calls(n0)
     vals = [v for c in got for v in values_of(c)]
     check("2. One rate on one date -> one request, one value, rate only",
           len(got) == 1 and len(vals) == 1 and vals[0]["date_from"] == vals[0]["date_to"] == d1.isoformat()
-          and vals[0].get("rate_plan_id") == dlx_plan and str(vals[0].get("rate")).startswith("6333")
+          and vals[0].get("rate_plan_id") == dlx_plan and str(vals[0].get("rate")).startswith(str(6300 + bump))
           and set(vals[0]) == {"property_id", "rate_plan_id", "date_from", "date_to", "rate"},
           f"{len(got)} request(s): {vals}")
 
     # 3. Single dates, multiple rates (same batch window) -----------------
     n0 = ncalls()
     api("PUT", f"/booking/rate-calendar/cell?property_id={prop}", tok,
-        {"room_type_id": deluxe, "stay_date": (d1 + timedelta(days=3)).isoformat(), "rate": 6444})
+        {"room_type_id": deluxe, "stay_date": (d1 + timedelta(days=3)).isoformat(), "rate": 6400 + bump})
     api("PUT", f"/booking/rate-calendar/cell?property_id={prop}", tok,
-        {"room_type_id": suite, "stay_date": (d1 + timedelta(days=7)).isoformat(), "rate": 9456.21})
+        {"room_type_id": suite, "stay_date": (d1 + timedelta(days=7)).isoformat(), "rate": 9400 + bump + 0.21})
     got = wait_for_calls(n0)
     vals = [v for c in got for v in values_of(c)]
     check("3. Rates on two dates for two rate plans -> one request with both",
@@ -135,7 +139,7 @@ def main():
     n0 = ncalls()
     for i in range(10):
         api("PUT", f"/booking/rate-calendar/cell?property_id={prop}", tok,
-            {"room_type_id": deluxe, "stay_date": (d1 + timedelta(days=20 + i)).isoformat(), "rate": 5241})
+            {"room_type_id": deluxe, "stay_date": (d1 + timedelta(days=20 + i)).isoformat(), "rate": 5200 + bump})
     got = wait_for_calls(n0)
     vals = [v for c in got for v in values_of(c)]
     check("4. Same rate over 10 nights -> one range, not ten values",
@@ -146,11 +150,11 @@ def main():
     # 5. Min stay ----------------------------------------------------------
     n0 = ncalls()
     api("PUT", f"/booking/rate-calendar/cell?property_id={prop}", tok,
-        {"room_type_id": deluxe, "stay_date": (d1 + timedelta(days=45)).isoformat(), "min_stay": 3})
+        {"room_type_id": deluxe, "stay_date": (d1 + timedelta(days=45)).isoformat(), "min_stay": 3 + bump % 4})
     got = wait_for_calls(n0)
     vals = [v for c in got for v in values_of(c)]
     check("5. Minimum stay on one date -> restrictions request with min stay only",
-          len(vals) == 1 and vals[0].get("min_stay_arrival") == 3 and vals[0].get("min_stay_through") == 3
+          len(vals) == 1 and vals[0].get("min_stay_arrival") == 3 + bump % 4 and vals[0].get("min_stay_through") == 3 + bump % 4
           and "rate" not in vals[0] and "stop_sell" not in vals[0],
           f"{len(got)} request(s): {vals}")
 
@@ -182,11 +186,11 @@ def main():
     http("POST", FAKE + "/_fake/limit", {"limit": 1})
     n0 = ncalls()
     api("PUT", f"/booking/rate-calendar/cell?property_id={prop}", tok,
-        {"room_type_id": deluxe, "stay_date": (d1 + timedelta(days=60)).isoformat(), "rate": 7001})
+        {"room_type_id": deluxe, "stay_date": (d1 + timedelta(days=60)).isoformat(), "rate": 7000 + bump})
     wait_for_calls(n0)
     n1 = ncalls()
     api("PUT", f"/booking/rate-calendar/cell?property_id={prop}", tok,
-        {"room_type_id": deluxe, "stay_date": (d1 + timedelta(days=61)).isoformat(), "rate": 7002})
+        {"room_type_id": deluxe, "stay_date": (d1 + timedelta(days=61)).isoformat(), "rate": 7100 + bump})
     wait_for_calls(n1)
     throttled = sql(f"SELECT count(*) FROM distribution.channel_sync_log WHERE link_id='{link}' "
                     "AND outcome='throttled'")
@@ -196,7 +200,7 @@ def main():
                     f"AND stay_date='{(d1 + timedelta(days=61)).isoformat()}'")
     http("POST", FAKE + "/_fake/limit", {"limit": 10})
     check("Rate limit: a 429 pauses the property, and the refused update is delivered afterwards",
-          int(throttled or 0) >= 1 and delivered.startswith("7002"),
+          int(throttled or 0) >= 1 and delivered.startswith(str(7100 + bump)),
           f"throttled requests logged={throttled}; night now accepted at={delivered or 'not yet'}")
 
     log = last_log(link, 1)

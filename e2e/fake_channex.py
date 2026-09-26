@@ -44,7 +44,7 @@ async def record(request: Request, call_next):
         calls.append({"method": request.method, "path": request.url.path,
                       "query": str(request.url.query),
                       "key": request.headers.get("user-api-key"),
-                      "body": body.decode(errors="ignore")[:4000]})
+                      "body": body.decode(errors="ignore")[:500000]})
         if request.headers.get("user-api-key") != KEY:
             return JSONResponse({"errors": {"title": "Unauthorized"}}, 401)
     return await call_next(request)
