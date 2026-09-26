@@ -557,3 +557,101 @@ def test_a_new_property_gets_a_default_cancellation_policy(tenant):
             "SELECT count(*) FROM property.cancellation_policies "
             "WHERE property_id = :p AND is_default"), {"p": t.prop}).scalar()
     assert n == 1
+
+
+# --------------------------------------------------------------------------
+# 5. Group blocks get their rooms back
+# --------------------------------------------------------------------------
+def _block(t, arrival, nights, rooms, commitment="definite"):
+    from booking_core import group_blocks
+
+    with t.session() as s:
+        return group_blocks.create_block(
+            s, organization_id=t.org, property_id=t.prop, name="Wedding",
+            arrival_date=arrival,
+            departure_date=arrival + timedelta(days=nights),
+            lines=[group_blocks.BlockLine(room_type_id=t.rt,
+                                          rooms_blocked=rooms)],
+            commitment=commitment)
+
+
+def _block_held(t, block_id):
+    with t.owner.connect() as c:
+        return c.execute(text(
+            "SELECT coalesce(sum(rooms_held), 0) FROM "
+            "booking.group_block_nights WHERE block_id = :b"),
+            {"b": block_id}).scalar_one()
+
+
+def test_a_cancelled_group_booking_goes_back_to_its_block(tenant):
+    """give_back existed and nothing called it.
+
+    A cancelled pick-up went back on general sale, so the group silently lost
+    a room it had agreed and the block's numbers stopped adding up.
+    """
+    t = tenant(rooms=3)
+    arrival = date.today() + timedelta(days=40)
+    t.seed(arrival, 2)
+    block = _block(t, arrival, 2, rooms=2)
+    assert t.counters(arrival, 2).allotment == 4
+
+    a = t.hold(arrival, 2, group_block_id=block)
+    t.confirm(a.reservation_id)
+    c = t.counters(arrival, 2)
+    assert (c.allotment, c.reserved) == (2, 2)
+
+    _cancel(t, a.reservation_id, waive=True)
+    c = t.counters(arrival, 2)
+    assert (c.allotment, c.reserved) == (4, 0), "the block has both rooms again"
+    assert _block_held(t, block) == 4
+
+
+def test_an_expired_group_hold_goes_back_to_its_block(tenant):
+    from chirala_common.db import make_session_factory, system_context
+
+    from booking_core.reaper import expire_stale_holds
+
+    t = tenant(rooms=3)
+    arrival = date.today() + timedelta(days=41)
+    t.seed(arrival, 1)
+    block = _block(t, arrival, 1, rooms=2)
+    t.hold(arrival, 1, group_block_id=block)
+    assert tuple(t.counters(arrival, 1))[:3] == (1, 0, 1)
+
+    with t.owner.begin() as c:
+        c.execute(text("UPDATE booking.booking_holds SET expires_at = "
+                       "now() - interval '1 minute' WHERE property_id = :p"),
+                  {"p": t.prop})
+    s = make_session_factory(t.runtime)()
+    try:
+        system_context(s, reason="test: hold reaper")
+        assert expire_stale_holds(s) == 1
+        s.commit()
+    finally:
+        s.close()
+    assert tuple(t.counters(arrival, 1))[:3] == (0, 0, 2)
+    assert _block_held(t, block) == 2
+
+
+def test_a_released_block_does_not_take_rooms_back(tenant):
+    """After cut-off the block has handed its rooms to the hotel.
+
+    A pick-up cancelled then must go on general sale; crediting the block
+    would take a room off sale for a group that no longer holds any.
+    """
+    from booking_core import group_blocks
+
+    t = tenant(rooms=3)
+    arrival = date.today() + timedelta(days=42)
+    t.seed(arrival, 1)
+    block = _block(t, arrival, 1, rooms=2)
+    a = t.hold(arrival, 1, group_block_id=block)
+    t.confirm(a.reservation_id)
+    with t.session() as s:
+        group_blocks.release(s, block_id=block, property_id=t.prop,
+                             organization_id=t.org)
+    assert tuple(t.counters(arrival, 1))[:3] == (0, 1, 0)
+
+    _cancel(t, a.reservation_id, waive=True)
+    assert tuple(t.counters(arrival, 1))[:3] == (0, 0, 0)
+    assert _block_held(t, block) == 0

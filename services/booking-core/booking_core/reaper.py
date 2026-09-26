@@ -70,10 +70,69 @@ def expire_stale_holds(session: Session, *, limit: int = 200) -> int:
     if not stale:
         return 0
 
+    from datetime import timedelta
+
+    released = 0
     for hold in stale:
+        # The booking itself, locked -- but never waited for. The desk
+        # confirming or cancelling this very booking holds that lock, and
+        # confirm takes the reservation before it touches the hold, the
+        # reverse of the order here; waiting would be a deadlock. A booking
+        # somebody is working on right now is not abandoned anyway: skip it,
+        # and a later sweep sees whatever they decided.
+        res = session.execute(
+            text("SELECT status, organization_id, group_block_id "
+                 "FROM booking.reservations WHERE id = :res "
+                 "FOR UPDATE SKIP LOCKED"),
+            {"res": hold["reservation_id"]},
+        ).mappings().first()
+        if res is None:
+            continue
+        if res["status"] != "held":
+            # Confirmed or cancelled by another path since the hold was
+            # taken: that path already moved the counters, and releasing
+            # again here would give the rooms back twice. The hold only needs
+            # closing so it stops being selected.
+            session.execute(
+                text("UPDATE booking.booking_holds SET status = :st, "
+                     "updated_at = now() WHERE id = :id"),
+                {"id": hold["id"],
+                 "st": "converted" if res["status"] == "confirmed"
+                 else "released"},
+            )
+            continue
+
         units = session.execute(
             text(_UNITS_SQL), {"res": hold["reservation_id"]}
         ).mappings().all()
+
+        # Every night this hold occupies, locked in (room_type, date) order --
+        # the order create_hold and shift_inventory use -- before any is
+        # written. Updating unit by unit locked a two-type booking's rows in
+        # whatever order the units came back, which a concurrent booking for
+        # the same two types could meet from the other end.
+        keys = sorted(
+            {(u["room_type_id"], u["arrival_date"] + timedelta(days=i))
+             for u in units
+             for i in range((u["departure_date"] - u["arrival_date"]).days)},
+            key=lambda k: (str(k[0]), k[1]),
+        )
+        if keys:
+            session.execute(
+                text(
+                    """
+                    SELECT 1 FROM booking.room_type_inventory_days
+                     WHERE property_id = :prop
+                       AND (room_type_id, stay_date) IN (
+                           SELECT * FROM unnest(CAST(:rts AS uuid[]),
+                                                CAST(:days AS date[])))
+                     ORDER BY room_type_id, stay_date
+                     FOR UPDATE
+                    """
+                ),
+                {"prop": hold["property_id"],
+                 "rts": [k[0] for k in keys], "days": [k[1] for k in keys]},
+            )
 
         for u in units:
             session.execute(
@@ -90,15 +149,26 @@ def expire_stale_holds(session: Session, *, limit: int = 200) -> int:
                  "arr": u["arrival_date"], "dep": u["departure_date"]},
             )
 
+        # A hold drawn from a group block was holding the block's rooms. They
+        # go back to the block while it is still open and definite -- the
+        # group has not lost them because one guest abandoned checkout -- and
+        # otherwise stay on general sale, where the release above put them.
+        if res["group_block_id"] is not None and units:
+            from . import group_blocks
+
+            group_blocks.give_back(
+                session, block_id=res["group_block_id"],
+                property_id=hold["property_id"],
+                organization_id=res["organization_id"], units=list(units))
+
         session.execute(
             text("UPDATE booking.reservation_units SET status = 'cancelled', "
                  "version = version + 1 "
                  "WHERE reservation_id = :res AND status = 'reserved'"),
             {"res": hold["reservation_id"]},
         )
-        # Only a booking still merely held is cancelled. A confirmed one has a
-        # 'converted' hold and is never selected here, but the guard says so
-        # out loud rather than relying on that.
+        # Only a booking still merely held is cancelled -- checked above
+        # under the lock, and said again here rather than relied upon.
         session.execute(
             text("UPDATE booking.reservations SET status = 'cancelled', "
                  "version = version + 1 "
@@ -110,8 +180,9 @@ def expire_stale_holds(session: Session, *, limit: int = 200) -> int:
                  "updated_at = now() WHERE id = :id"),
             {"id": hold["id"]},
         )
+        released += 1
 
-    return len(stale)
+    return released
 
 
 def run_once() -> int:

@@ -188,7 +188,7 @@ class ChangeOut(BaseModel):
 # --------------------------------------------------------------------------
 _RES_SQL = """
     SELECT r.id, r.number, r.status, r.currency, r.organization_id,
-           r.property_id, r.primary_guest_id,
+           r.property_id, r.primary_guest_id, r.group_block_id,
            g.full_name AS guest_name, g.phone AS guest_phone,
            g.email AS guest_email
     FROM booking.reservations r
@@ -845,6 +845,20 @@ def cancel_reservation(
         delta={k: -n for k, n in occupancy(units).items()},
         overbooking_allowance=settings.overbooking_allowance,
     )
+    # A booking picked up from a group block gives its rooms back to the
+    # block, not to general sale -- the group agreed those rooms and still
+    # has them until its cut-off. ``give_back`` decides whether the block can
+    # still take them (it must be open and definite) and otherwise leaves
+    # them on sale where the release above put them.
+    if res["group_block_id"] is not None and units:
+        from . import group_blocks
+
+        returned = group_blocks.give_back(
+            db, block_id=res["group_block_id"], property_id=property_id,
+            organization_id=res["organization_id"], units=units)
+        if returned:
+            warnings.append(
+                f"{returned} room-night(s) went back to the group block.")
     for u in units:
         db.execute(
             text("UPDATE booking.room_calendar_entries "
@@ -863,6 +877,15 @@ def cancel_reservation(
     db.execute(
         text("UPDATE booking.reservations SET status = 'cancelled', "
              "version = version + 1 WHERE id = :id AND status <> 'cancelled'"),
+        {"id": reservation_id},
+    )
+    # A booking cancelled while still held leaves its hold row 'held', and
+    # the reaper would later find it expired and try to give its rooms back
+    # again. Closed here, where the rooms actually went back.
+    db.execute(
+        text("UPDATE booking.booking_holds SET status = 'released', "
+             "updated_at = now() WHERE reservation_id = :id "
+             "AND status = 'held'"),
         {"id": reservation_id},
     )
 
