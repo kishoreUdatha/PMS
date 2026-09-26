@@ -5486,10 +5486,11 @@ export interface DayBookRow {
   description: string
   note: string | null
   entry_type: 'debit' | 'credit'
-  amount: number
+  /** Money arrives as a decimal string, as everywhere else in this API. */
+  amount: string
   /** Exactly one of these is set on every row. */
-  debit: number | null
-  credit: number | null
+  debit: string | null
+  credit: string | null
   posted_by: string | null
   reverses_entry_id: string | null
 }
@@ -5497,10 +5498,10 @@ export interface DayBook {
   business_date: string
   rows: DayBookRow[]
   totals: {
-    charges: number; payments: number; refunds: number
-    adjustments: number; deposits: number; net: number; count: number
+    charges: string; payments: string; refunds: string
+    adjustments: string; deposits: string; net: string; count: number
   }
-  kinds: { value: string; label: string; count: number; total: number }[]
+  kinds: { value: string; label: string; count: number; total: string }[]
   rooms: string[]
 }
 export async function getDayBook(
