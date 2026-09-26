@@ -705,6 +705,17 @@ def _record_failure(user_id, attempts: int) -> None:
         conn.commit()
 
 
+def _refuse_if_locked(locked_until) -> None:
+    """429 while an account is locked out after too many wrong answers."""
+    if locked_until is not None and locked_until > _now():
+        minutes = max(1, int((locked_until - _now()).total_seconds() // 60) + 1)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many attempts. Try again in {minutes} minute"
+                   f"{'' if minutes == 1 else 's'}, or reset your password.",
+        )
+
+
 def _credential_login(db: Session, body: LoginIn) -> SessionOut:
     """Property code, email and password, checked properly."""
     wrong = HTTPException(
@@ -961,22 +972,58 @@ def platform_login_verify(body: MfaVerifyIn,
                           db: Session = Depends(get_session)) -> SessionOut:
     """Step two: the challenge from the password, plus a code from the device.
 
-    The challenge carries the user id and its own expiry, sealed with the
-    deployment's key, so this route never has to trust anything the client
-    says about who it is.
+    The challenge carries the user id, a one-time nonce and its own expiry,
+    sealed with the deployment's key, so this route never has to trust
+    anything the client says about who it is.
+
+    **The lockout applies here too.** Wrong codes are counted against the
+    same limit as wrong passwords, and that count used to lock only the
+    password step: a challenge obtained before the lock kept accepting
+    guesses, and a correct one signed in a locked account.
+
+    **A challenge is good for one session.** It used to be reusable until it
+    expired, so one captured challenge plus any code -- a recovery code read
+    off a printout -- minted as many sessions as its holder liked for five
+    minutes.
     """
     from .mfa_routes import check_second_factor, read_challenge
 
-    user_id = read_challenge(body.challenge)
+    user_id, nonce, expires = read_challenge(body.challenge)
     system_context(db, reason="sign-in: verify second factor")
 
     row = db.execute(
-        text("SELECT subject_id, status FROM iam.users WHERE id = :u"),
+        text("SELECT u.subject_id, u.status, c.locked_until "
+             "FROM iam.users u "
+             "LEFT JOIN iam.user_credentials c ON c.user_id = u.id "
+             "WHERE u.id = :u"),
         {"u": user_id},
     ).mappings().first()
     if row is None or row["status"] != "active":
         raise HTTPException(status_code=401,
                             detail="Those sign-in details were not recognised.")
+    _refuse_if_locked(row["locked_until"])
+
+    # Spent before the code is checked, so a replay is refused without
+    # burning a recovery code or counting as a guess. A wrong code rolls this
+    # back with the rest of the transaction, leaving the challenge usable for
+    # a retry -- the guess limit, not the challenge, is what bounds guessing.
+    # Kept beside revoked sessions: both are "a token we signed that must no
+    # longer be honoured", keyed and expiring the same way.
+    spent = db.execute(
+        text(
+            """
+            INSERT INTO iam.revoked_sessions (jti, subject, expires_at)
+            VALUES (:j, :s, to_timestamp(:e))
+            ON CONFLICT (jti) DO NOTHING
+            RETURNING jti
+            """
+        ),
+        {"j": f"mfa:{nonce}", "s": row["subject_id"], "e": expires},
+    ).first()
+    if spent is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="That sign-in attempt has already been used. Start again.")
 
     if not check_second_factor(db, user_id, body.code):
         # Counted like a wrong password: a second factor with unlimited
@@ -989,6 +1036,12 @@ def platform_login_verify(body: MfaVerifyIn,
 
     db.execute(text("UPDATE iam.users SET last_login_at = now() WHERE id = :u"),
                {"u": user_id})
+    # Proven twice over; earlier wrong codes stop counting toward a lockout.
+    db.execute(
+        text("UPDATE iam.user_credentials SET failed_attempts = 0, "
+             "locked_until = NULL, updated_at = now() WHERE user_id = :u"),
+        {"u": user_id},
+    )
     record_audit(
         db, action="platform.signed_in", entity_type="user",
         entity_id=str(user_id), actor_subject=row["subject_id"],
