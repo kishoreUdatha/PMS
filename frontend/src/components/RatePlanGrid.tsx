@@ -8,6 +8,7 @@ import {
   getRatePlanCalendar, setRatePlanCalendar,
   type PlanChange, type PlanNight,
 } from '../api'
+import { errorText } from '../lib/forms'
 
 /**
  * A rate plan's own calendar: price, minimum and maximum stay, closed to
@@ -43,10 +44,7 @@ const parse = (s: string) => new Date(`${s}T00:00:00`)
 const isWeekend = (s: string) => [0, 6].includes(parse(s).getDay())
 
 function apiError(e: unknown): string {
-  const d = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
-  if (typeof d === 'string') return d
-  if (Array.isArray(d)) return 'Some values are invalid.'
-  return 'Could not save the change. Please try again.'
+  return errorText(e, 'Could not save the change. Please try again.')
 }
 
 /* ----------------------------------------------------------- number cell --- */

@@ -16,6 +16,7 @@ import {
   setSyncSettings, testOtaHotelId,
   type MappingRoom, type MappingEditor, type ConnectionTest,
 } from '../api'
+import { errorText } from '../lib/forms'
 
 /**
  * Edit one partner: its terms, and how its rooms line up with ours.
@@ -165,7 +166,7 @@ export default function EditChannelPartner() {
       const er = e as { response?: { status?: number; data?: { detail?: string } } }
       setErr(er.response?.status === 403
         ? 'Your role does not permit changing synchronisation settings.'
-        : er.response?.data?.detail ?? 'Could not save those settings.')
+        : errorText(er, 'Could not save those settings.'))
     } finally { setSyncing(false) }
   }
 
@@ -235,7 +236,7 @@ export default function EditChannelPartner() {
       setErr(er.response?.status === 409
         ? 'Two of your rooms point at the same one of theirs, which would '
           + 'make an arriving booking ambiguous. Give each a different one.'
-        : er.response?.data?.detail ?? 'Could not save those changes.')
+        : errorText(er, 'Could not save those changes.'))
     } finally { setBusy(false) }
   }
 

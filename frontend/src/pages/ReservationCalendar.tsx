@@ -14,6 +14,7 @@ import {
   type RackBar, type RackView,
 } from '../api'
 import { useActivePropertyId } from '../hooks/useProperty'
+import { errorText } from '../lib/forms'
 
 /**
  * Screen 003 — Reservation Calendar (the room rack).
@@ -139,10 +140,8 @@ export default function ReservationCalendar() {
       setTimeout(() => setToast(''), 3000)
     },
     onError: (e) => {
-      const er = e as { response?: { data?: { detail?: string } } }
       setToast('')
-      setError(er.response?.data?.detail
-        ?? 'That room could not be assigned. It may already be taken.')
+      setError(errorText(e, 'That room could not be assigned. It may already be taken.'))
     },
   })
 

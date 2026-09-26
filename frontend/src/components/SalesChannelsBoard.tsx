@@ -10,6 +10,7 @@ import {
   setPropertyModule, type ChannelLink, type OtaStatus, type OtaRow,
 } from '../api'
 import { fmtDateTime } from '../lib/dates'
+import { errorText } from '../lib/forms'
 
 /** Sales Channels: what sells this property, and whether it is working.
  *
@@ -208,7 +209,7 @@ export default function SalesChannelsBoard({ propertyId, propertyCode, onOpenSet
       qc.invalidateQueries({ queryKey: ['ota-status', propertyId] })
     },
     onError: (e: { response?: { data?: { detail?: string } } }) =>
-      setNote(e?.response?.data?.detail ?? 'The full sync failed.'),
+      setNote(errorText(e, 'The full sync failed.')),
   })
 
   const toggleEngine = useMutation({

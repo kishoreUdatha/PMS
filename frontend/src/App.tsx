@@ -1,113 +1,128 @@
+import { lazy, Suspense } from 'react'
 import { Navigate, Outlet, Route, Routes } from 'react-router-dom'
 import { OverlayHost } from './components/AskDialog'
 import AppLayout from './components/AppLayout'
-import Dashboard from './pages/Dashboard'
-import NewReservation from './pages/NewReservation'
-import GroupBlocks from './pages/GroupBlocks'
-import OtaActions from './pages/OtaActions'
-import Reservations from './pages/Reservations'
-import ReservationCalendar from './pages/ReservationCalendar'
-import Guests from './pages/Guests'
-import AppSearch from './pages/Search'
-import GuestProfile from './pages/GuestProfile'
-import RoomsInventory from './pages/RoomsInventory'
-import RoomEditor from './pages/RoomEditor'
-import RoomStatusHistory from './pages/RoomStatusHistory'
-import RoomDetails from './pages/RoomDetails'
-import TaxCharges from './pages/TaxCharges'
-import PaymentSettings from './pages/PaymentSettings'
-import SalesChannelsPage from './pages/SalesChannelsPage'
-import ChannelPartners from './pages/ChannelPartners'
-import AddPartner from './pages/AddPartner'
-import EditChannelPartner from './pages/EditChannelPartner'
-import RateRules from './pages/RateRules'
-import RateRuleEditor from './pages/RateRuleEditor'
-import {
-  RoomTypesScreen, AmenitiesScreen, BuildingsFloorsScreen, RoomBlocksScreen,
-  RatePlansScreen, RatesInventoryScreen, PackagesPromotionsScreen,
-} from './pages/PropertyScreens'
-import CheckoutFolio from './pages/CheckoutFolio'
-import GuestCheckIn from './pages/GuestCheckIn'
-import RoomRack from './pages/RoomRack'
-import CommercialAccounts from './pages/CommercialAccounts'
-import GuestOrders from './pages/GuestOrders'
-import ServiceMenu from './pages/ServiceMenu'
-import BookingAttributes from './pages/BookingAttributes'
-import Enquiries from './pages/Enquiries'
-import ReservationDetail from './pages/ReservationDetail'
-import Invoices from './pages/Invoices'
-import InvoiceDetail from './pages/InvoiceDetail'
-import InvoiceSettings from './pages/InvoiceSettings'
-import GuestCheckOut from './pages/GuestCheckOut'
-import RoomMove from './pages/RoomMove'
-import ModifyReservation from './pages/ModifyReservation'
-import EditReservation from './pages/EditReservation'
-import NoShowProcessing, { NoShowList } from './pages/NoShowProcessing'
-import DepositSchedule from './pages/DepositSchedule'
-import Housekeeping from './pages/Housekeeping'
-import Cashiering from './pages/Cashiering'
-import DayBook from './pages/DayBook'
-import FormCRegister from './pages/FormCRegister'
-import FolioAdjustment from './pages/FolioAdjustment'
-import PaymentReversal from './pages/PaymentReversal'
-import NightAudit from './pages/NightAudit'
-import NightAuditHistory from './pages/NightAuditHistory'
-import PropertySettings from './pages/PropertySettings'
-import UserManagement from './pages/UserManagement'
-import InviteUser from './pages/InviteUser'
-import RolesMatrix from './pages/RolesMatrix'
-import Approvals from './pages/Approvals'
-import AuditLog from './pages/AuditLog'
-import Billing from './pages/Billing'
-import Login from './pages/Login'
-import SetPassword from './pages/SetPassword'
-import Placeholder from './pages/Placeholder'
-import LedgerReportScreen from './pages/LedgerReport'
-import ReportsCatalog from './pages/ReportsCatalog'
-import BackOfficeReport from './pages/BackOfficeReport'
-import WorkOrders from './pages/WorkOrders'
-import ExpenseVouchers from './pages/ExpenseVouchers'
-import UnitOwners from './pages/UnitOwners'
-import {
-  OnboardingEntry, OnboardingGate, OnboardingConnections, OnboardingGoLive,
-} from './pages/Onboarding'
-import { OnboardingAccount, OnboardingProperty } from './pages/OnboardingSetup'
-import { OnboardingStructure, OnboardingRooms } from './pages/OnboardingEstate'
-import { OnboardingTeam } from './pages/OnboardingTeam'
-import { OnboardingImport } from './pages/OnboardingImport'
-import { OnboardingRates, OnboardingBilling } from './pages/OnboardingMoney'
 import ProtectedRoute from './auth/ProtectedRoute'
 import PlatformRoute from './platform/PlatformRoute'
 import PlatformLayout from './platform/PlatformLayout'
-import PlatformLogin from './platform/PlatformLogin'
-import PlatformOverview from './platform/screens/Overview'
-import PlatformOtaActions from './platform/screens/OtaActions'
-import PlatformTenants from './platform/screens/Tenants'
-import PlatformTenantDetail from './platform/screens/TenantDetail'
-import PlatformProperties from './platform/screens/Properties'
-import PlatformUsers from './platform/screens/Users'
-import PlatformSearch from './platform/screens/Search'
-import PlatformRoles from './platform/screens/Roles'
-import PlatformProviders from './platform/screens/Providers'
-import PlatformDomains from './platform/screens/Domains'
-import PlatformMessaging from './platform/screens/Messaging'
-import PlatformSupport from './platform/screens/Support'
-import PlatformSupportTicket from './platform/screens/SupportTicket'
-import PlatformRecovery from './platform/screens/Recovery'
-import PlatformSettingsScreen from './platform/screens/PlatformSettings'
-import PlatformAnalytics from './platform/screens/Analytics'
-import PlatformChannels from './platform/screens/Channels'
-import PlatformOperations from './platform/screens/Operations'
-import PlatformPropertyOverview from './platform/screens/PropertyOverview'
-import PlatformOnboarding from './platform/screens/Onboarding'
-import PlatformSecurity from './platform/screens/Security'
-import PlatformSubscriptions from './platform/screens/Subscriptions'
-import PlatformPlans from './platform/screens/Plans'
-import PlatformInvoices from './platform/screens/Invoices'
-import {
-  BusinessDates as PlatformBusinessDates, Audit as PlatformAudit,
-  Permissions as PlatformPermissions, Admins as PlatformAdmins,
-} from './platform/screens/Rest'
+import PageSpinner from './components/PageSpinner'
+
+// Every screen is its own chunk, fetched when first visited. The shell
+// (layouts, guards, the overlay host) stays in the entry bundle so the frame
+// paints at once; AppLayout and PlatformLayout hold their own Suspense so
+// only the content area waits while a screen loads.
+const Dashboard = lazy(() => import('./pages/Dashboard'))
+const NewReservation = lazy(() => import('./pages/NewReservation'))
+const GroupBlocks = lazy(() => import('./pages/GroupBlocks'))
+const OtaActions = lazy(() => import('./pages/OtaActions'))
+const Reservations = lazy(() => import('./pages/Reservations'))
+const ReservationCalendar = lazy(() => import('./pages/ReservationCalendar'))
+const Guests = lazy(() => import('./pages/Guests'))
+const AppSearch = lazy(() => import('./pages/Search'))
+const GuestProfile = lazy(() => import('./pages/GuestProfile'))
+const RoomsInventory = lazy(() => import('./pages/RoomsInventory'))
+const RoomEditor = lazy(() => import('./pages/RoomEditor'))
+const RoomStatusHistory = lazy(() => import('./pages/RoomStatusHistory'))
+const RoomDetails = lazy(() => import('./pages/RoomDetails'))
+const TaxCharges = lazy(() => import('./pages/TaxCharges'))
+const PaymentSettings = lazy(() => import('./pages/PaymentSettings'))
+const SalesChannelsPage = lazy(() => import('./pages/SalesChannelsPage'))
+const ChannelPartners = lazy(() => import('./pages/ChannelPartners'))
+const AddPartner = lazy(() => import('./pages/AddPartner'))
+const EditChannelPartner = lazy(() => import('./pages/EditChannelPartner'))
+const RateRules = lazy(() => import('./pages/RateRules'))
+const RateRuleEditor = lazy(() => import('./pages/RateRuleEditor'))
+const RoomTypesScreen = lazy(() => import('./pages/PropertyScreens').then((m) => ({ default: m.RoomTypesScreen })))
+const AmenitiesScreen = lazy(() => import('./pages/PropertyScreens').then((m) => ({ default: m.AmenitiesScreen })))
+const BuildingsFloorsScreen = lazy(() => import('./pages/PropertyScreens').then((m) => ({ default: m.BuildingsFloorsScreen })))
+const RoomBlocksScreen = lazy(() => import('./pages/PropertyScreens').then((m) => ({ default: m.RoomBlocksScreen })))
+const RatePlansScreen = lazy(() => import('./pages/PropertyScreens').then((m) => ({ default: m.RatePlansScreen })))
+const RatesInventoryScreen = lazy(() => import('./pages/PropertyScreens').then((m) => ({ default: m.RatesInventoryScreen })))
+const PackagesPromotionsScreen = lazy(() => import('./pages/PropertyScreens').then((m) => ({ default: m.PackagesPromotionsScreen })))
+const CheckoutFolio = lazy(() => import('./pages/CheckoutFolio'))
+const GuestCheckIn = lazy(() => import('./pages/GuestCheckIn'))
+const RoomRack = lazy(() => import('./pages/RoomRack'))
+const CommercialAccounts = lazy(() => import('./pages/CommercialAccounts'))
+const GuestOrders = lazy(() => import('./pages/GuestOrders'))
+const ServiceMenu = lazy(() => import('./pages/ServiceMenu'))
+const BookingAttributes = lazy(() => import('./pages/BookingAttributes'))
+const Enquiries = lazy(() => import('./pages/Enquiries'))
+const ReservationDetail = lazy(() => import('./pages/ReservationDetail'))
+const Invoices = lazy(() => import('./pages/Invoices'))
+const InvoiceDetail = lazy(() => import('./pages/InvoiceDetail'))
+const InvoiceSettings = lazy(() => import('./pages/InvoiceSettings'))
+const GuestCheckOut = lazy(() => import('./pages/GuestCheckOut'))
+const RoomMove = lazy(() => import('./pages/RoomMove'))
+const ModifyReservation = lazy(() => import('./pages/ModifyReservation'))
+const EditReservation = lazy(() => import('./pages/EditReservation'))
+const NoShowProcessing = lazy(() => import('./pages/NoShowProcessing'))
+const NoShowList = lazy(() => import('./pages/NoShowProcessing').then((m) => ({ default: m.NoShowList })))
+const DepositSchedule = lazy(() => import('./pages/DepositSchedule'))
+const Housekeeping = lazy(() => import('./pages/Housekeeping'))
+const Cashiering = lazy(() => import('./pages/Cashiering'))
+const DayBook = lazy(() => import('./pages/DayBook'))
+const FormCRegister = lazy(() => import('./pages/FormCRegister'))
+const FolioAdjustment = lazy(() => import('./pages/FolioAdjustment'))
+const PaymentReversal = lazy(() => import('./pages/PaymentReversal'))
+const NightAudit = lazy(() => import('./pages/NightAudit'))
+const NightAuditHistory = lazy(() => import('./pages/NightAuditHistory'))
+const PropertySettings = lazy(() => import('./pages/PropertySettings'))
+const UserManagement = lazy(() => import('./pages/UserManagement'))
+const InviteUser = lazy(() => import('./pages/InviteUser'))
+const RolesMatrix = lazy(() => import('./pages/RolesMatrix'))
+const Approvals = lazy(() => import('./pages/Approvals'))
+const AuditLog = lazy(() => import('./pages/AuditLog'))
+const Billing = lazy(() => import('./pages/Billing'))
+const Login = lazy(() => import('./pages/Login'))
+const SetPassword = lazy(() => import('./pages/SetPassword'))
+const Placeholder = lazy(() => import('./pages/Placeholder'))
+const LedgerReportScreen = lazy(() => import('./pages/LedgerReport'))
+const ReportsCatalog = lazy(() => import('./pages/ReportsCatalog'))
+const BackOfficeReport = lazy(() => import('./pages/BackOfficeReport'))
+const WorkOrders = lazy(() => import('./pages/WorkOrders'))
+const ExpenseVouchers = lazy(() => import('./pages/ExpenseVouchers'))
+const UnitOwners = lazy(() => import('./pages/UnitOwners'))
+const OnboardingEntry = lazy(() => import('./pages/Onboarding').then((m) => ({ default: m.OnboardingEntry })))
+const OnboardingGate = lazy(() => import('./pages/Onboarding').then((m) => ({ default: m.OnboardingGate })))
+const OnboardingConnections = lazy(() => import('./pages/Onboarding').then((m) => ({ default: m.OnboardingConnections })))
+const OnboardingGoLive = lazy(() => import('./pages/Onboarding').then((m) => ({ default: m.OnboardingGoLive })))
+const OnboardingAccount = lazy(() => import('./pages/OnboardingSetup').then((m) => ({ default: m.OnboardingAccount })))
+const OnboardingProperty = lazy(() => import('./pages/OnboardingSetup').then((m) => ({ default: m.OnboardingProperty })))
+const OnboardingStructure = lazy(() => import('./pages/OnboardingEstate').then((m) => ({ default: m.OnboardingStructure })))
+const OnboardingRooms = lazy(() => import('./pages/OnboardingEstate').then((m) => ({ default: m.OnboardingRooms })))
+const OnboardingTeam = lazy(() => import('./pages/OnboardingTeam').then((m) => ({ default: m.OnboardingTeam })))
+const OnboardingImport = lazy(() => import('./pages/OnboardingImport').then((m) => ({ default: m.OnboardingImport })))
+const OnboardingRates = lazy(() => import('./pages/OnboardingMoney').then((m) => ({ default: m.OnboardingRates })))
+const OnboardingBilling = lazy(() => import('./pages/OnboardingMoney').then((m) => ({ default: m.OnboardingBilling })))
+const PlatformLogin = lazy(() => import('./platform/PlatformLogin'))
+const PlatformOverview = lazy(() => import('./platform/screens/Overview'))
+const PlatformOtaActions = lazy(() => import('./platform/screens/OtaActions'))
+const PlatformTenants = lazy(() => import('./platform/screens/Tenants'))
+const PlatformTenantDetail = lazy(() => import('./platform/screens/TenantDetail'))
+const PlatformProperties = lazy(() => import('./platform/screens/Properties'))
+const PlatformUsers = lazy(() => import('./platform/screens/Users'))
+const PlatformSearch = lazy(() => import('./platform/screens/Search'))
+const PlatformRoles = lazy(() => import('./platform/screens/Roles'))
+const PlatformProviders = lazy(() => import('./platform/screens/Providers'))
+const PlatformDomains = lazy(() => import('./platform/screens/Domains'))
+const PlatformMessaging = lazy(() => import('./platform/screens/Messaging'))
+const PlatformSupport = lazy(() => import('./platform/screens/Support'))
+const PlatformSupportTicket = lazy(() => import('./platform/screens/SupportTicket'))
+const PlatformRecovery = lazy(() => import('./platform/screens/Recovery'))
+const PlatformSettingsScreen = lazy(() => import('./platform/screens/PlatformSettings'))
+const PlatformAnalytics = lazy(() => import('./platform/screens/Analytics'))
+const PlatformChannels = lazy(() => import('./platform/screens/Channels'))
+const PlatformOperations = lazy(() => import('./platform/screens/Operations'))
+const PlatformPropertyOverview = lazy(() => import('./platform/screens/PropertyOverview'))
+const PlatformOnboarding = lazy(() => import('./platform/screens/Onboarding'))
+const PlatformSecurity = lazy(() => import('./platform/screens/Security'))
+const PlatformSubscriptions = lazy(() => import('./platform/screens/Subscriptions'))
+const PlatformPlans = lazy(() => import('./platform/screens/Plans'))
+const PlatformInvoices = lazy(() => import('./platform/screens/Invoices'))
+const PlatformBusinessDates = lazy(() => import('./platform/screens/Rest').then((m) => ({ default: m.BusinessDates })))
+const PlatformAudit = lazy(() => import('./platform/screens/Rest').then((m) => ({ default: m.Audit })))
+const PlatformPermissions = lazy(() => import('./platform/screens/Rest').then((m) => ({ default: m.Permissions })))
+const PlatformAdmins = lazy(() => import('./platform/screens/Rest').then((m) => ({ default: m.Admins })))
 
 export default function App() {
   return (
@@ -115,6 +130,7 @@ export default function App() {
       {/* One host for the whole application. Both tiers' screens call
           askReason/askText/notify, which render through it. */}
       <OverlayHost />
+    <Suspense fallback={<PageSpinner full />}>
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/set-password" element={<SetPassword />} />
@@ -301,6 +317,7 @@ export default function App() {
         <Route path="settings" element={<PropertySettings />} />
       </Route>
     </Routes>
+    </Suspense>
     </>
   )
 }

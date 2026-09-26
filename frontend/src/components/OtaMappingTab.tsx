@@ -8,6 +8,7 @@ import {
   getOtaMapping, setOtaLive, setOtaMapping,
   type OtaMapping, type OtaPair,
 } from '../api'
+import { errorText } from '../lib/forms'
 
 /**
  * Which of the OTA's own rooms and rates sells as which of our rate plans, and
@@ -69,9 +70,7 @@ export default function OtaMappingTab({ connectionId, partnerName, onLiveChange 
   }, [current])
 
   function problem(e: unknown, fallback: string) {
-    const er = e as { response?: { data?: { detail?: unknown } } }
-    const d = er.response?.data?.detail
-    setErr(typeof d === 'string' ? d : fallback)
+    setErr(errorText(e, fallback))
   }
 
   function collected(): OtaPair[] {
@@ -114,12 +113,10 @@ export default function OtaMappingTab({ connectionId, partnerName, onLiveChange 
     return <div className="grid place-items-center py-10"><Loader2 className="animate-spin text-slate-400" /></div>
   }
   if (q.isError || !current) {
-    const er = q.error as { response?: { data?: { detail?: unknown } } } | null
-    const d = er?.response?.data?.detail
     return (
       <p className="mt-4 flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2.5 text-sm text-slate-600">
         <Info size={15} className="mt-0.5 shrink-0" />
-        {typeof d === 'string' ? d : `The ${partnerName} channel could not be read just now.`}
+        {errorText(q.error, `The ${partnerName} channel could not be read just now.`)}
       </p>
     )
   }

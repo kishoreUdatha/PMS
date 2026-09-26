@@ -12,6 +12,7 @@ import {
   retireServiceItem, updateServiceCategory, updateServiceItem,
   type ServiceCategory, type ServiceItem,
 } from '../api'
+import { errorText } from '../lib/forms'
 
 /**
  * The priced list a property sells to guests in-house.
@@ -260,8 +261,7 @@ function ItemModal({ propertyId, categories, item, onClose, onSaved }: {
     },
     onSuccess: onSaved,
     onError: (e) => {
-      const er = e as { response?: { data?: { detail?: string } } }
-      setErr(er.response?.data?.detail ?? 'That did not save.')
+      setErr(errorText(e, 'That did not save.'))
     },
   })
 
@@ -337,8 +337,7 @@ function CategoryModal({ propertyId, categories, onClose }: {
     }),
     onSuccess: () => { setName(''); setErr(''); refresh() },
     onError: (e) => {
-      const er = e as { response?: { data?: { detail?: string } } }
-      setErr(er.response?.data?.detail ?? 'That did not save.')
+      setErr(errorText(e, 'That did not save.'))
     },
   })
 
@@ -346,8 +345,7 @@ function CategoryModal({ propertyId, categories, onClose }: {
     mutationFn: (id: string) => deleteServiceCategory(id, propertyId),
     onSuccess: () => { setErr(''); refresh() },
     onError: (e) => {
-      const er = e as { response?: { data?: { detail?: string } } }
-      setErr(er.response?.data?.detail ?? 'That could not be removed.')
+      setErr(errorText(e, 'That could not be removed.'))
     },
   })
 

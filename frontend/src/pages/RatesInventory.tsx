@@ -15,6 +15,7 @@ import {
   listManagedRoomTypes, listRatePlans,
   type RateCalendar, type CalendarCell, type BulkUpdateResult,
 } from '../api'
+import { errorText } from '../lib/forms'
 
 /**
  * Screen 034 — Rates, Restrictions and Inventory Calendar.
@@ -46,10 +47,7 @@ const money = (v: string | null) =>
   v === null ? '—' : Number(v).toLocaleString('en-IN', { maximumFractionDigits: 0 })
 
 function apiError(e: unknown): string {
-  const d = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
-  if (typeof d === 'string') return d
-  if (Array.isArray(d)) return 'Some values are invalid. Check the highlighted fields.'
-  return 'Could not apply the change. Please try again.'
+  return errorText(e, 'Could not apply the change. Please try again.')
 }
 
 /* --------------------------------------------------------------- rate cell --- */

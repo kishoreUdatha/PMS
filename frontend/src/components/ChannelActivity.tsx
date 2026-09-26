@@ -9,6 +9,7 @@ import {
   getChannelLink, getChannelSyncLog, getMappingEditor, listChannelBookingEvents,
   replayChannelBookingEvent, type ChannelSyncLogRow,
 } from '../api'
+import { errorText } from '../lib/forms'
 
 /**
  * What this property has actually sent to, and received from, the channel
@@ -315,8 +316,7 @@ function EventRow({ propertyId, e }: {
         : `Still ${r.status.replace('_', ' ')}.`)
       qc.invalidateQueries({ queryKey: ['channel-booking-events', propertyId] })
     },
-    onError: (err: { response?: { data?: { detail?: string } } }) =>
-      setMsg(err?.response?.data?.detail ?? 'Replay failed.'),
+    onError: (err: unknown) => setMsg(errorText(err, 'Replay failed.')),
   })
   const [label, tone] = OUTCOME[e.outcome] ?? [e.outcome, 'bg-slate-100 text-slate-600']
   return (

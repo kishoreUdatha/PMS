@@ -26,6 +26,8 @@ import {
   listRoomTypes, listCommercialAccounts,
   type GroupBlockRow, type GroupBlock,
 } from '../api'
+import { errorText } from '../lib/forms'
+import { clickableRow } from '../lib/a11y'
 
 const field = 'w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-brand'
 const lbl = 'mb-1 block text-xs font-medium text-slate-500'
@@ -212,7 +214,7 @@ function BlockRow({ b, onOpen }: { b: GroupBlockRow; onOpen: () => void }) {
   const held = Math.max(b.rooms_blocked - b.rooms_picked_up, 0)
   const days = daysToCutOff(b.cut_off_date)
   return (
-    <tr onClick={onOpen} className="cursor-pointer hover:bg-slate-50">
+    <tr {...clickableRow(onOpen)} className="cursor-pointer hover:bg-slate-50">
       <td className="px-4 py-3 font-semibold text-slate-700">{b.code}</td>
       <td className="px-4 py-3">
         <span className="font-medium text-slate-700">{b.name}</span>
@@ -301,8 +303,7 @@ function CreateBlock({ propertyId, onClose, onSaved }: {
       })
       onSaved()
     } catch (e) {
-      const ax = e as { response?: { data?: { detail?: string } } }
-      setErr(ax?.response?.data?.detail ?? 'The block could not be created.')
+      setErr(errorText(e, 'The block could not be created.'))
     } finally { setBusy(false) }
   }
 
@@ -472,12 +473,10 @@ function BlockDetail({ blockId, propertyId, onClose, onChanged }: {
       await q.refetch()
       onChanged()
     } catch (e) {
-      const ax = e as { response?: { data?: { detail?: string } } }
       // Going definite can legitimately fail: the nights may have sold
       // while the block was only provisional, and that refusal is the
       // honest answer rather than an overbooking.
-      setErr(ax?.response?.data?.detail
-        ?? 'The commitment could not be changed.')
+      setErr(errorText(e, 'The commitment could not be changed.'))
     } finally { setBusy(false) }
   }
 
@@ -489,8 +488,7 @@ function BlockDetail({ blockId, propertyId, onClose, onChanged }: {
       await q.refetch()
       onChanged()
     } catch (e) {
-      const ax = e as { response?: { data?: { detail?: string } } }
-      setErr(ax?.response?.data?.detail ?? 'The block could not be released.')
+      setErr(errorText(e, 'The block could not be released.'))
     } finally { setBusy(false) }
   }
 

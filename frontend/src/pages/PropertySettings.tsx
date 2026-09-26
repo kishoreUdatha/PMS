@@ -14,6 +14,7 @@ import {
 } from '../api'
 import { Crumbs } from '../components/Crumbs'
 import { useActivePropertyId } from '../hooks/useProperty'
+import { errorText } from '../lib/forms'
 
 
 export default function PropertySettings() {
@@ -73,7 +74,7 @@ export default function PropertySettings() {
       } else if (status === 403) {
         setMsg({ tone: 'error', text: 'You do not have permission to update property settings.' })
       } else {
-        setMsg({ tone: 'error', text: err.response?.data?.detail ?? 'Failed to save settings.' })
+        setMsg({ tone: 'error', text: errorText(err, 'Failed to save settings.') })
       }
     } finally {
       setSaving(false)

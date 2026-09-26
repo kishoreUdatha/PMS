@@ -10,6 +10,7 @@ import {
 } from '../api'
 import { Crumbs } from '../components/Crumbs'
 import { useActivePropertyId } from '../hooks/useProperty'
+import { errorText } from '../lib/forms'
 
 const EMPTY: S = {
   legal_name: null, tagline: null, address_line: null, city: null,
@@ -59,8 +60,7 @@ export default function InvoiceSettings() {
       await saveInvoiceSettings(propertyId, form)
       setOk('Saved. New invoices will carry these details.')
     } catch (e) {
-      const er = e as { response?: { data?: { detail?: string } }; message?: string }
-      setErr(er.response?.data?.detail ?? er.message ?? 'Could not save.')
+      setErr(errorText(e, 'Could not save.'))
     } finally { setBusy(false) }
   }
 
