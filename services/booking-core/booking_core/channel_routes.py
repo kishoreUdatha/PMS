@@ -38,19 +38,18 @@ from datetime import date, datetime
 from decimal import Decimal
 
 import httpx
-from chirala_common.db import bind_tenant_context, system_context
-from chirala_common.routing import TransactionalRoute
 from chirala_common.audit import record_audit
 from chirala_common.authz import Caller, assert_property_in_org, build_authz
+from chirala_common.db import bind_tenant_context, system_context
+from chirala_common.routing import TransactionalRoute
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, status
-from pydantic import BaseModel
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from .change_routes import CancelIn, ModifyIn, cancel_reservation, modify_reservation
 from .database import get_session
-from .change_routes import (CancelIn, ModifyIn, cancel_reservation,
-                            modify_reservation)
 from .flow import confirm_reservation
 from .inventory import HoldLine, InventoryShortage, create_hold
 from .settings import settings
@@ -634,7 +633,7 @@ def _date(v) -> date:
 def _money(v):
     try:
         return Decimal(str(v)) if v is not None else None
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
 
 

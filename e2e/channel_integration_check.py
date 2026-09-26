@@ -368,7 +368,6 @@ def main():
     s, b = api("POST", f"/booking/reservations/{d_res}/cancel?property_id={A['prop']}", A["token"],
                {"reason": "guest_request", "notes": "OTA cancelled by phone", "waive_penalty": True})
     after_c = sql(inv_q)
-    pre = sql(inv_q.replace("held_units || '/' || reserved_units", "0"))  # row exists
     booked = [int(x) for x in before_c.split("/")]
     freed = [int(x) for x in after_c.split("/")]
     check("Edge cases", "Desk cancelling an OTA booking puts the room back on sale",

@@ -18,8 +18,16 @@ import time
 from datetime import date, timedelta
 
 sys.path.insert(0, os.path.dirname(__file__))
-from channel_integration_check import (FAKE, SECRET, api, http, login,  # noqa: E402
-                                       revision, room, sql, webhook)
+from channel_integration_check import (
+    FAKE,
+    api,
+    http,
+    login,
+    revision,
+    room,
+    sql,
+    webhook,
+)
 
 results: list[dict] = []
 SYNC_WAIT = int(os.environ.get("SYNC_WAIT", "45"))
