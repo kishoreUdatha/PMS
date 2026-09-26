@@ -493,6 +493,12 @@ async def media(bucket: str, key: str, request: Request) -> Response:
     # the cache entry would. Worth saying so: a booking page is mostly
     # photographs, and re-fetching them on every step is the difference between
     # quick and sluggish on a phone.
+    #
+    # Not for a guest's ID scan. That link is deliberately short-lived, and a
+    # shared cache holding the image for an hour would outlive it -- serving
+    # a passport to whoever asks the cache for the same URL.
+    if key.startswith("guest-docs/"):
+        passthrough["Cache-Control"] = "private, no-store"
     passthrough.setdefault("Cache-Control", "public, max-age=3600")
 
     async def body():

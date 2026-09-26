@@ -84,6 +84,12 @@ class BaseServiceSettings(BaseSettings):
     minio_secure: bool = False
     # How long a presigned image URL stays valid.
     minio_url_ttl_seconds: int = 7 * 24 * 3600
+    #: How long a presigned URL for a guest's identity document lasts. Short,
+    #: unlike a room photo's: an ID scan is personal data, and its link ends
+    #: up in browser history, screenshots and support tickets. The check-in
+    #: screen asks for fresh links whenever it loads, so ten minutes is
+    #: enough to look at the scan and not much more.
+    guest_document_url_ttl_seconds: int = 10 * 60
 
     #: Keys that encrypt stored credentials, newest first, comma-separated.
     #:

@@ -33,6 +33,7 @@ in the database, and reads go out as presigned URLs that expire.
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 
@@ -77,8 +78,11 @@ _STORE = ObjectStoreConfig(
     secure=settings.minio_secure,
     url_ttl_seconds=settings.minio_url_ttl_seconds,
 )
+#: The same store, but links to ID scans expire in minutes rather than a week.
+_DOC_STORE = replace(_STORE,
+                     url_ttl_seconds=settings.guest_document_url_ttl_seconds)
 
-ID_TYPES = ("aadhaar", "passport", "driving_licence", "voter_id", "pan", "other")
+ID_TYPES =("aadhaar", "passport", "driving_licence", "voter_id", "pan", "other")
 ID_TYPE_LABELS = {
     "aadhaar": "Aadhaar Card", "passport": "Passport",
     "driving_licence": "Driving Licence", "voter_id": "Voter ID",
@@ -235,7 +239,7 @@ class CompleteOut(BaseModel):
 # --------------------------------------------------------------------------
 def _doc_url(key: str) -> str | None:
     try:
-        return presigned_url(_STORE, key)
+        return presigned_url(_DOC_STORE, key)
     except Exception:  # noqa: BLE001 — a broken store must not break the screen
         return None
 
@@ -873,6 +877,25 @@ def _post_deposit(db: Session, row, *, folio_id, amount: Decimal, method: str):
 # --------------------------------------------------------------------------
 # ID documents
 # --------------------------------------------------------------------------
+def _looks_like(content_type: str, head: bytes) -> bool:
+    """Whether the file's first bytes are what its declared type says.
+
+    The declared type is whatever the browser -- or anyone with curl --
+    chose to send. Stored and served back under that type, an HTML page
+    labelled ``image/png`` is a page on our origin; checking the signature is
+    what makes "we only accept images and PDFs" true.
+    """
+    if content_type == "image/jpeg":
+        return head.startswith(b"\xff\xd8\xff")
+    if content_type == "image/png":
+        return head.startswith(b"\x89PNG\r\n\x1a\n")
+    if content_type == "image/webp":
+        return head[:4] == b"RIFF" and head[8:12] == b"WEBP"
+    if content_type == "application/pdf":
+        return head.startswith(b"%PDF-")
+    return False
+
+
 async def _read_doc(file: UploadFile) -> tuple[bytes, str]:
     content_type = (file.content_type or "").lower()
     if content_type not in ALLOWED_DOC_TYPES:
@@ -880,13 +903,25 @@ async def _read_doc(file: UploadFile) -> tuple[bytes, str]:
             status_code=415,
             detail="Upload a JPEG, PNG, WebP or PDF.",
         )
-    data = await file.read()
+    too_big = HTTPException(
+        status_code=413,
+        detail=f"Keep the file under {MAX_DOC_BYTES // (1024 * 1024)}MB.",
+    )
+    # Refused on the declared size when there is one, and otherwise by
+    # reading at most one byte past the limit: ``read()`` with no bound
+    # would pull whatever was sent into memory before the size was known.
+    if file.size is not None and file.size > MAX_DOC_BYTES:
+        raise too_big
+    data = await file.read(MAX_DOC_BYTES + 1)
     if not data:
         raise HTTPException(status_code=422, detail="That file is empty.")
     if len(data) > MAX_DOC_BYTES:
+        raise too_big
+    if not _looks_like(content_type, data[:16]):
         raise HTTPException(
-            status_code=413,
-            detail=f"Keep the file under {MAX_DOC_BYTES // (1024 * 1024)}MB.",
+            status_code=415,
+            detail="That file is not the JPEG, PNG, WebP or PDF it says it "
+                   "is. Scan or photograph the document again.",
         )
     return data, content_type
 
