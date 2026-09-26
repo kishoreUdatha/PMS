@@ -501,7 +501,15 @@ def create_hold(
                  company_name, travel_agent, reference, special_requests,
                  business_source_id, bill_to, commercial_account_id,
                  group_block_id, cancellation_policy_id)
-            VALUES (:id, :org, :prop, :number, 'held', 'INR', :guest,
+            -- The property's own currency. This was the literal 'INR', and
+            -- the folio opens in the reservation's currency and every
+            -- posting inherits the folio's -- so one hard-coded string made
+            -- a dollar property's entire ledger claim to be rupees. The
+            -- fallback is only for a property row this session cannot see.
+            VALUES (:id, :org, :prop, :number, 'held',
+                    COALESCE((SELECT currency FROM iam.properties
+                               WHERE id = :prop), 'INR'),
+                    :guest,
                     :source, :segment, :purpose, :company, :agent, :ref,
                     :requests, :bizsrc, :billto, :acct, :block,
                     (SELECT id FROM property.cancellation_policies

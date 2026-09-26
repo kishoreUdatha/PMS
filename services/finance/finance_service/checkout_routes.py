@@ -42,7 +42,7 @@ class IntentIn(BaseModel):
     property_id: uuid.UUID
     reservation_id: uuid.UUID
     amount: Decimal = Field(gt=0)
-    currency: str = "INR"
+    currency: str | None = None
 
 
 class IntentOut(BaseModel):
@@ -67,7 +67,8 @@ def create_intent(
     assert_property_in_org(db, caller, body.property_id)
 
     res = db.execute(
-        text("SELECT number, status, organization_id FROM booking.reservations "
+        text("SELECT number, status, organization_id, currency "
+             "FROM booking.reservations "
              "WHERE id = :r AND property_id = :p"),
         {"r": body.reservation_id, "p": body.property_id},
     ).mappings().first()
@@ -90,6 +91,16 @@ def create_intent(
     # caller that nothing downstream re-checks -- and the thing it would decide
     # is which merchant account the guest's money lands in.
     organization_id = res["organization_id"]
+
+    # The guest pays in the currency the booking was sold in. A caller may
+    # say so, but may not say otherwise: an order for 4,000 of the wrong
+    # currency is a different amount of money.
+    if body.currency and res["currency"] and body.currency.upper() != res["currency"].upper():
+        raise HTTPException(
+            status_code=422,
+            detail=f"{res['number']} was booked in {res['currency']}; it "
+                   f"cannot be paid in {body.currency}.")
+    body.currency = res["currency"] or body.currency or "INR"
 
     # One intent per reservation. A guest who reloads the checkout should be
     # sent back to the same order, not given a second one to pay twice.

@@ -60,6 +60,13 @@ def create_folio(body: schemas.FolioCreate, caller: Caller = Depends(require_org
     # The organisation is the caller's own; the body no longer
     # carries one to disagree with.
     assert_property_in_org(db, caller, body.property_id)
+    # The property's currency unless told otherwise. A folio's currency is
+    # what every posting to it inherits, so defaulting it to rupees here
+    # would relabel a foreign property's whole bill.
+    currency = body.currency or db.execute(
+        text("SELECT currency FROM iam.properties WHERE id = :p"),
+        {"p": body.property_id},
+    ).scalar() or "INR"
     folio_id = uuid.uuid4()
     db.execute(
         text(
@@ -76,11 +83,11 @@ def create_folio(body: schemas.FolioCreate, caller: Caller = Depends(require_org
             "prop": body.property_id,
             "res": body.reservation_id,
             "type": body.type,
-            "cur": body.currency,
+            "cur": currency,
         },
     )
     return schemas.FolioOut(
-        id=folio_id, type=body.type, currency=body.currency, status="open"
+        id=folio_id, type=body.type, currency=currency, status="open"
     )
 
 

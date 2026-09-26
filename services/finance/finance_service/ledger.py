@@ -43,6 +43,63 @@ class LedgerError(Exception):
 
 
 # --------------------------------------------------------------------------
+# Currency
+# --------------------------------------------------------------------------
+def _resolve_currency(
+    session: Session, *, stated: str | None, folio_ids=(), payment_id=None,
+) -> str:
+    """The currency a posting is in: the one its folio (or payment) keeps.
+
+    Every posting function here used to default ``currency`` to ``"INR"``, and
+    the night audit -- the busiest writer of all -- never passed one. So a
+    property selling rooms in dollars had every room night written as rupees:
+    the number was right, the unit beside it was not, and every report that
+    groups by currency split one folio's money into two piles.
+
+    A folio is opened in its reservation's currency and a payment records the
+    currency it was captured in, so the currency is already known wherever
+    money lands. Taking it from there means a caller can no longer get it
+    wrong by omission. A caller that *states* one that disagrees is refused:
+    mixing units on one folio makes its balance meaningless, and there is no
+    conversion here to make it mean anything.
+    """
+    known: set[str] = set()
+    if folio_ids:
+        known |= {
+            r for r in session.execute(
+                text("SELECT DISTINCT currency FROM finance.folios "
+                     "WHERE id = ANY(:ids)"),
+                {"ids": list(folio_ids)},
+            ).scalars()
+            if r
+        }
+    if payment_id is not None:
+        cur = session.execute(
+            text("SELECT currency FROM finance.payments WHERE id = :id"),
+            {"id": payment_id},
+        ).scalar()
+        if cur:
+            known.add(cur)
+    if len(known) > 1:
+        raise LedgerError(
+            "These folios are kept in different currencies ("
+            + ", ".join(sorted(known))
+            + "); one posting cannot be split across them."
+        )
+    if stated and known and stated.upper() != next(iter(known)).upper():
+        raise LedgerError(
+            f"This folio is kept in {next(iter(known))}; an amount in "
+            f"{stated} cannot be posted to it."
+        )
+    if known:
+        return next(iter(known))
+    # Nothing to take it from (a folio id that does not exist fails on its
+    # foreign key a moment later anyway). The stated currency, or the
+    # historical default, rather than inventing a third answer.
+    return stated or "INR"
+
+
+# --------------------------------------------------------------------------
 # Balance
 # --------------------------------------------------------------------------
 def folio_balance(session: Session, folio_id: uuid.UUID) -> Decimal:
@@ -83,7 +140,7 @@ def post_charge(
     source_line_key: str,
     charge_code_id: uuid.UUID | None = None,
     source_id: str | None = None,
-    currency: str = "INR",
+    currency: str | None = None,
     tax_category: str | None = None,
     tax_units: int = 1,
     #: What a person typed at the desk. All optional, and all only meaningful
@@ -111,6 +168,7 @@ def post_charge(
     """
     if amount <= 0:
         raise LedgerError("Charge amount must be positive")
+    currency = _resolve_currency(session, stated=currency, folio_ids=[folio_id])
 
     existing = session.execute(
         text(
@@ -231,7 +289,7 @@ def post_payment(
     method: str,
     business_date: date,
     allocations: list[Allocation],
-    currency: str = "INR",
+    currency: str | None = None,
     provider: PaymentProvider | None = None,
     intent_id: uuid.UUID | None = None,
     settled_transaction_id: str | None = None,
@@ -295,6 +353,10 @@ def post_payment(
         method=method,
         direction="in",
     )
+
+    currency = _resolve_currency(
+        session, stated=currency,
+        folio_ids=sorted({a.folio_id for a in allocations}, key=str))
 
     total = sum((a.amount for a in allocations), Decimal("0"))
     if settled_transaction_id:
@@ -421,7 +483,7 @@ def allocate_payment(
     folio_id: uuid.UUID,
     amount: Decimal,
     business_date: date,
-    currency: str = "INR",
+    currency: str | None = None,
 ) -> uuid.UUID:
     """Add an allocation to an already-captured payment.
 
@@ -443,6 +505,8 @@ def allocate_payment(
     ).first()
     if pay is None:
         raise LedgerError("Payment not found or not settled")
+    currency = _resolve_currency(
+        session, stated=currency, folio_ids=[folio_id], payment_id=payment_id)
 
     already = session.execute(
         text(
@@ -594,7 +658,7 @@ def post_refund(
     amount: Decimal,
     business_date: date,
     reason: str | None = None,
-    currency: str = "INR",
+    currency: str | None = None,
     provider: PaymentProvider | None = None,
     #: The drawer the money physically came out of, and how it left. Only
     #: cash touches a till -- a card refund goes back down the rails it came
@@ -643,6 +707,9 @@ def post_refund(
     # subtraction it exists to make has never once fired. A cashier who
     # refunded cash mid-shift showed a shortage they did not cause.
     method = method or pay.method
+    # Refunded in the currency it was paid in -- the payment row says which.
+    currency = _resolve_currency(session, stated=currency,
+                                 payment_id=payment_id)
 
     _assert_drawer_can_take_cash(
         session,
