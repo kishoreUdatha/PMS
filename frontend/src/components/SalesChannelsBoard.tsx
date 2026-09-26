@@ -201,14 +201,14 @@ export default function SalesChannelsBoard({ propertyId, propertyCode, onOpenSet
 
   const sync = useMutation({
     mutationFn: () => pushChannelLink(link!.id),
-    onSuccess: () => {
-      setNote('Rates and availability pushed.')
-      setTimeout(() => setNote(''), 4000)
+    onSuccess: (r) => {
+      setNote(r.detail || 'Full sync sent.')
+      setTimeout(() => setNote(''), 6000)
       qc.invalidateQueries({ queryKey: ['channel-link', propertyId] })
       qc.invalidateQueries({ queryKey: ['ota-status', propertyId] })
     },
     onError: (e: { response?: { data?: { detail?: string } } }) =>
-      setNote(e?.response?.data?.detail ?? 'The push failed.'),
+      setNote(e?.response?.data?.detail ?? 'The full sync failed.'),
   })
 
   const toggleEngine = useMutation({
@@ -387,8 +387,14 @@ export default function SalesChannelsBoard({ propertyId, propertyCode, onOpenSet
               {sync.isPending
                 ? <Loader2 size={16} className="animate-spin" />
                 : <RefreshCw size={16} />}
-              {link ? 'Sync now' : 'Not connected'}
+              {link ? 'Full sync (500 days)' : 'Not connected'}
             </button>
+            {link && (
+              <p className="mt-2 text-center text-xs text-slate-400">
+                Changes go out on their own within seconds. Use this at go-live
+                or to recover after an outage.
+              </p>
+            )}
           </section>
 
           <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">

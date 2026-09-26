@@ -6810,6 +6810,65 @@ export async function getMappingEditor(
 }
 
 /** Send this property's rates and availability to the channel manager now. */
+/** One request sent to the channel manager, with the task ids it returned. */
+export interface ChannelSyncLogRow {
+  id: string
+  created_at: string
+  endpoint: string
+  trigger: 'change' | 'full_sync' | 'manual'
+  outcome: 'sent' | 'failed' | 'throttled'
+  status_code: number | null
+  value_count: number
+  date_from: string | null
+  date_to: string | null
+  task_ids: string[]
+  summary: string | null
+  error: string | null
+  request_excerpt: string | null
+}
+
+export async function getChannelSyncLog(
+  linkId: string, limit = 50,
+): Promise<ChannelSyncLogRow[]> {
+  const { data } = await api.get<ChannelSyncLogRow[]>(
+    `/booking/channel-links/${linkId}/sync-log`, { params: { limit } })
+  return data
+}
+
+/** One booking revision the channel manager delivered. */
+export interface ChannelBookingEvent {
+  revision_id: string
+  event_type: string | null
+  outcome: string
+  status: string | null
+  ota_name: string | null
+  ota_reservation_code: string | null
+  reservation_id: string | null
+  reservation_number: string | null
+  detail: string | null
+  acknowledged: boolean
+  created_at: string
+  updated_at: string | null
+  can_replay: boolean
+}
+
+export async function listChannelBookingEvents(
+  propertyId: string, limit = 50,
+): Promise<ChannelBookingEvent[]> {
+  const { data } = await api.get<ChannelBookingEvent[]>(
+    '/booking/channels/events', { params: { property_id: propertyId, limit } })
+  return data
+}
+
+export async function replayChannelBookingEvent(
+  revisionId: string, propertyId: string,
+): Promise<{ status: string; reservation_number?: string }> {
+  const { data } = await api.post<{ status: string; reservation_number?: string }>(
+    `/booking/channels/events/${encodeURIComponent(revisionId)}/replay`, null,
+    { params: { property_id: propertyId } })
+  return data
+}
+
 export async function pushChannelLink(
   linkId: string,
 ): Promise<{ status: string; detail: string }> {
