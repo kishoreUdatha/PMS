@@ -154,34 +154,33 @@ async def hold_reaper_loop() -> None:
 
 
 async def channel_push_loop() -> None:
-    """Push rates and availability to every connected channel, forever.
+    """Keep every connected channel in step with this PMS, forever.
 
-    On a timer rather than on every change. Channex asks for batching — their
-    guide suggests thirty to sixty seconds per property — because a hotel
-    editing a week of rates produces a burst of changes that should reach the
-    channel as one push, not fifty.
+    Each pass sends only what changed since the channel manager last accepted
+    it (see ``channel_sync``), so the interval is a batching window, not a
+    resend schedule: a quiet property costs no requests.
 
-    The first sweep is delayed. Everything a push reads has to be there to read,
-    and a container that starts pushing before migrations finish sends a year
-    of zero availability to every OTA the hotel sells on.
+    The work runs in a thread. It is blocking database and HTTP work, and
+    done on the event loop it stalled every request this service answers --
+    booking webhooks included -- for as long as the channel manager took.
+
+    The first sweep is delayed. Everything a sync reads has to be there to
+    read, and a container that syncs before migrations finish sends zero
+    availability to every OTA the hotel sells on.
     """
-    from . import channel_push
+    from . import channel_sync
 
-    log.info("channel ARI push started (every %ds, %d day window)",
-             settings.channel_push_seconds, channel_push.WINDOW_DAYS)
+    log.info("channel ARI sync started (every %ds, %d day window)",
+             settings.channel_push_seconds, settings.channel_sync_days)
     await asyncio.sleep(30)
     while True:
         try:
-            with SessionFactory() as session:
-                try:
-                    results = channel_push.push_all(session)
-                    session.commit()
-                except Exception:
-                    session.rollback()
-                    raise
-            bad = [r for r in results if r["status"] != "ok"]
+            results = await asyncio.to_thread(channel_sync.sync_all,
+                                              SessionFactory)
+            bad = [r for r in results
+                   if r["status"] not in ("ok", "deferred")]
             if bad:
-                log.warning("channel push: %d of %d connections not fully "
+                log.warning("channel sync: %d of %d properties not fully "
                             "sent", len(bad), len(results))
         except asyncio.CancelledError:
             raise
@@ -189,7 +188,7 @@ async def channel_push_loop() -> None:
             # Never let one failure end the loop. A channel that cannot be
             # reached this minute is reachable next minute, and a dead loop is
             # a hotel silently out of sync until somebody restarts it.
-            log.exception("channel push sweep failed")
+            log.exception("channel sync sweep failed")
         await asyncio.sleep(settings.channel_push_seconds)
 
 

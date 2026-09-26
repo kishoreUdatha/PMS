@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from chirala_common.audit import record_audit
@@ -1814,10 +1814,59 @@ def push_link(
         require_org_permission("distribution", "configure")),
     db: Session = Depends(get_session),
 ):
-    """Send this property's rates and availability to the channel manager now."""
+    """Full sync: send every rate, availability and stay rule, now.
+
+    500 days for every mapped room and rate plan, whatever was sent before --
+    for go-live, and for recovering from anything that may have left the
+    channel manager out of step. Day-to-day changes need no button: they go
+    out on their own within a sync interval.
+    """
     _link_or_404(db, caller, link_id)
-    from .channel_push import push
-    return PushResult(**push(db, link_id))
+    from .channel_sync import sync
+    res = sync(db, link_id, full=True)
+    record_audit(
+        db, action="channel_link.full_sync", entity_type="channel_manager_link",
+        entity_id=str(link_id), organization_id=caller.organization_id,
+        actor_subject=caller.subject, after={"status": res["status"]},
+    )
+    return PushResult(status=res["status"], detail=res["detail"])
+
+
+class SyncLogRow(BaseModel):
+    id: uuid.UUID
+    created_at: datetime
+    endpoint: str
+    trigger: str
+    outcome: str
+    status_code: int | None = None
+    value_count: int
+    date_from: date | None = None
+    date_to: date | None = None
+    task_ids: list[str] = []
+    summary: str | None = None
+    error: str | None = None
+    request_excerpt: str | None = None
+
+
+@attribute_router.get("/channel-links/{link_id}/sync-log",
+                      response_model=list[SyncLogRow])
+def sync_log(
+    link_id: uuid.UUID,
+    limit: int = Query(50, ge=1, le=500),
+    caller: Caller = Depends(require_org_permission("distribution", "view")),
+    db: Session = Depends(get_session),
+):
+    """Every request sent to the channel manager for this property, newest
+    first, with the task ids it returned -- the receipt for each update."""
+    _link_or_404(db, caller, link_id)
+    rows = db.execute(
+        text("SELECT id, created_at, endpoint, trigger, outcome, status_code, "
+             "value_count, date_from, date_to, task_ids, summary, error, "
+             "request_excerpt FROM distribution.channel_sync_log "
+             "WHERE link_id = :l ORDER BY created_at DESC LIMIT :n"),
+        {"l": link_id, "n": limit},
+    ).mappings().all()
+    return [SyncLogRow(**r) for r in rows]
 
 
 class ProvisionResult(BaseModel):

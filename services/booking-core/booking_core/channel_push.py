@@ -45,7 +45,7 @@ log = logging.getLogger("uvicorn.error").getChild("channel-push")
 
 #: How far ahead to publish. An OTA sells a year out; a shorter window means a
 #: guest searching next summer finds nothing and books elsewhere.
-WINDOW_DAYS = 365
+WINDOW_DAYS = 500
 
 #: Channex asks for batches rather than a request per date, and a year of
 #: dates across several room types is more than one request should carry.
@@ -419,6 +419,27 @@ def restriction_values(db: Session, conn, start: date,
             for flag in ("closed_to_arrival", "closed_to_departure",
                          "stop_sell"):
                 cur[flag] = cur[flag] or bool(r[flag])
+
+        # Then the grid. A minimum stay or stop-sell typed into Rates &
+        # Inventory for one night is the most specific instruction there is,
+        # and it was never sent at all: the grid saved it, the desk honoured
+        # it, and the OTA kept selling one-night stays into it.
+        cells = db.execute(
+            text("SELECT stay_date, min_stay, stop_sell "
+                 "FROM property.rate_calendar_days "
+                 "WHERE room_type_id = CAST(:rt AS uuid) "
+                 "AND stay_date BETWEEN :s AND :e "
+                 "AND (min_stay IS NOT NULL OR stop_sell)"),
+            {"rt": p["room_type_id"], "s": start, "e": end},
+        ).mappings().all()
+        for c in cells:
+            cur = by_day.get(_as_date(c["stay_date"]))
+            if cur is None:
+                continue
+            if c["min_stay"] is not None:
+                cur["min_stay_arrival"] = int(c["min_stay"])
+                cur["min_stay_through"] = int(c["min_stay"])
+            cur["stop_sell"] = cur["stop_sell"] or bool(c["stop_sell"])
 
         ordered = [by_day[d] for d in sorted(by_day)]
         values.extend(_collapse_many(

@@ -85,10 +85,17 @@ class BookingSettings(BaseServiceSettings):
     #: nothing, and the sweep writes inventory that channels then re-push.
     block_cutoff_sweep_enabled: bool = True
     block_cutoff_sweep_seconds: int = 3600
-    #: How often. Channex asks for batching rather than a call per change —
-    #: their guide suggests thirty to sixty seconds per property — because a
-    #: hotel editing a week of rates should reach the channel as one push.
-    channel_push_seconds: int = 60
+    #: How often the sync looks for changes. Each pass sends only what differs
+    #: from what the channel manager last accepted, so a quiet property costs
+    #: no requests at all; the interval is the batching window, so a hotel
+    #: editing a week of rates reaches the channel as one update, not fifty.
+    channel_push_seconds: int = 20
+    #: How far ahead a full sync publishes, and how far ahead changes are
+    #: watched. Channex's certification asks for 500 days.
+    channel_sync_days: int = 500
+    #: Channex allows ten availability and ten rate/restriction requests a
+    #: minute per property and answers 429 above that.
+    channex_requests_per_minute: int = 10
 
     #: Whether this process keeps every property in step with the channel
     #: manager by itself. On by default: provisioning on go-live and a button

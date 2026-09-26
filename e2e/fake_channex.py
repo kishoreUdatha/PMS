@@ -17,6 +17,7 @@ Control endpoints (not part of Channex) under /_fake:
 """
 from __future__ import annotations
 
+import time
 import uuid
 from collections import defaultdict
 
@@ -27,7 +28,8 @@ app = FastAPI()
 API = "/api/v1"
 store: dict[str, dict[str, dict]] = defaultdict(dict)
 calls: list[dict] = []
-control = {"fail_fetch": 0}
+control = {"fail_fetch": 0, "limit": 10}
+hits: dict[tuple, list[float]] = defaultdict(list)
 KEY = "fake-key"
 
 
@@ -87,9 +89,23 @@ async def test_connection(request: Request):
     return {"data": {"status": "ok"}}
 
 
+def _limited(endpoint: str, values: list) -> bool:
+    """Channex: 10 requests a minute per property per endpoint, then 429."""
+    prop = (values[0] if values else {}).get("property_id", "")
+    now = time.time()
+    recent = [t for t in hits[(prop, endpoint)] if now - t < 60]
+    hits[(prop, endpoint)] = recent
+    if len(recent) >= control["limit"]:
+        return True
+    recent.append(now)
+    return False
+
+
 @app.post(f"{API}/availability")
 async def availability(request: Request):
     values = (await request.json()).get("values") or []
+    if _limited("availability", values):
+        return JSONResponse({"errors": {"code": "too_many_requests"}}, 429)
     store["pushes"].setdefault("availability", {"values": []})["values"] += values
     return {"data": [{"id": str(uuid.uuid4()), "type": "task"}], "meta": {"message": "Success"}}
 
@@ -97,6 +113,8 @@ async def availability(request: Request):
 @app.post(f"{API}/restrictions")
 async def restrictions(request: Request):
     values = (await request.json()).get("values") or []
+    if _limited("restrictions", values):
+        return JSONResponse({"errors": {"code": "too_many_requests"}}, 429)
     store["pushes"].setdefault("restrictions", {"values": []})["values"] += values
     return {"data": [{"id": str(uuid.uuid4()), "type": "task"}], "meta": {"message": "Success"}}
 
@@ -135,6 +153,13 @@ async def fail_fetch(request: Request):
     return control
 
 
+@app.post("/_fake/limit")
+async def set_limit(request: Request):
+    control["limit"] = int((await request.json()).get("limit", 10))
+    hits.clear()
+    return control
+
+
 @app.get("/_fake/calls")
 async def get_calls():
     return calls
@@ -147,5 +172,6 @@ async def state():
 
 @app.post("/_fake/reset")
 async def reset():
-    store.clear(); calls.clear(); control["fail_fetch"] = 0
+    store.clear(); calls.clear(); hits.clear()
+    control.update(fail_fetch=0, limit=10)
     return {"ok": True}
