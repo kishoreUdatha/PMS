@@ -1,12 +1,13 @@
-.PHONY: help infra up down migrate migrate-iam migrate-booking lint test test-guards test-platform check-platform-ops test-money test-flows fmt frontend
+.PHONY: help infra up down migrate migrate-iam migrate-finance migrate-booking lint test test-guards test-platform check-platform-ops test-money test-flows fmt frontend
 
 help:
 	@echo "Targets:"
 	@echo "  infra           Start infrastructure only (postgres, redis, nats, minio, keycloak)"
 	@echo "  up              Build and start all services"
 	@echo "  down            Stop everything"
-	@echo "  migrate         Run all service migrations"
+	@echo "  migrate         Run all service migrations (iam -> finance -> booking-core)"
 	@echo "  migrate-iam     Run IAM migrations"
+	@echo "  migrate-finance Run finance migrations"
 	@echo "  migrate-booking Run booking-core migrations"
 	@echo "  lint            Ruff + mypy across services and libs"
 	@echo "  test            Run pytest across services and the repo-wide tests"
@@ -37,10 +38,21 @@ up:
 down:
 	docker compose down
 
-migrate: migrate-iam migrate-booking
+# In this order and as one recipe, not as prerequisites: finance's migrations
+# reference iam's tables and booking-core's reference finance.folios, and
+# `make -j` would run prerequisites side by side. This target used to skip
+# finance altogether, so booking-core failed at 0023 on a fresh database.
+# The compose `migrate` service (infra/migrate/migrate.sh) runs the same order.
+migrate:
+	cd services/iam && uv run alembic upgrade head
+	cd services/finance && uv run alembic upgrade head
+	cd services/booking-core && uv run alembic upgrade head
 
 migrate-iam:
 	cd services/iam && uv run alembic upgrade head
+
+migrate-finance:
+	cd services/finance && uv run alembic upgrade head
 
 migrate-booking:
 	cd services/booking-core && uv run alembic upgrade head
