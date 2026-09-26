@@ -51,7 +51,9 @@ export default function PlatformOtaActions() {
       .finally(() => { if (live) setBusy(false) })
     load()
     // The clock is the subject of this screen; a stale one is worse than none.
-    const t = setInterval(load, 60_000)
+    // Not while the tab is hidden: nobody is reading it, and a console left
+    // open overnight should not poll all night.
+    const t = setInterval(() => { if (!document.hidden) load() }, 60_000)
     return () => { live = false; clearInterval(t) }
   }, [])
 

@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { announceSessionExpired } from './auth/sessionEvents'
+import { markAllStale } from './lib/queryClient'
 
 // All requests go through the gateway (/api/{service}/...).
 // In dev, Vite proxies /api -> http://localhost:8000 (see vite.config.ts).
@@ -79,7 +80,11 @@ function isExpiredSession(error: unknown): boolean {
 }
 
 api.interceptors.response.use(
-  (r) => r,
+  (r) => {
+    const method = (r.config?.method ?? 'get').toLowerCase()
+    if (method !== 'get' && method !== 'head' && method !== 'options') markAllStale()
+    return r
+  },
   (error) => {
     if (isExpiredSession(error)) announceSessionExpired()
     const data = error?.response?.data

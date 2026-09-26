@@ -60,6 +60,7 @@ export default function Sidebar() {
     queryFn: () => getReservationCounts(propertyId),
     enabled: propertyId !== '',
     refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
   })
   const arrivals = counts?.arrivals ?? 0
 
@@ -71,6 +72,7 @@ export default function Sidebar() {
     queryFn: () => listOtaActions(propertyId, 'open'),
     enabled: propertyId !== '',
     refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
   })
   const otaOpen = ota?.open_count ?? 0
   const otaOverdue = ota?.overdue_count ?? 0

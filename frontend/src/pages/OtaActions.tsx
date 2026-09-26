@@ -70,6 +70,7 @@ export default function OtaActions() {
     // The clock is the point of this screen, so it must not go stale while
     // somebody is looking at it.
     refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
   })
 
   if (propertyId === '') {
