@@ -45,14 +45,16 @@ Channex asks for a property named **"Test Property - (Provider Name)"**, in
    - **Double Room**: occupancy 2, base rate **100**, with **5 rooms**.
 
    10 and 5 leave room for the availability tests (block rooms to reach each value).
-3. **Rates → Rate Plans.** Create four plans, each tied to exactly one room type:
+3. **Rates → Rate Plans.** Create four plans, each tied to exactly one room
+   type, **named exactly as Channex lists them**. The same name is allowed on
+   both rooms; only the code must differ.
 
-   | Plan | Room type | Price |
-   |---|---|---|
-   | Twin BAR | Twin Room | no adjustment (100) |
-   | Twin B&B | Twin Room | +20 fixed (120) |
-   | Double BAR | Double Room | no adjustment (100) |
-   | Double B&B | Double Room | +20 fixed (120) |
+   | Name | Code (any) | Room type | Price |
+   |---|---|---|---|
+   | Best Available Rate | TW-BAR | Twin Room | no adjustment (100) |
+   | Bed & Breakfast Rate | TW-BB | Twin Room | +20 fixed amount (120) |
+   | Best Available Rate | DB-BAR | Double Room | no adjustment (100) |
+   | Bed & Breakfast Rate | DB-BB | Double Room | +20 fixed amount (120) |
 
 4. **Distribution → Channel Partners → Add partner.** Add Booking.com (a test
    hotel id from Channex) or Airbnb; these are the only live channels on staging.
@@ -60,6 +62,33 @@ Channex asks for a property named **"Test Property - (Provider Name)"**, in
    Channex, then runs the first full sync.
 5. **Distribution → Sales Channels.** Check that *Property registered*, *Room
    mapping* and *Rates and availability* are green.
+
+### "Use our API to fetch IDs … set up mapping"
+
+The PMS does this itself when it provisions:
+
+- It reads Channex's Properties, Room Types and Rate Plans lists
+  (`GET /properties`, `/room_types?filter[property_id]=…`,
+  `/rate_plans?filter[property_id]=…`).
+- It adopts what already exists and creates only what is missing.
+- It stores each Channex id against the PMS entity: one channel room per PMS
+  room type, and one channel rate plan per PMS rate plan.
+- Rate plans are matched by **room and name**, so the two "Best Available Rate"
+  plans map to the Twin's and the Double's plans respectively.
+
+**Where to see the ids:**
+
+- **Property id:** Channel Partners → edit partner, under the channel manager
+  property.
+- **Room and rate mapping:** the same page's mapping section. Dropdowns list
+  Channex's room types and rate plans, fetched from its API. Use it to check
+  or change any pair.
+- **Every id Channex is sent:** Sales Channels → Sync log. Expand a row to see
+  `property_id`, `room_type_id` and `rate_plan_id` on each value.
+
+If the test property was created in Channex by hand first, give it the same
+names. Running provisioning (the **Full sync** button, or re-saving the
+partner) then adopts it instead of creating a second one.
 
 Environment (booking-core): `CHANNEX_API_URL=https://staging.channex.io/api/v1`,
 `CHANNEX_API_KEY`, `CHANNEX_WEBHOOK_SECRET` (a long random string), and

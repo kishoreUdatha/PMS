@@ -427,6 +427,20 @@ export default function RatesInventory({ propertyId }: { propertyId: string }) {
     queryFn: () => listManagedRoomTypes(propertyId), enabled: propertyId !== '',
   })
 
+  // Plans named alike -- "Best Available Rate" on every room, as channel
+  // managers set them up -- are told apart by their room.
+  const plans = useMemo(() => {
+    const items = plansQ.data?.items ?? []
+    const typeName = Object.fromEntries((typesQ.data ?? []).map((t) => [t.id, t.name]))
+    const seen: Record<string, number> = {}
+    for (const p of items) seen[p.name] = (seen[p.name] ?? 0) + 1
+    return items.map((p) => ({
+      id: p.id,
+      name: seen[p.name] > 1 && p.room_type_ids.length === 1 && typeName[p.room_type_ids[0]]
+        ? `${p.name} — ${typeName[p.room_type_ids[0]]}` : p.name,
+    }))
+  }, [plansQ.data, typesQ.data])
+
   const cal: RateCalendar | undefined = calQ.data
   // With a plan selected the plan's own grid takes over, so the room type
   // tools (bulk update, copy) do not apply.
@@ -501,7 +515,7 @@ export default function RatesInventory({ propertyId }: { propertyId: string }) {
           title="Edit a rate plan's own prices and restrictions"
           className={FILTER_SELECT}>
           <option value="">Room type rate</option>
-          {(plansQ.data?.items ?? []).map((p) => (
+          {plans.map((p) => (
             <option key={p.id} value={p.id}>{p.name}</option>
           ))}
         </Select>
@@ -577,7 +591,7 @@ export default function RatesInventory({ propertyId }: { propertyId: string }) {
 
       {ratePlanId ? (
         <RatePlanGrid propertyId={propertyId} ratePlanId={ratePlanId} from={from} to={to}
-          plans={(plansQ.data?.items ?? []).map((p) => ({ id: p.id, name: p.name }))} />
+          plans={plans} />
       ) : (
       <div className={`grid gap-4 ${selected.length ? 'xl:grid-cols-[minmax(0,1fr)_360px]' : ''}`}>
         <div className="min-w-0 overflow-x-auto rounded-xl border border-slate-200 bg-white">

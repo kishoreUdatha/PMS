@@ -581,16 +581,23 @@ def _sync_rates(db: Session, cx: Channex, link_id, property_id, external,
         {"p": property_id},
     ).mappings().all()
 
-    # What the channel manager already has, by title. Normalised, because a
-    # title that came back with different spacing is still the same plan.
+    # What the channel manager already has, by room and title. Normalised,
+    # because a title that came back with different spacing is still the
+    # same plan. By room too, because titles repeat across rooms: Channex's
+    # own certification property has a "Best Available Rate" on the Twin
+    # *and* on the Double, and keyed on title alone the Double's plan was
+    # paired with the Twin's -- then refused as a clash, never mapped.
     code, out = cx.get(f"/rate_plans?filter%5Bproperty_id%5D={external}")
-    theirs: dict[str, str] = {}
+    theirs: dict[tuple[str, str], str] = {}
     if code < 400:
         for r in out.get("data") or []:
             a = r["attributes"]
             key = re.sub(r"[^a-z0-9]+", "", (a.get("title") or "").lower())
+            room_of = a.get("room_type_id") or (
+                ((r.get("relationships") or {}).get("room_type") or {})
+                .get("data") or {}).get("id")
             if key:
-                theirs.setdefault(key, a["id"])
+                theirs.setdefault((str(room_of), key), a["id"])
 
     priced: set[str] = set()
 
@@ -613,7 +620,8 @@ def _sync_rates(db: Session, cx: Channex, link_id, property_id, external,
             continue
 
         title = plan["name"]
-        key = re.sub(r"[^a-z0-9]+", "", title.lower())
+        key = (str(room["external_id"]),
+               re.sub(r"[^a-z0-9]+", "", title.lower()))
         theirs_id = theirs.get(key)
 
         if not theirs_id:

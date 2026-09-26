@@ -34,6 +34,13 @@ KEY = "fake-key"
 
 
 def _obj(kind: str, attrs: dict) -> dict:
+    # As Channex answers: a rate plan's room type is a relationship, not an
+    # attribute.
+    if kind == "rate_plan" and "room_type_id" in attrs:
+        attrs = dict(attrs)
+        rt = attrs.pop("room_type_id")
+        return {"id": attrs["id"], "type": kind, "attributes": attrs,
+                "relationships": {"room_type": {"data": {"type": "room_type", "id": rt}}}}
     return {"id": attrs["id"], "type": kind, "attributes": attrs}
 
 
