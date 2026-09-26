@@ -37,6 +37,7 @@ from sqlalchemy.orm import Session
 from chirala_common import no_show, ota_actions
 
 from .database import get_session
+from .folio_money import primary_folio
 from .inventory import counter_for
 from .settings import settings
 
@@ -258,26 +259,15 @@ def _financials(db: Session, row, rooms: int):
         d = date.fromordinal(d.toordinal() + 1)
     charges *= rooms
     taxes, tax_label = _room_tax(db, row["property_id"], charges, nights * rooms)
-    folio = db.execute(
-        text(
-            """
-            SELECT f.id,
-                   COALESCE(SUM(e.amount) FILTER (WHERE e.entry_type='credit'), 0)
-                     AS paid
-            FROM finance.folios f
-            LEFT JOIN finance.folio_entries e ON e.folio_id = f.id
-            WHERE f.reservation_id = :r GROUP BY f.id LIMIT 1
-            """
-        ),
-        {"r": row["reservation_id"]},
-    ).mappings().first()
-    paid = Decimal(folio["paid"]) if folio else Decimal("0")
+    # The same folio, and the same net-of-refunds figure, as a cancellation
+    # uses; see folio_money.primary_folio.
+    folio_id, paid = primary_folio(db, row["reservation_id"])
     return {
         "nightly": _rate(db, row["property_id"], row["room_type_id"],
                          row["arrival_date"]),
         "charges": charges, "taxes": taxes, "tax_label": tax_label,
         "total": charges + taxes, "paid": paid,
-        "folio_id": folio["id"] if folio else None,
+        "folio_id": folio_id,
     }
 
 

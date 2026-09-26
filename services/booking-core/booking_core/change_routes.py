@@ -45,6 +45,7 @@ from chirala_common.folio_posting import post_charge, resolve_currency
 from chirala_common.property_time import local_today, trading_day
 
 from .database import get_session
+from .folio_money import primary_folio
 from .inventory import (
     InventoryOversold,
     counter_for,
@@ -339,21 +340,8 @@ def _policy(db: Session, property_id: uuid.UUID, *, required: bool = True):
 
 
 def _paid(db: Session, reservation_id: uuid.UUID):
-    row = db.execute(
-        text(
-            """
-            SELECT f.id AS folio_id,
-                   COALESCE(SUM(e.amount) FILTER (WHERE e.entry_type='credit'), 0)
-                     AS paid
-            FROM finance.folios f
-            LEFT JOIN finance.folio_entries e ON e.folio_id = f.id
-            WHERE f.reservation_id = :r
-            GROUP BY f.id LIMIT 1
-            """
-        ),
-        {"r": reservation_id},
-    ).mappings().first()
-    return (row["folio_id"], Decimal(row["paid"])) if row else (None, Decimal("0"))
+    """The booking's primary folio and what is net paid on it."""
+    return primary_folio(db, reservation_id)
 
 
 def _may_approve(db: Session, caller: Caller, property_id: uuid.UUID) -> bool:
@@ -569,10 +557,19 @@ def _cancel_terms(db: Session, reservation_id: uuid.UUID,
     within = days_before < pol["free_until_days"]
     penalty = Decimal("0")
     if within:
-        # One night per room, at the arrival night's rate — the policy's words
-        # turned into arithmetic, nothing more.
-        penalty = (current.nightly_rate * pol["penalty_nights"]
-                   * max(current.rooms, 1))
+        # The policy's nights, per room, at the rate each room was SOLD at.
+        # This used the rate calendar's arrival-night price for every room,
+        # so a guest who booked on a discount was fined at rack rate, and a
+        # booking of a suite and a standard room was fined as two of the
+        # first. The calendar is the fallback only for a room with no
+        # recorded rate.
+        per_night = sum(
+            (Decimal(u["nightly_rate"]) if u["nightly_rate"] is not None
+             else _rate(db, property_id, u["room_type_id"],
+                        u["arrival_date"])
+             for u in units),
+            Decimal("0"))
+        penalty = per_night * pol["penalty_nights"]
     refund = max(paid - penalty, Decimal("0"))
     return CancelQuote(
         original=current, days_before_arrival=days_before,

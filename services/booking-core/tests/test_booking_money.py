@@ -967,3 +967,91 @@ def test_a_block_is_released_on_its_cut_off_in_the_propertys_timezone(tenant):
         s.close()
     mine = [r for r in results if r["block_id"] == str(block)]
     assert bool(mine) == (cut_off <= local)
+
+
+# --------------------------------------------------------------------------
+# 11. Smaller money and inventory rules
+# --------------------------------------------------------------------------
+def test_the_cancellation_penalty_is_charged_at_the_rate_sold(tenant):
+    """The penalty used the rate calendar's price for every room.
+
+    A guest who booked at 80 was fined at the list price of 100.
+    """
+    from booking_core.change_routes import _cancel_terms
+
+    t = tenant()
+    arrival = date.today() + timedelta(days=1)
+    t.seed(arrival, 1)
+    a = t.hold(arrival, 1, units=2, rate=Decimal("80.00"))
+    with t.session() as s:
+        q = _cancel_terms(s, a.reservation_id, t.prop)
+    assert q.within_penalty_window
+    assert q.penalty_amount == Decimal("160.00")
+
+
+def test_paid_is_net_of_refunds_on_the_primary_folio(tenant):
+    """Paid summed credits only, on whichever folio LIMIT 1 happened to find."""
+    from booking_core.folio_money import primary_folio
+
+    t = tenant()
+    arrival = date.today() + timedelta(days=5)
+    t.seed(arrival, 1)
+    a = t.hold(arrival, 1)
+    guest, master = uuid.uuid4(), uuid.uuid4()
+    with t.owner.begin() as c:
+        for fid, kind in ((guest, "guest"), (master, "group")):
+            c.execute(text(
+                "INSERT INTO finance.folios (id, organization_id, "
+                "property_id, reservation_id, type, currency, status) "
+                "VALUES (:f, :o, :p, :r, :k, 'USD', 'open')"),
+                {"f": fid, "o": t.org, "p": t.prop, "r": a.reservation_id,
+                 "k": kind})
+        for etype, amount, src in (("credit", 500, "payment"),
+                                   ("debit", 200, "refund")):
+            c.execute(text(
+                "INSERT INTO finance.folio_entries (organization_id, "
+                "property_id, folio_id, entry_type, amount, currency, "
+                "business_date, source_type, source_line_key) VALUES "
+                "(:o, :p, :f, :e, :a, 'USD', CURRENT_DATE, :s, :k)"),
+                {"o": t.org, "p": t.prop, "f": master, "e": etype,
+                 "a": amount, "s": src, "k": f"{src}:{uuid.uuid4()}"})
+    with t.session() as s:
+        folio, paid = primary_folio(s, a.reservation_id)
+    assert folio == master, "the group master, as the night audit chooses"
+    assert paid == Decimal("300")
+
+
+def test_removing_a_room_counts_a_groups_block_against_what_is_left(tenant):
+    """capacity_shortfall counted only held and reserved rooms."""
+    from booking_core.inventory import capacity_shortfall
+
+    t = tenant(rooms=2)
+    arrival = date.today() + timedelta(days=70)
+    t.seed(arrival, 1)
+    _block(t, arrival, 1, rooms=2)
+    with t.session() as s:
+        short = capacity_shortfall(s, property_id=t.prop, room_type_id=t.rt,
+                                   new_capacity=1)
+    assert short == [arrival]
+
+
+def test_an_out_of_service_room_being_removed_takes_its_night_with_it(tenant):
+    from booking_core.inventory import capacity_shortfall
+
+    t = tenant(rooms=2)
+    arrival = date.today() + timedelta(days=71)
+    t.seed(arrival, 1)
+    a = t.hold(arrival, 1)
+    t.confirm(a.reservation_id)
+    with t.session() as s:
+        s.execute(text("UPDATE property.rooms SET service_status = "
+                       "'out_of_service' WHERE id = :r"), {"r": t.rooms[1]})
+    with t.session() as s:
+        # Removing the broken room leaves one room for one booking: fine.
+        assert capacity_shortfall(
+            s, property_id=t.prop, room_type_id=t.rt, new_capacity=1,
+            leaving=[t.rooms[1]]) == []
+        # Removing the good one leaves a broken room for a booked night.
+        assert capacity_shortfall(
+            s, property_id=t.prop, room_type_id=t.rt, new_capacity=1,
+            leaving=[t.rooms[0]]) == [arrival]

@@ -128,32 +128,46 @@ def confirm_reservation(
         {"rid": reservation_id},
     ).all()
 
+    # Every night the booking holds, per room type, locked once and in
+    # (room_type, date) order -- the order create_hold and shift_inventory
+    # take them in. This used to lock unit by unit in whatever order the units
+    # came back, so confirming a two-type booking could take the second
+    # type's rows first and deadlock against a new booking for both.
+    need: dict[tuple[uuid.UUID, date], int] = {}
     for unit in units:
-        nights = _nights(unit.arrival_date, unit.departure_date)
-        # Lock the nights, then shift held -> reserved for this unit.
+        for day in _nights(unit.arrival_date, unit.departure_date):
+            key = (unit.room_type_id, day)
+            need[key] = need.get(key, 0) + 1
+    keys = sorted(need, key=lambda k: (str(k[0]), k[1]))
+    if keys:
         session.execute(
             text(
                 """
-                SELECT stay_date FROM booking.room_type_inventory_days
-                WHERE property_id = :prop AND room_type_id = :rt
-                  AND stay_date = ANY(:dates)
-                ORDER BY stay_date
+                SELECT 1 FROM booking.room_type_inventory_days
+                WHERE property_id = :prop
+                  AND (room_type_id, stay_date) IN (
+                      SELECT * FROM unnest(CAST(:rts AS uuid[]),
+                                           CAST(:days AS date[])))
+                ORDER BY room_type_id, stay_date
                 FOR UPDATE
                 """
             ),
-            {"prop": res.property_id, "rt": unit.room_type_id, "dates": nights},
+            {"prop": res.property_id, "rts": [k[0] for k in keys],
+             "days": [k[1] for k in keys]},
         )
+    for rt, day in keys:
         session.execute(
             text(
                 """
                 UPDATE booking.room_type_inventory_days
-                SET held_units = GREATEST(held_units - 1, 0),
-                    reserved_units = reserved_units + 1
+                SET held_units = GREATEST(held_units - :n, 0),
+                    reserved_units = reserved_units + :n
                 WHERE property_id = :prop AND room_type_id = :rt
-                  AND stay_date = ANY(:dates)
+                  AND stay_date = :d
                 """
             ),
-            {"prop": res.property_id, "rt": unit.room_type_id, "dates": nights},
+            {"n": need[(rt, day)], "prop": res.property_id, "rt": rt,
+             "d": day},
         )
 
     session.execute(

@@ -54,6 +54,31 @@ def upgrade() -> None:
         $$
         """
     )
+    # One room, one night: the rule itself, so the per-type count below and
+    # anything asking about particular rooms (removing a room, say) cannot
+    # disagree about what "out of service" means.
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION booking.room_out_of_service(
+            p_room uuid, p_day date, p_today date)
+        RETURNS boolean LANGUAGE sql STABLE AS $$
+            SELECT EXISTS (
+                       SELECT 1 FROM booking.room_blocks b
+                        WHERE b.room_id = p_room AND b.status = 'active'
+                          AND p_day BETWEEN b.start_date AND b.end_date)
+                OR EXISTS (
+                       SELECT 1 FROM property.rooms r
+                        WHERE r.id = p_room
+                          AND r.status = 'active'
+                          AND r.service_status <> 'in_service'
+                          AND p_day >= p_today
+                          AND NOT EXISTS (
+                              SELECT 1 FROM booking.room_blocks b
+                               WHERE b.room_id = r.id AND b.status = 'active'
+                                 AND b.block_type = 'out_of_order'))
+        $$
+        """
+    )
     op.execute(
         """
         CREATE OR REPLACE FUNCTION booking.out_of_service_units(
@@ -62,18 +87,7 @@ def upgrade() -> None:
             SELECT count(*)::integer
               FROM property.rooms r
              WHERE r.room_type_id = p_type
-               AND (
-                   EXISTS (
-                       SELECT 1 FROM booking.room_blocks b
-                        WHERE b.room_id = r.id AND b.status = 'active'
-                          AND p_day BETWEEN b.start_date AND b.end_date)
-                   OR (r.status = 'active'
-                       AND r.service_status <> 'in_service'
-                       AND p_day >= p_today
-                       AND NOT EXISTS (
-                           SELECT 1 FROM booking.room_blocks b
-                            WHERE b.room_id = r.id AND b.status = 'active'
-                              AND b.block_type = 'out_of_order')))
+               AND booking.room_out_of_service(r.id, p_day, p_today)
         $$
         """
     )
@@ -224,4 +238,6 @@ def downgrade() -> None:
                "booking.recount_out_of_service(uuid, uuid, date, date)")
     op.execute("DROP FUNCTION IF EXISTS "
                "booking.out_of_service_units(uuid, date, date)")
+    op.execute("DROP FUNCTION IF EXISTS "
+               "booking.room_out_of_service(uuid, date, date)")
     op.execute("DROP FUNCTION IF EXISTS booking.local_today(uuid)")

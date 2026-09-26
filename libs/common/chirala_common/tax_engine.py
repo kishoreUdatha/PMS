@@ -220,12 +220,29 @@ def compute_tax(
         )
 
         # A group splits into its components; anything else is a single line.
-        parts = components or [{"code": rule["code"], "rate": headline}]
-        for part in parts:
+        parts = [p for p in (components
+                             or [{"code": rule["code"], "rate": headline}])
+                 if Decimal(str(p["rate"])) > 0]
+
+        # Inclusive tax is what is left of the price once the taxable base is
+        # taken out, and the components share exactly that. Rounding each
+        # component from the base independently -- 6190.48 at 2.5% twice is
+        # 154.76 + 154.76 -- gave 6500.00 back as 6190.48 + 309.52 only by
+        # luck; at other prices the parts came to a paisa more or less than
+        # the price the guest was quoted, and an invoice whose lines do not
+        # add up to its total is one an auditor will not accept. So the parts
+        # are apportioned by rate and the last absorbs the rounding.
+        remaining = amount - taxable if inclusive else Decimal("0")
+        weight = sum((Decimal(str(p["rate"])) for p in parts), Decimal("0"))
+        for i, part in enumerate(parts):
             rate = Decimal(str(part["rate"]))
-            if rate <= 0:
-                continue
-            tax = _money(taxable * rate / Decimal(100))
+            if not inclusive:
+                tax = _money(taxable * rate / Decimal(100))
+            elif i == len(parts) - 1:
+                tax = remaining
+            else:
+                tax = _money((amount - taxable) * rate / weight)
+                remaining -= tax
             if tax <= 0:
                 continue
             result.lines.append(TaxLine(
