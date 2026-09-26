@@ -59,6 +59,7 @@ from chirala_common.authz import (
     assert_property_in_org,
     build_authz,
     caller_org,
+    require_property_permission,
 )
 from chirala_common.routing import TransactionalRoute
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -275,7 +276,8 @@ def create_category(
     caller: Caller = Depends(require_org_permission("payments", "create")),
     db: Session = Depends(get_session),
 ):
-    assert_property_in_org(db, caller, body.property_id)
+    require_property_permission(db, caller, body.property_id,
+                                "payments", "create")
     if body.bills_as not in BILLS_AS:
         raise HTTPException(
             422, f"'{body.bills_as}' is not a department the ledger can tax.")
@@ -418,7 +420,8 @@ def create_item(
     caller: Caller = Depends(require_org_permission("payments", "create")),
     db: Session = Depends(get_session),
 ):
-    assert_property_in_org(db, caller, body.property_id)
+    require_property_permission(db, caller, body.property_id,
+                                "payments", "create")
     label = _category_label(db, body.category_id, body.property_id)
     row = db.execute(
         text(
@@ -582,7 +585,8 @@ def create_order(
     db: Session = Depends(get_session),
 ):
     """Put what the guest ordered on their folio."""
-    assert_property_in_org(db, caller, body.property_id)
+    require_property_permission(db, caller, body.property_id,
+                                "payments", "create")
     org = caller_org(caller)
 
     # Already posted under this key? Hand back what was posted. Checked before

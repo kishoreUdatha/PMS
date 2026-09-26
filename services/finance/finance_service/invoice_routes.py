@@ -53,7 +53,9 @@ from chirala_common.audit import record_audit
 from chirala_common.gstin import normalise as normalise_gstin, problem as gstin_problem
 from chirala_common.india import normalise_state, state_code_problem
 from chirala_common.postal import problem as postal_problem
-from chirala_common.authz import Caller, assert_property_in_org, build_authz
+from chirala_common.authz import (
+    Caller, assert_property_in_org, build_authz, require_property_permission,
+)
 from chirala_common.routing import TransactionalRoute
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
@@ -1192,7 +1194,8 @@ def create_invoice(
     stages, and a company may settle part of it — so this does not refuse when
     one already exists. It refuses only when there is nothing left to bill.
     """
-    assert_property_in_org(db, caller, body.property_id)
+    require_property_permission(db, caller, body.property_id,
+                                "payments", "create")
     folio = db.execute(
         text("SELECT id, organization_id, property_id, currency "
              "FROM finance.folios WHERE id = :f"),
@@ -1357,7 +1360,8 @@ def cancel_invoice(
     Only a draft. An issued invoice is a document that has left the building;
     it is corrected with a credit note, not deleted.
     """
-    assert_property_in_org(db, caller, body.property_id)
+    require_property_permission(db, caller, body.property_id,
+                                "payments", "edit")
     inv = _load(db, invoice_id, body.property_id)
     if inv["status"] != "draft":
         raise HTTPException(
@@ -1398,7 +1402,8 @@ def create_credit_note(
     entry, so the guest's balance moves with the document instead of being
     reconciled by hand afterwards.
     """
-    assert_property_in_org(db, caller, body.property_id)
+    require_property_permission(db, caller, body.property_id,
+                                "payments", "approve")
     inv = _load(db, invoice_id, body.property_id)
     if inv["status"] != "issued":
         raise HTTPException(

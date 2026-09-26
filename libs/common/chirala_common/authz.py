@@ -359,6 +359,15 @@ def build_authz(
                                 is_service=caller.is_service)
             _check(db, caller, resource_code, action_code, None)
             guard_request_tenancy(request, db, caller)
+            # An "organisation" route that nonetheless names a property --
+            # ``/channel-links/provision?property_id=`` and its like -- acts
+            # on that property, so the grant has to cover it. Checked with no
+            # property only, a role scoped to one hotel passed for every
+            # hotel in the organisation.
+            for src in (request.path_params, request.query_params):
+                prop = _uuid_or_none(src.get("property_id"))
+                if prop is not None:
+                    _check(db, caller, resource_code, action_code, prop)
             bind_tenant_context(db, organization_id=caller.organization_id,
                                 user_id=caller.user_id,
                                 is_service=caller.is_service)
@@ -367,6 +376,46 @@ def build_authz(
         return _dep
 
     return get_caller, require_permission, require_org_permission
+
+
+def require_property_permission(
+    db: Session, caller: Caller, property_id: uuid.UUID,
+    resource_code: str, action_code: str,
+) -> None:
+    """The permission check, again, for a property named in the request body.
+
+    The dependencies only see the path and the query string. A route that
+    takes ``property_id`` in its JSON body is checked with no property at
+    all, and the grant query reads a missing property as "anywhere in the
+    organisation" -- so a receptionist whose role covers one hotel passed the
+    check for a sister hotel, and ``assert_property_in_org`` then agreed,
+    because the sister hotel *is* in the same organisation. Same tenant is
+    not the same thing as permitted.
+
+    So a handler that writes to a body-named property calls this with the
+    same resource and action its dependency asked for: tenancy first (same
+    refusal as the other guards), then the grant, scoped to that property --
+    an organisation-wide assignment, or one on exactly this property.
+
+    A service caller is trusted for the permission, as in the dependencies,
+    but still held to its organisation.
+    """
+    assert_property_in_org(db, caller, property_id)
+    if caller.is_service:
+        return
+    if caller.user_id is None:
+        raise HTTPException(status_code=403, detail="No active membership")
+    granted = db.execute(
+        text(_GRANT_SQL),
+        {"uid": caller.user_id, "res": resource_code, "act": action_code,
+         "prop": property_id},
+    ).first()
+    if granted is None:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Permission denied: {resource_code}.{action_code} "
+                   "for this property",
+        )
 
 
 def caller_org(caller: Caller) -> uuid.UUID:

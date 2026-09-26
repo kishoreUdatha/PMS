@@ -112,8 +112,11 @@ def get_caller(
 # Caller also carries.
 from chirala_common.db import bind_tenant_context, identity_context
 from chirala_common.authz import (  # noqa: F401
+    _GRANT_SQL,
+    _uuid_or_none,
     assert_property_in_org,
     guard_request_tenancy,
+    require_property_permission,
 )
 
 
@@ -238,6 +241,15 @@ def require_org_permission(resource_code: str, action_code: str):
                 status_code=403,
                 detail=f"Permission denied: {resource_code}.{action_code}",
             )
+        # A route that names a property in its path or query acts on that
+        # property, so the grant has to reach it: an assignment on another
+        # hotel in the same organisation is not permission here. The same
+        # rule as the shared require_org_permission.
+        for src in (request.path_params, request.query_params):
+            prop = _uuid_or_none(src.get("property_id"))
+            if prop is not None:
+                require_property_permission(db, caller, prop,
+                                            resource_code, action_code)
         return caller
 
     return _dep

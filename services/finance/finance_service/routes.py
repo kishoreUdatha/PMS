@@ -10,7 +10,7 @@ from typing import NoReturn
 from chirala_common.db import bind_tenant_context
 from chirala_common import charge_types, no_show
 from chirala_common.audit import record_audit
-from chirala_common.authz import Caller, assert_property_in_org, build_authz, assert_entity_in_org, assert_org_matches_caller, caller_org
+from chirala_common.authz import Caller, assert_property_in_org, build_authz, assert_entity_in_org, assert_org_matches_caller, caller_org, require_property_permission
 from chirala_common.routing import TransactionalRoute
 from fastapi import (
     APIRouter, BackgroundTasks, Depends, HTTPException, Query, status,
@@ -59,7 +59,8 @@ def _raise_ledger(exc: Exception, conflict: bool) -> NoReturn:
 def create_folio(body: schemas.FolioCreate, caller: Caller = Depends(require_org_permission("payments", "create")), db: Session = Depends(get_session)):
     # The organisation is the caller's own; the body no longer
     # carries one to disagree with.
-    assert_property_in_org(db, caller, body.property_id)
+    require_property_permission(db, caller, body.property_id,
+                                "payments", "create")
     folio_id = uuid.uuid4()
     db.execute(
         text(
@@ -265,6 +266,24 @@ def folio_summary(folio_id: uuid.UUID, caller: Caller = Depends(require_org_perm
     )
 
 
+def _folios_on_property(db: Session, property_id, folio_ids) -> None:
+    """Refuse a posting to a folio that is not on the property named.
+
+    The permission check is made against the property in the body, and the
+    money lands on the folio in the body. Nothing tied the two together, so a
+    caller permitted at one hotel could name it and post to a sister hotel's
+    folio. 404, as for any other row that is not the caller's to address.
+    """
+    ids = list({f for f in folio_ids})
+    found = db.execute(
+        text("SELECT count(*) FROM finance.folios "
+             "WHERE id = ANY(:ids) AND property_id = :p"),
+        {"ids": ids, "p": property_id},
+    ).scalar()
+    if found != len(ids):
+        raise HTTPException(status_code=404, detail="Folio not found.")
+
+
 def _trading_day(db: Session, property_id) -> date:
     """The day this property is trading, for a caller that named none.
 
@@ -291,7 +310,9 @@ def _trading_day(db: Session, property_id) -> date:
 def create_charge(body: schemas.ChargeCreate, caller: Caller = Depends(require_org_permission("payments", "create")), db: Session = Depends(get_session)):
     # The organisation is the caller's own; the body no longer
     # carries one to disagree with.
-    assert_property_in_org(db, caller, body.property_id)
+    require_property_permission(db, caller, body.property_id,
+                                "payments", "create")
+    _folios_on_property(db, body.property_id, [body.folio_id])
     try:
         res = post_charge(
             db,
@@ -343,7 +364,10 @@ def charge_types_list(
 def create_payment(body: schemas.PaymentCreate, caller: Caller = Depends(require_org_permission("payments", "create")), db: Session = Depends(get_session)):
     # The organisation is the caller's own; the body no longer
     # carries one to disagree with.
-    assert_property_in_org(db, caller, body.property_id)
+    require_property_permission(db, caller, body.property_id,
+                                "payments", "create")
+    _folios_on_property(db, body.property_id,
+                        [a.folio_id for a in body.allocations])
     try:
         res = post_payment(
             db,
@@ -399,7 +423,8 @@ def _open_shift_of(db: Session, caller: Caller, property_id) -> uuid.UUID | None
 def create_refund(body: schemas.RefundCreate, caller: Caller = Depends(require_org_permission("payments", "cancel")), db: Session = Depends(get_session)):
     # The organisation is the caller's own; the body no longer
     # carries one to disagree with.
-    assert_property_in_org(db, caller, body.property_id)
+    require_property_permission(db, caller, body.property_id,
+                                "payments", "cancel")
     try:
         res = post_refund(
             db,
@@ -494,7 +519,8 @@ def night_audit(body: schemas.NightAuditRun, background: BackgroundTasks, caller
     work it out, because an audit handed an empty list closes the day with
     every guest un-charged and reports success.
     """
-    assert_property_in_org(db, caller, body.property_id)
+    require_property_permission(db, caller, body.property_id,
+                                "payments", "configure")
     try:
         res = run_night_audit(
             db,
