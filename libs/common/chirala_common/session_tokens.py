@@ -136,8 +136,11 @@ def decode(
     parts = token.split(".")
     if len(parts) != 3:
         # Not a JWT. The only other shape ever issued is the dev token, and
-        # that is honoured in local mode alone.
-        if env != "local":
+        # that is honoured in local mode alone -- and only while no signing
+        # key is configured. With a key, sign-in hands out signed tokens, so
+        # a dev token is one somebody wrote by hand; a laptop running the
+        # stack with a key should behave like the deployment it rehearses.
+        if env != "local" or _keys(key):
             return None
         try:
             raw = base64.urlsafe_b64decode(token.encode()).decode()

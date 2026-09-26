@@ -78,7 +78,9 @@ def test_old_keys_still_verify_after_rotation():
 def test_dev_tokens_only_in_local():
     dev = base64.urlsafe_b64encode(b"dev:alice-1").decode()
     assert st.decode(dev, key="", environment="local").subject == "alice-1"
-    assert st.decode(dev, key=KEY, environment="local").subject == "alice-1"
+    # With a signing key, even local refuses them: sign-in issues signed
+    # tokens then, so a dev token can only have been written by hand.
+    assert st.decode(dev, key=KEY, environment="local") is None
     for env in ("production", "staging", "Local", "local ", "dev", ""):
         assert st.decode(dev, key="", environment=env) is None, env
         assert st.decode(dev, key=KEY, environment=env) is None, env
