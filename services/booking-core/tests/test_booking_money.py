@@ -342,3 +342,74 @@ def test_two_simultaneous_cancellations_release_the_rooms_once(tenant):
     assert sorted(outcomes) == ["cancelled", "refused 422"], outcomes
     # Booking b still holds both of its nights.
     assert t.counters(arrival, 2).reserved == 2
+
+
+# --------------------------------------------------------------------------
+# 3. No-show release
+# --------------------------------------------------------------------------
+def _mark_no_show(t, unit_id):
+    from booking_core.noshow_routes import NoShowIn, mark_no_show
+
+    with t.session() as s:
+        return mark_no_show(
+            unit_id, t.prop,
+            NoShowIn(penalty_basis="one_night", reason="did_not_arrive"),
+            caller=t.caller(), db=s)
+
+
+def test_a_held_no_show_gives_back_the_held_room(tenant):
+    """The desk's no-show always decremented reserved_units.
+
+    A booking never confirmed sits in held_units, so its room stayed off sale
+    and a *confirmed* guest's room was freed instead.
+    """
+    t = tenant(rooms=2)
+    arrival = date.today() - timedelta(days=1)
+    t.seed(arrival, 2)
+    held = t.hold(arrival, 2)
+    other = t.hold(arrival, 2)
+    t.confirm(other.reservation_id)
+    assert tuple(t.counters(arrival, 2))[:2] == (2, 2)
+
+    _mark_no_show(t, held.reservation_unit_id)
+
+    c = t.counters(arrival, 2)
+    assert c.held == 0, "the held room goes back on sale"
+    assert c.reserved == 2, "the confirmed booking keeps its room"
+
+
+def test_the_audit_does_not_release_a_no_show_the_desk_already_released(
+        tenant, monkeypatch):
+    """The audit released nights before its guarded update and ignored the count.
+
+    ``find_no_shows`` reads without locks. When the desk resolved the same
+    arrival between that read and the audit's loop, the audit gave the nights
+    back a second time. ``find_no_shows`` is pinned to its stale answer here
+    to make that interleaving deterministic.
+    """
+    night_audit = pytest.importorskip("finance_service.night_audit")
+
+    t = tenant(rooms=2)
+    arrival = date.today() - timedelta(days=1)
+    t.seed(arrival, 2)
+    a = t.hold(arrival, 2)
+    b = t.hold(arrival, 2)
+    t.confirm(a.reservation_id)
+    t.confirm(b.reservation_id)
+
+    with t.session() as s:
+        stale = night_audit.find_no_shows(
+            s, property_id=t.prop, business_date=arrival)
+    stale = [p for p in stale if p.unit_id == a.reservation_unit_id]
+    assert stale
+
+    _mark_no_show(t, a.reservation_unit_id)
+    assert t.counters(arrival, 2).reserved == 2
+
+    monkeypatch.setattr(night_audit, "find_no_shows", lambda *a, **k: stale)
+    with t.session() as s:
+        done, _, _ = night_audit.process_no_shows(
+            s, organization_id=t.org, property_id=t.prop,
+            business_date=arrival, basis="none")
+    assert done == []
+    assert t.counters(arrival, 2).reserved == 2, "b's nights are untouched"

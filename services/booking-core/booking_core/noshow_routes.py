@@ -34,6 +34,7 @@ from sqlalchemy.orm import Session
 from chirala_common import no_show, ota_actions
 
 from .database import get_session
+from .inventory import counter_for
 from .settings import settings
 
 _get_caller, require_permission, _require_org = build_authz(
@@ -165,7 +166,38 @@ _UNIT_SQL = """
 """
 
 
-def _unit(db: Session, unit_id: uuid.UUID, property_id: uuid.UUID):
+def _unit(db: Session, unit_id: uuid.UUID, property_id: uuid.UUID, *,
+          lock: bool = False):
+    """The unit and its booking; with ``lock``, both held for the transaction.
+
+    Marking a no-show releases the unit's nights, and so does a cancellation
+    of the same booking and the night audit's own no-show pass. Read without
+    a lock, any two of them could see the unit still reserved and each give
+    its nights back -- one booking released twice, and the second release
+    coming off somebody else's room.
+
+    The reservation is locked first and the unit second, the order the
+    change routes take them in (they lock the reservation, then write its
+    units), so the two paths queue rather than deadlock.
+    """
+    if lock:
+        db.execute(
+            text(
+                """
+                SELECT r.id FROM booking.reservations r
+                 WHERE r.id = (SELECT reservation_id
+                                 FROM booking.reservation_units
+                                WHERE id = :id AND property_id = :prop)
+                 FOR UPDATE
+                """
+            ),
+            {"id": unit_id, "prop": property_id},
+        )
+        db.execute(
+            text("SELECT id FROM booking.reservation_units "
+                 "WHERE id = :id AND property_id = :prop FOR UPDATE"),
+            {"id": unit_id, "prop": property_id},
+        )
     row = db.execute(
         text(_UNIT_SQL + " WHERE ru.id = :id AND ru.property_id = :prop"),
         {"id": unit_id, "prop": property_id},
@@ -405,7 +437,7 @@ def mark_no_show(
 ):
     """Mark the arrival missed: charge the penalty, free the room, close it out."""
     assert_property_in_org(db, caller, property_id)
-    row = _unit(db, unit_id, property_id)
+    row = _unit(db, unit_id, property_id, lock=True)
     today = db.execute(text("SELECT CURRENT_DATE")).scalar_one()
     warnings: list[str] = []
 
@@ -456,7 +488,23 @@ def mark_no_show(
             f"marking a no-show does not move money back on its own."
         )
 
-    # --- release the room and the night -----------------------------------
+    # --- close the unit, then release what it held -----------------------
+    # The state change comes first and is guarded on the state it expects, so
+    # the nights below are returned only by the one writer that actually
+    # moved this unit out of 'reserved'. The unit is locked above as well;
+    # this is what makes a second release impossible rather than unlikely.
+    moved = db.execute(
+        text("UPDATE booking.reservation_units SET status = 'no_show', "
+             "assigned_room_id = NULL, version = version + 1 "
+             "WHERE id = :id AND status = 'reserved'"),
+        {"id": unit_id},
+    ).rowcount
+    if moved != 1:
+        raise HTTPException(
+            status_code=409,
+            detail="This arrival was changed by someone else a moment ago. "
+                   "Reload it and try again.")
+
     released = None
     nights_returned = 0
     if body.release_room:
@@ -472,11 +520,16 @@ def mark_no_show(
             nights.append(d)
             d = date.fromordinal(d.toordinal() + 1)
         if nights:
+            # The counter the booking actually occupies: a booking still
+            # merely held sits in held_units, and taking it off
+            # reserved_units instead would strand the held room and free a
+            # confirmed one that was never this booking's.
+            counter = counter_for(row["reservation_status"])
             db.execute(
                 text(
-                    """
+                    f"""
                     UPDATE booking.room_type_inventory_days
-                       SET reserved_units = GREATEST(reserved_units - 1, 0)
+                       SET {counter} = GREATEST({counter} - 1, 0)
                      WHERE property_id = :p AND room_type_id = :rt
                        AND stay_date = ANY(:dates)
                     """
@@ -490,11 +543,6 @@ def mark_no_show(
             "The room was not released, so it stays blocked for these dates."
         )
 
-    db.execute(
-        text("UPDATE booking.reservation_units SET status = 'no_show', "
-             "assigned_room_id = NULL, version = version + 1 WHERE id = :id"),
-        {"id": unit_id},
-    )
     # With every unit missed, the booking itself is over.
     live = db.execute(
         text("SELECT count(*) FROM booking.reservation_units "
