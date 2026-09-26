@@ -1,11 +1,12 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  Activity, Check, ChevronDown, ChevronRight, Copy, Inbox, Loader2, RotateCcw,
+  Activity, Check, ChevronDown, ChevronRight, Copy, Inbox, KeyRound, Loader2,
+  RotateCcw,
 } from 'lucide-react'
 import {
-  getChannelLink, getChannelSyncLog, listChannelBookingEvents,
+  getChannelLink, getChannelSyncLog, getMappingEditor, listChannelBookingEvents,
   replayChannelBookingEvent, type ChannelSyncLogRow,
 } from '../api'
 
@@ -44,6 +45,8 @@ export default function ChannelActivity({ propertyId }: { propertyId: string }) 
 
   return (
     <div className="space-y-5">
+      <ChannelIds linkId={linkId} />
+
       <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
         <div className="flex items-center gap-2">
           <Activity size={20} className="text-brand" />
@@ -107,6 +110,86 @@ export default function ChannelActivity({ propertyId }: { propertyId: string }) 
         </ul>
       </section>
     </div>
+  )
+}
+
+/**
+ * What the channel manager calls this property, each room type and each rate
+ * plan -- the ids its support, and its certification form, ask for. Laid out
+ * as a property, its rooms, and each room's plans, so each id can be copied
+ * against the entity it belongs to.
+ */
+function ChannelIds({ linkId }: { linkId: string }) {
+  const q = useQuery({
+    queryKey: ['mapping-editor', linkId],
+    queryFn: () => getMappingEditor(linkId),
+  })
+  const d = q.data
+  if (!d) return null
+  const lines = [
+    `Property ID at Channex: ${d.external_property_id ?? ''}`,
+    ...d.rooms.flatMap((r) => [
+      `${r.local_name} ID at Channex: ${r.external_id || '(not mapped)'}`,
+      ...r.rates.map((p) =>
+        `${r.local_name} ${p.local_name} ID at Channex: ${p.external_id || '(not mapped)'}`),
+    ]),
+  ]
+  return (
+    <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+      <div className="flex items-center gap-2">
+        <KeyRound size={20} className="text-brand" />
+        <h2 className="text-lg font-semibold text-ink">Channel manager IDs</h2>
+        <CopyButton text={lines.join('\n')} label="Copy all" />
+      </div>
+      <p className="mt-1 text-sm text-slate-500">
+        What the channel manager calls this property, its room types and rate
+        plans, read from its API when the property was set up.
+      </p>
+      <table className="mt-4 w-full text-sm">
+        <tbody>
+          <IdRow label={`Property · ${d.property_name}`} id={d.external_property_id} strong />
+          {d.rooms.map((r) => (
+            <Fragment key={r.local_id}>
+              <IdRow label={`Room · ${r.local_name}`} id={r.external_id} strong />
+              {r.rates.map((p) => (
+                <IdRow key={p.local_id} label={`${r.local_name} · ${p.local_name}`}
+                  id={p.external_id} indent />
+              ))}
+            </Fragment>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  )
+}
+
+function IdRow({ label, id, strong, indent }: {
+  label: string; id: string | null; strong?: boolean; indent?: boolean
+}) {
+  return (
+    <tr className="border-b border-slate-50">
+      <td className={`py-2 pr-3 ${indent ? 'pl-6 text-slate-600' : ''} ${
+        strong ? 'font-medium text-slate-700' : ''}`}>{label}</td>
+      <td className="py-2 text-right">
+        {id ? <TaskId id={id} />
+          : <span className="text-xs text-red-600">not mapped</span>}
+      </td>
+    </tr>
+  )
+}
+
+function CopyButton({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button
+      onClick={() => {
+        void navigator.clipboard?.writeText(text)
+        setCopied(true); setTimeout(() => setCopied(false), 1500)
+      }}
+      className="ml-auto flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+      {copied ? <Check size={12} className="text-emerald-600" /> : <Copy size={12} />}
+      {label}
+    </button>
   )
 }
 

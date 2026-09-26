@@ -76,6 +76,12 @@ The PMS does this itself when it provisions:
 - Rate plans are matched by **room and name**, so the two "Best Available Rate"
   plans map to the Twin's and the Double's plans respectively.
 
+**The form's IDs page** (Property ID, Twin Room ID, Twin Room Best Available
+Rate ID, and so on): open **Distribution → Sales Channels → Channel manager
+IDs**. It lists the property, each room and each room's plans, each with a
+copy button. **Copy all** copies them as `<name> ID at Channex: <id>` lines in
+the form's order.
+
 **Where to see the ids:**
 
 - **Property id:** Channel Partners → edit partner, under the channel manager
