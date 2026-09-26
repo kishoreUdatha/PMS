@@ -413,8 +413,9 @@ async def block_cutoff_loop() -> None:
         try:
             with SessionFactory() as session:
                 try:
-                    results = group_blocks.sweep_cut_offs(
-                        session, today=date.today())
+                    # Each block against its own property's date; see
+                    # sweep_cut_offs.
+                    results = group_blocks.sweep_cut_offs(session)
                     session.commit()
                 except Exception:
                     session.rollback()

@@ -679,7 +679,10 @@ def complete_check_out(
 
     try:
         result = check_out(db, reservation_unit_id=unit_id,
-                           checked_out_by=caller.user_id)
+                           checked_out_by=caller.user_id,
+                           # Which nights go back on sale is a calendar
+                           # question, and the calendar is the hotel's.
+                           business_date=local_today(db, property_id))
     except FlowError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

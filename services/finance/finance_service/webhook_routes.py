@@ -35,6 +35,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from chirala_common.property_time import local_today
+
 from .credentials import by_webhook_ref
 from .database import get_session
 from .ledger import Allocation, post_payment
@@ -300,12 +302,14 @@ async def _receive(
         _finish(db, event_id, "malformed", detail="Capture had no amount.")
         return {"status": "malformed", "event_id": event_id}
 
+    # The oldest day not yet closed, else the property's own date -- not
+    # CURRENT_DATE, which is UTC and a day behind India until 05:30.
     business_date = db.execute(
-        text("SELECT coalesce((SELECT min(business_date) "
+        text("SELECT min(business_date) "
              "FROM finance.business_days WHERE property_id = :p "
-             "AND status <> 'closed'), CURRENT_DATE)"),
+             "AND status <> 'closed'"),
         {"p": intent["property_id"]},
-    ).scalar_one()
+    ).scalar() or local_today(db, intent["property_id"])
 
     result = post_payment(
         db,

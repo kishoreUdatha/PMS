@@ -704,8 +704,13 @@ def sync_capacity(
     left alone: what was sellable last week is history, not something to
     restate.
     """
+    from chirala_common.property_time import local_today
+
     count = active_room_count(
         session, property_id=property_id, room_type_id=room_type_id)
+    # From the property's own today. CURRENT_DATE is UTC, so between midnight
+    # and 05:30 in India it left tonight's night out of the resync entirely.
+    today = local_today(session, property_id)
     session.execute(
         text(
             """
@@ -716,7 +721,8 @@ def sync_capacity(
             SELECT p.organization_id, :p, :rt, d::date, :n, 0, 0, 0, 0
             FROM iam.properties p
             CROSS JOIN generate_series(
-                CURRENT_DATE, CURRENT_DATE + :days, interval '1 day') AS d
+                CAST(:today AS date), CAST(:today AS date) + :days,
+                interval '1 day') AS d
             WHERE p.id = :p
             ON CONFLICT (property_id, room_type_id, stay_date) DO UPDATE
                 SET physical_capacity = EXCLUDED.physical_capacity
@@ -728,7 +734,7 @@ def sync_capacity(
                     <= EXCLUDED.physical_capacity
             """
         ),
-        {"n": count, "p": property_id, "rt": room_type_id,
+        {"n": count, "p": property_id, "rt": room_type_id, "today": today,
          "days": settings.inventory_horizon_days},
     )
     return count

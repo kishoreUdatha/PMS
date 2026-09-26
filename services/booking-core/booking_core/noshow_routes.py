@@ -27,7 +27,7 @@ from chirala_common.audit import record_audit
 from chirala_common.authz import Caller, assert_property_in_org, build_authz
 from chirala_common.routing import TransactionalRoute
 from chirala_common.folio_posting import post_charge
-from chirala_common.property_time import trading_day
+from chirala_common.property_time import local_today, trading_day
 from chirala_common.tax_engine import compute_tax, resolve_rules
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -336,7 +336,7 @@ def candidates(
 ):
     """Arrivals that never happened: due on or before the date, still reserved."""
     assert_property_in_org(db, caller, property_id)
-    target = on_date or db.execute(text("SELECT CURRENT_DATE")).scalar_one()
+    target = on_date or local_today(db, property_id)
     rows = db.execute(
         text(
             _UNIT_SQL
@@ -378,7 +378,11 @@ def no_show_view(
     """The missed arrival, what it was worth, and what a no-show would cost."""
     assert_property_in_org(db, caller, property_id)
     row = _unit(db, unit_id, property_id)
-    today = db.execute(text("SELECT CURRENT_DATE")).scalar_one()
+    # The property's own date. CURRENT_DATE is UTC: until 05:30 in India it
+    # still said yesterday, so an arrival due today could not be marked a
+    # no-show after midnight -- and one due tomorrow could be, before 05:30
+    # the day before, from the other side of the date line.
+    today = local_today(db, property_id)
     fin = _financials(db, row, 1)
     pol = db.execute(
         text("SELECT policy_text, penalty_nights FROM "
@@ -428,7 +432,11 @@ def mark_no_show(
     """Mark the arrival missed: charge the penalty, free the room, close it out."""
     assert_property_in_org(db, caller, property_id)
     row = _unit(db, unit_id, property_id, lock=True)
-    today = db.execute(text("SELECT CURRENT_DATE")).scalar_one()
+    # The property's own date. CURRENT_DATE is UTC: until 05:30 in India it
+    # still said yesterday, so an arrival due today could not be marked a
+    # no-show after midnight -- and one due tomorrow could be, before 05:30
+    # the day before, from the other side of the date line.
+    today = local_today(db, property_id)
     warnings: list[str] = []
 
     blocked = _blocked(row, today)

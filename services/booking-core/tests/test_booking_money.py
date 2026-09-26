@@ -129,7 +129,7 @@ class Tenant:
     """One fabricated hotel: an org, a property, a room type and its rooms."""
 
     def __init__(self, owner, runtime, *, currency="USD", rooms=2,
-                 policy=True):
+                 policy=True, timezone="Asia/Kolkata"):
         self.owner, self.runtime = owner, runtime
         self.org, self.prop, self.rt = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
         self.currency = currency
@@ -143,11 +143,11 @@ class Tenant:
                 """
                 INSERT INTO iam.properties
                     (id, organization_id, code, name, timezone, currency)
-                VALUES (:p, :o, :code, 'Test hotel', 'Asia/Kolkata', :cur)
+                VALUES (:p, :o, :code, 'Test hotel', :tz, :cur)
                 """),
                 {"p": self.prop, "o": self.org,
                  "code": f"{uuid.uuid4().int % 1_000_000:06d}",
-                 "cur": currency})
+                 "cur": currency, "tz": timezone})
             c.execute(text(
                 """
                 INSERT INTO property.room_types
@@ -902,3 +902,68 @@ def test_a_late_payment_for_a_resold_room_is_refused_clearly(tenant):
     assert refused.value.conflict
     assert "refund" in str(refused.value)
     assert tuple(t.counters(arrival, 1))[:2] == (0, 1)
+
+
+# --------------------------------------------------------------------------
+# 10. The property's date, not UTC's
+# --------------------------------------------------------------------------
+def _off_by_a_day_zone():
+    """A timezone whose date differs from UTC's right now, and its date.
+
+    Chosen by the clock so the test means the same thing whenever it runs:
+    UTC+14 once UTC is past 10:00 (it is already tomorrow there), UTC-11
+    before (it is still yesterday).
+    """
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+
+    now = datetime.now(timezone.utc)
+    zone = "Pacific/Kiritimati" if now.hour >= 10 else "Pacific/Pago_Pago"
+    local = datetime.now(ZoneInfo(zone)).date()
+    assert local != now.date()
+    return zone, local, now.date()
+
+
+def test_the_penalty_window_counts_days_on_the_propertys_calendar(tenant):
+    """cancel_quote counted days to arrival from UTC's CURRENT_DATE."""
+    from booking_core.change_routes import _cancel_terms
+
+    zone, local, _ = _off_by_a_day_zone()
+    t = tenant(timezone=zone)
+    arrival = local + timedelta(days=5)
+    t.seed(arrival, 1)
+    a = t.hold(arrival, 1)
+    with t.session() as s:
+        q = _cancel_terms(s, a.reservation_id, t.prop)
+    assert q.days_before_arrival == 5
+
+
+def test_a_block_is_released_on_its_cut_off_in_the_propertys_timezone(tenant):
+    """The cut-off sweep compared every tenant's blocks with the server's date."""
+    from chirala_common.db import make_session_factory
+
+    from booking_core import group_blocks
+
+    zone, local, utc = _off_by_a_day_zone()
+    t = tenant(timezone=zone, rooms=2)
+    arrival = max(local, utc) + timedelta(days=10)
+    t.seed(arrival, 1)
+    # The date the old sweep got wrong: local's when it is ahead of UTC (it
+    # should release and did not), UTC's when it is behind (it should not
+    # release and did).
+    cut_off = local if local > utc else utc
+    with t.session() as s:
+        block = group_blocks.create_block(
+            s, organization_id=t.org, property_id=t.prop, name="Tour",
+            arrival_date=arrival, departure_date=arrival + timedelta(days=1),
+            lines=[group_blocks.BlockLine(room_type_id=t.rt,
+                                          rooms_blocked=1)],
+            commitment="definite", cut_off_date=cut_off)
+    s = make_session_factory(t.runtime)()
+    try:
+        results = group_blocks.sweep_cut_offs(s)
+        s.commit()
+    finally:
+        s.close()
+    mine = [r for r in results if r["block_id"] == str(block)]
+    assert bool(mine) == (cut_off <= local)

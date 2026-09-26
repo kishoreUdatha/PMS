@@ -42,7 +42,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from chirala_common.folio_posting import post_charge, resolve_currency
-from chirala_common.property_time import trading_day
+from chirala_common.property_time import local_today, trading_day
 
 from .database import get_session
 from .inventory import (
@@ -293,7 +293,7 @@ def _side(db: Session, property_id, *, room_type_id, room_type, arrival,
 
 def _current(db: Session, res, units) -> StaySide:
     if not units:
-        today = db.execute(text("SELECT CURRENT_DATE")).scalar_one()
+        today = local_today(db, res["property_id"])
         return _side(db, res["property_id"], room_type_id=None, room_type="—",
                      arrival=today, departure=today, adults=0, children=0,
                      rooms=0)
@@ -560,7 +560,10 @@ def _cancel_terms(db: Session, reservation_id: uuid.UUID,
     pol = _policy(db, property_id, required=not waived)
     _, paid = _paid(db, reservation_id)
     current = _current(db, res, units)
-    today = db.execute(text("SELECT CURRENT_DATE")).scalar_one()
+    # The property's calendar, not the database's. CURRENT_DATE is UTC, which
+    # lags India by five and a half hours: from midnight to 05:30 a guest two
+    # days out was counted as three, and cancelled free inside the window.
+    today = local_today(db, property_id)
 
     days_before = (current.arrival_date - today).days
     within = days_before < pol["free_until_days"]

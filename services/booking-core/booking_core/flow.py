@@ -530,7 +530,14 @@ def check_out(
     if stay is None:
         raise FlowError("No in-house stay found for this unit")
 
-    today = business_date or datetime.now(timezone.utc).date()
+    # The property's calendar date when the caller names none. UTC's date
+    # lagged India by 5.5 hours, so an early check-out between midnight and
+    # 05:30 kept the night that had just begun off sale.
+    if business_date is None:
+        from chirala_common.property_time import local_today
+
+        business_date = local_today(session, unit.property_id)
+    today = business_date
 
     # Early checkout: return the nights the guest did not stay, keeping the
     # ones they did as occupied history (§4).

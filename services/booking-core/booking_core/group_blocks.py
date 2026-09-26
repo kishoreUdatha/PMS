@@ -546,7 +546,7 @@ def release(
     return sum(-n for n in delta.values())
 
 
-def sweep_cut_offs(db: Session, *, today: date) -> list[dict]:
+def sweep_cut_offs(db: Session, *, today: date | None = None) -> list[dict]:
     """Release every open block whose cut-off has arrived.
 
     Runs against every tenant, so it discovers blocks under ``system_context``
@@ -558,6 +558,11 @@ def sweep_cut_offs(db: Session, *, today: date) -> list[dict]:
     A block is released *on* its cut-off date rather than after it. "Cut-off
     15 March" means the rooms are back on sale that morning, which is the last
     day they can still be sold for the stay.
+
+    "Arrived" is judged in each property's own timezone unless ``today`` is
+    given. The sweep used to pass the server's ``date.today()`` -- UTC -- for
+    every tenant, so an Indian property's blocks were released five and a
+    half hours late, and one west of UTC released a day early.
     """
     from chirala_common.db import bind_tenant_context, system_context
 
@@ -568,7 +573,8 @@ def sweep_cut_offs(db: Session, *, today: date) -> list[dict]:
             SELECT id, organization_id, property_id, code, name
               FROM booking.group_blocks
              WHERE status = 'open' AND cut_off_date IS NOT NULL
-               AND cut_off_date <= :today
+               AND cut_off_date <= COALESCE(CAST(:today AS date),
+                                            booking.local_today(property_id))
              ORDER BY cut_off_date
             """
         ),
