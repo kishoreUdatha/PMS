@@ -37,6 +37,9 @@ or special "certification" screens.
 Channex asks for a property named **"Test Property - (Provider Name)"**, in
 **USD**, with two room types and two rate plans on each.
 
+(Locally, `python e2e/setup_channex_test_property.py --creds <owner creds> --grant-local`
+creates steps 1–3 through the PMS API.)
+
 1. **Property.** Create or rename the property as *Test Property - Chirala PMS*
    with currency **USD**. The Channex property takes the PMS property's
    name, currency and timezone.
@@ -97,7 +100,9 @@ names. Running provisioning (the **Full sync** button, or re-saving the
 partner) then adopts it instead of creating a second one.
 
 Environment (booking-core): `CHANNEX_API_URL=https://staging.channex.io/api/v1`,
-`CHANNEX_API_KEY`, `CHANNEX_WEBHOOK_SECRET` (a long random string), and
+`CHANNEX_API_KEY`, `CHANNEX_WEBHOOK_SECRET` (a long random string),
+`INVENTORY_HORIZON_DAYS=500` (inventory is kept 400 days ahead by default;
+the full sync publishes 500), and
 `APP_BASE_URL` on a stable `https://` host (named Cloudflare tunnel,
 `infra/cloudflared/README.md`) so webhooks reach the PMS.
 
