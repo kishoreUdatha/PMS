@@ -27,6 +27,23 @@ class BaseServiceSettings(BaseSettings):
     #: deployment that forgot to configure a secret cannot accept an empty one.
     service_token: str = ""
 
+    #: Signs the session tokens iam issues and every service checks.
+    #:
+    #: Comma-separated, newest first: the first key signs and any of them
+    #: verifies, so a key can be rotated without signing everybody out. Shared
+    #: by all three services because a token iam issued has to be accepted by
+    #: booking-core and finance. Generate one with::
+    #:
+    #:     python -c "import secrets; print(secrets.token_urlsafe(48))"
+    #:
+    #: Empty is tolerated only in local mode, where sign-in falls back to the
+    #: unsigned dev token; anywhere else the service refuses to start.
+    session_signing_key: str = ""
+    #: How long a session lasts before its holder has to sign in again. A
+    #: shift and a half: long enough that nobody is thrown out mid-shift,
+    #: short enough that yesterday's leaked token is dead today.
+    session_ttl_minutes: int = 12 * 60
+
     # Infrastructure
     redis_url: str = "redis://localhost:6379/0"
     nats_url: str = "nats://localhost:4222"

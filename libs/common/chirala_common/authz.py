@@ -5,10 +5,11 @@ relationship (property scope). Every service that guards a route uses this
 module so the rule is defined once; the permission data itself lives in the
 ``iam`` schema on the shared cluster, which every service can read.
 
-Identity source: a validated OIDC token (subject) in production. For local
-development before Keycloak is fully wired, the caller subject may be supplied
-via the ``X-Debug-Subject`` header; this is accepted ONLY when ENVIRONMENT=local.
-Real deployments must reject it (the gateway/token validator provides identity).
+Identity source: a signed session token issued by iam (see
+``chirala_common.session_tokens``). For local development the caller subject
+may also be supplied via the ``X-Debug-Subject`` header; this is accepted ONLY
+when ENVIRONMENT is exactly ``local``, and the gateway strips the header on the
+way in regardless.
 
 Services wire this up once at import time::
 
@@ -19,9 +20,9 @@ Services wire this up once at import time::
 
 from __future__ import annotations
 
+from . import session_tokens
 from .db import bind_tenant_context, identity_context
 
-import base64
 import hmac
 import uuid
 from collections.abc import Callable, Iterator
@@ -90,19 +91,14 @@ def _refuse_if_suspended(caller: Caller) -> None:
         )
 
 
-def subject_from_bearer(authorization: str | None) -> str | None:
-    """Extract the subject from a dev session token (base64 ``dev:<subject>``).
+def subject_from_bearer(authorization: str | None, db: Session) -> str | None:
+    """The subject of a live session token: signed, unexpired, not signed out.
 
-    Replace with JWT ``sub`` validation (``chirala_common.auth``) when Keycloak
-    is wired; this is the single seam that has to change.
+    The one seam every service goes through; the rules live in
+    ``chirala_common.session_tokens`` so iam's own caller and ``/auth/me``
+    cannot disagree with this one about what a valid token is.
     """
-    if not authorization or not authorization.lower().startswith("bearer "):
-        return None
-    try:
-        raw = base64.urlsafe_b64decode(authorization.split(" ", 1)[1].encode()).decode()
-    except Exception:  # noqa: BLE001
-        return None
-    return raw[4:] if raw.startswith("dev:") else None
+    return session_tokens.subject_from_bearer(authorization, db)
 
 
 # Query shared by both permission dependencies. ``:prop IS NULL`` makes the
@@ -240,7 +236,7 @@ def build_authz(
                 detail="Invalid service credential",
             )
 
-        subject = subject_from_bearer(authorization)
+        subject = subject_from_bearer(authorization, db)
         if subject is None and environment() == "local":
             subject = x_debug_subject
         if not subject:

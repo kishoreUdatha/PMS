@@ -9,25 +9,24 @@ somebody up for.
 
 **The subject shortcut.** ``{"subject": "admin-user"}`` with no password, kept
 because every seeded fixture and every developer session in this repository
-uses it. It is refused outright when the environment is production, and it is
-refused for any user who has a password set — otherwise adding credentials
+uses it. It is accepted only when the environment is exactly ``local``, and it
+is refused for any user who has a password set — otherwise adding credentials
 would have achieved nothing, since anyone could go around them.
 
-The token is still a base64 of the subject rather than a signed JWT. That is
-the remaining hole and it is deliberate to leave it visible: a credential check
-in front of a forgeable token buys less than it looks like, so this is the next
-thing to do, not a finished job.
+The session token is a signed, expiring JWT (``chirala_common.session_tokens``)
+and ``/auth/logout`` revokes it. It used to be a base64 of the subject, which
+anyone could write for themselves; the credential check in front of it bought
+nothing while that was so.
 """
 
 from __future__ import annotations
 
-import base64
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from smtplib import SMTPException
 
-from fastapi import Request
+from fastapi import Request, Response
 from chirala_common.db import identity_context, system_context
 from chirala_common.db import bind_tenant_context
 from chirala_common.audit import record_audit
@@ -38,6 +37,7 @@ from chirala_common.passwords import (
     verify_password,
 )
 from chirala_common.routing import TransactionalRoute
+from chirala_common import session_tokens
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -133,16 +133,11 @@ class SessionOut(BaseModel):
 
 
 def _make_token(subject: str) -> str:
-    return base64.urlsafe_b64encode(f"dev:{subject}".encode()).decode()
-
-
-def _subject_from_token(token: str) -> str | None:
-    try:
-        raw = base64.urlsafe_b64decode(token.encode()).decode()
-    except Exception:  # noqa: BLE001
-        return None
-    return raw[4:] if raw.startswith("dev:") else None
-
+    return session_tokens.issue(
+        subject, key=settings.session_signing_key,
+        ttl_seconds=settings.session_ttl_minutes * 60,
+        environment=settings.environment,
+    )
 
 
 def get_auth_session(request: Request, db: Session = Depends(get_session)) -> Session:
@@ -1327,7 +1322,7 @@ def me(
 ) -> SessionOut:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Missing bearer token")
-    subject = _subject_from_token(authorization.split(" ", 1)[1])
+    subject = session_tokens.subject_from_bearer(authorization, db)
     if not subject:
         raise HTTPException(status_code=401, detail="Invalid token")
     # A session reads only its own subject's identity.
@@ -1335,4 +1330,48 @@ def me(
     session = _load_session(db, subject)
     if session is None:
         raise HTTPException(status_code=401, detail="Unknown or inactive user")
+    # /me answers "who am I", not "give me a new session": the caller keeps
+    # the token it already holds, with the expiry it came with. Handing back a
+    # fresh one here would let any live token renew itself forever.
+    session.token = authorization.split(" ", 1)[1].strip()
     return session
+
+
+@auth_router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_session),
+) -> Response:
+    """End this session everywhere, not just in this browser.
+
+    A signed token stays valid until it expires however many times the client
+    forgets it, and a copy may be sitting in a proxy log or another tab. So
+    its ``jti`` is recorded as revoked and every service refuses it from the
+    next request on.
+
+    Always 204, including for a token that is already expired, revoked or
+    malformed: the caller wanted to be signed out, and they are. A local dev
+    token has no identity of its own to revoke and is simply forgotten by the
+    client, as before.
+    """
+    claims = None
+    if authorization and authorization.lower().startswith("bearer "):
+        claims = session_tokens.decode(authorization.split(" ", 1)[1])
+    if claims is not None and claims.jti is not None:
+        system_context(db, reason="sign-out")
+        db.execute(
+            text(
+                """
+                INSERT INTO iam.revoked_sessions (jti, subject, expires_at)
+                VALUES (:j, :s, to_timestamp(:e))
+                ON CONFLICT (jti) DO NOTHING
+                """
+            ),
+            {"j": claims.jti, "s": claims.subject, "e": claims.expires_at},
+        )
+        # Housekeeping while we are here: a revoked token that has also
+        # expired is refused on its expiry alone, so its row is dead weight
+        # in a table every request reads.
+        db.execute(text("DELETE FROM iam.revoked_sessions "
+                        "WHERE expires_at < now()"))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -61,3 +61,6 @@ nul
 # E2E demo run output (videos, screenshots, narration)
 e2e/out/
 e2e/node_modules/
+
+# Per-worktree virtualenvs
+.venv-wt/
