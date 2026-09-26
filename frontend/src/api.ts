@@ -96,6 +96,11 @@ api.interceptors.response.use(
   },
 )
 
+/** The orchestration endpoints (/flows/*) live at the gateway root, not under
+ *  /api. They go through the same client, so the same token, 401 handling and
+ *  `detail` flattening apply; only the base differs. */
+const FLOWS = { baseURL: '/flows' } as const
+
 /* ---------------- Auth (dev session) ---------------- */
 export interface SessionMembership {
   organization_id: string
@@ -1052,9 +1057,8 @@ export async function getDashboard(
   propertyId: string,
   businessDate?: string,
 ): Promise<DashboardData> {
-  // /flows/* lives at the gateway root, not under /api.
   const { data } = await api.get<DashboardData>('/dashboard', {
-    baseURL: '/flows',
+    ...FLOWS,
     params: { property_id: propertyId, business_date: businessDate },
   })
   return data
@@ -1774,7 +1778,7 @@ export interface FolioView {
 }
 
 export async function getFolioView(reservationId: string): Promise<FolioView> {
-  const { data } = await api.get<FolioView>(`/reservations/${reservationId}/folio-view`, { baseURL: '/flows' })
+  const { data } = await api.get<FolioView>(`/reservations/${reservationId}/folio-view`, FLOWS)
   return data
 }
 /** The reservation's folio, creating it if this is the first thing on it.
@@ -1793,7 +1797,7 @@ export async function ensureFolio(
       property_id: propertyId,
       reservation_id: reservationId,
     },
-    { baseURL: '/flows' },
+    FLOWS,
   )
   return data
 }
@@ -1938,7 +1942,7 @@ export async function settleReservation(
   const { data } = await api.post<SettleResult>(
     `/reservations/${reservationId}/settle`,
     body,
-    { baseURL: '/flows' },
+    FLOWS,
   )
   return data
 }
