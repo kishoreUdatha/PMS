@@ -26,6 +26,9 @@ from decimal import Decimal
 from chirala_common.audit import record_audit
 from chirala_common.authz import Caller, assert_property_in_org, build_authz
 from chirala_common.routing import TransactionalRoute
+from chirala_common.folio_posting import post_charge
+from chirala_common.property_time import trading_day
+from chirala_common.tax_engine import compute_tax, resolve_rules
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -224,38 +227,25 @@ def _rate(db: Session, property_id, room_type_id, on: date) -> Decimal:
 
 def _room_tax(db: Session, property_id: uuid.UUID, amount: Decimal,
               units: int) -> tuple[Decimal, str]:
-    """Tax on a room charge, by the same rule the folio uses.
+    """Tax on a room charge, by the engine the folio uses.
 
-    Mirrors ``finance_service.tax_engine``: at most ONE tax group applies (the
-    default where none is named), and every service charge or levy stacks on
-    top. Reading the same table is the point — a penalty taxed differently from
-    a room night would be indefensible on the bill.
+    This used to be a mirror of ``finance_service.tax_engine`` -- a second
+    reading of the same table with its own arithmetic -- and the two had
+    already drifted: the mirror ignored which rules are inclusive, rounded
+    once instead of per component, and multiplied every flat levy by units
+    whatever basis it declared. A penalty quoted here then posted as a
+    different number. Now it is the engine itself, shared through
+    ``chirala_common``, and the quote is what the posting will charge.
     """
-    rows = db.execute(
-        text(
-            """
-            SELECT code, name, charge_type, rate_type, rate_value, amount_basis
-            FROM finance.tax_rules
-            WHERE property_id = :p AND status = 'active'
-              AND 'rooms' = ANY(applicability)
-              AND (charge_type <> 'tax_group' OR is_default)
-              AND charge_type <> 'gst_component'
-            """
-        ),
-        {"p": property_id},
-    ).mappings().all()
-    tax = Decimal("0")
-    labels = []
-    for r in rows:
-        if r["rate_type"] == "percent":
-            part = (amount * Decimal(r["rate_value"]) / Decimal(100))
-            labels.append(f"{r['code']} {r['rate_value']}%")
-        else:
-            # A flat levy is per unit of what it is charged on.
-            part = Decimal(r["rate_value"]) * units
-            labels.append(f"{r['code']} {r['rate_value']}")
-        tax += part
-    return tax.quantize(Decimal("0.01")), ", ".join(labels) or "No room taxes configured"
+    rules = resolve_rules(db, property_id=property_id, category="rooms",
+                          on_date=trading_day(db, property_id))
+    result = compute_tax(rules, amount=amount, units=units, nights=units)
+    labels = [
+        f"{ln.tax_code} {ln.rate_snapshot}{'%' if ln.rate_type == 'percent' else ''}"
+        for ln in result.lines if ln.apply_as == "exclusive"
+    ]
+    return (result.exclusive_total.quantize(Decimal("0.01")),
+            ", ".join(labels) or "No room taxes configured")
 
 
 def _financials(db: Session, row, rooms: int):
@@ -470,11 +460,24 @@ def mark_no_show(
                 "The penalty was not charged: this reservation has no folio."
             )
         else:
-            _post(db, row, fin["folio_id"], chosen.base_amount,
-                  "no_show_penalty", f"no_show_penalty:{unit_id}")
-            if chosen.tax_amount > 0:
-                _post(db, row, fin["folio_id"], chosen.tax_amount,
-                      "no_show_penalty_tax", f"no_show_penalty_tax:{unit_id}")
+            # Through the shared ledger path. The engine adds the tax as its
+            # own debit when the chosen basis carries tax, so the tax is the
+            # engine's figure rather than one computed here -- and the line
+            # key is the one the night audit uses, so a no-show processed at
+            # the desk and again by the audit is charged once.
+            nights = (row["departure_date"] - row["arrival_date"]).days
+            post_charge(
+                db, organization_id=row["organization_id"],
+                property_id=row["property_id"], folio_id=fin["folio_id"],
+                amount=chosen.base_amount,
+                business_date=trading_day(db, row["property_id"]),
+                source_type="no_show_penalty", tax_category="rooms",
+                taxed=chosen.tax_amount > 0,
+                tax_units=(max(nights, 1)
+                           if body.penalty_basis == "full_stay" else 1),
+                source_line_key=f"no_show_penalty:{unit_id}",
+                posted_by=caller.subject,
+            )
 
     # --- what happens to money already held -------------------------------
     refund_due = Decimal("0")
@@ -605,20 +608,3 @@ def mark_no_show(
         nights_returned=nights_returned, warnings=warnings,
     )
 
-
-def _post(db: Session, row, folio_id, amount: Decimal, source_type: str,
-          key: str):
-    db.execute(
-        text(
-            """
-            INSERT INTO finance.folio_entries
-                (id, organization_id, property_id, folio_id, entry_type,
-                 amount, currency, business_date, source_type, source_line_key)
-            VALUES (:id, :org, :prop, :folio, 'debit', :amt, :cur,
-                    CURRENT_DATE, :st, :slk)
-            """
-        ),
-        {"id": uuid.uuid4(), "org": row["organization_id"],
-         "prop": row["property_id"], "folio": folio_id, "amt": amount,
-         "cur": row["currency"], "st": source_type, "slk": key},
-    )

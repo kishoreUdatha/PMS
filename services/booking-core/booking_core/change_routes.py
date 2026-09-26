@@ -41,6 +41,9 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from chirala_common.folio_posting import post_charge, resolve_currency
+from chirala_common.property_time import trading_day
+
 from .database import get_session
 from .inventory import (
     InventoryOversold,
@@ -696,7 +699,24 @@ def modify_reservation(
 
     folio_entry_id = None
     folio_id, _ = _paid(db, reservation_id)
-    if body.charge_difference and difference != 0 and folio_id is not None:
+    if body.charge_difference and difference > 0 and folio_id is not None:
+        # A dearer stay is room revenue: posted through the shared ledger
+        # path so it is taxed as a room, dated on the ledger's open day and
+        # kept in the folio's currency. It was a raw untaxed row stamped with
+        # UTC's CURRENT_DATE.
+        folio_entry_id = post_charge(
+            db, organization_id=res["organization_id"],
+            property_id=property_id, folio_id=folio_id, amount=difference,
+            business_date=trading_day(db, property_id),
+            source_type="reservation_change", tax_category="rooms",
+            source_line_key=f"reservation_change:{uuid.uuid4()}",
+            tax_units=max(proposed.nights, 1), posted_by=caller.subject,
+        ).entry_id
+    elif body.charge_difference and difference < 0 and folio_id is not None:
+        # A cheaper stay is an allowance, not a negative charge, and the
+        # ledger has no shared path for one yet -- finance's adjustments own
+        # tax reversal. Recorded as the untaxed credit it always was, but on
+        # the right day and in the right currency.
         folio_entry_id = uuid.uuid4()
         db.execute(
             text(
@@ -705,14 +725,15 @@ def modify_reservation(
                     (id, organization_id, property_id, folio_id, entry_type,
                      amount, currency, business_date, source_type,
                      source_line_key)
-                VALUES (:id, :org, :prop, :folio, :etype, :amt, :cur,
-                        CURRENT_DATE, 'reservation_change', :slk)
+                VALUES (:id, :org, :prop, :folio, 'credit', :amt, :cur,
+                        :bd, 'reservation_change', :slk)
                 """
             ),
             {"id": folio_entry_id, "org": res["organization_id"],
              "prop": property_id, "folio": folio_id,
-             "etype": "debit" if difference > 0 else "credit",
-             "amt": abs(difference), "cur": res["currency"],
+             "amt": abs(difference),
+             "cur": resolve_currency(db, stated=None, folio_ids=[folio_id]),
+             "bd": trading_day(db, property_id),
              "slk": f"reservation_change:{uuid.uuid4()}"},
         )
     elif body.charge_difference and difference != 0:
@@ -897,23 +918,18 @@ def cancel_reservation(
                 "The penalty was not charged: this reservation has no folio."
             )
         else:
-            folio_entry_id = uuid.uuid4()
-            db.execute(
-                text(
-                    """
-                    INSERT INTO finance.folio_entries
-                        (id, organization_id, property_id, folio_id,
-                         entry_type, amount, currency, business_date,
-                         source_type, source_line_key)
-                    VALUES (:id, :org, :prop, :folio, 'debit', :amt, :cur,
-                            CURRENT_DATE, 'cancellation_fee', :slk)
-                    """
-                ),
-                {"id": folio_entry_id, "org": res["organization_id"],
-                 "prop": property_id, "folio": folio_id, "amt": penalty,
-                 "cur": res["currency"],
-                 "slk": f"cancellation_fee:{reservation_id}"},
-            )
+            # Through the shared ledger path: taxed as the room it stands in
+            # for (finance taxes 'cancellation_fee' as rooms), on the ledger's
+            # open day, in the folio's currency. Idempotent on its key, so a
+            # replayed cancellation cannot charge twice.
+            folio_entry_id = post_charge(
+                db, organization_id=res["organization_id"],
+                property_id=property_id, folio_id=folio_id, amount=penalty,
+                business_date=trading_day(db, property_id),
+                source_type="cancellation_fee",
+                source_line_key=f"cancellation_fee:{reservation_id}",
+                posted_by=caller.subject,
+            ).entry_id
     if refund > 0:
         warnings.append(
             f"A refund of {refund} is due. Process it from the folio — "

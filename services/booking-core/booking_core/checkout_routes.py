@@ -35,6 +35,8 @@ from chirala_common import payment_methods
 from chirala_common.audit import record_audit
 from chirala_common.authz import Caller, assert_property_in_org, build_authz
 from chirala_common.routing import TransactionalRoute
+from chirala_common.folio_posting import resolve_currency
+from chirala_common.property_time import trading_day
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -550,6 +552,9 @@ def _post_credit(db: Session, row, *, folio_id, amount: Decimal, method: str,
          "cur": row["currency"]},
     )
     entry_id = uuid.uuid4()
+    # The ledger's open day, not CURRENT_DATE: after midnight and before the
+    # audit, money taken at the desk still belongs to the day being traded,
+    # and CURRENT_DATE is UTC besides.
     db.execute(
         text(
             """
@@ -558,12 +563,14 @@ def _post_credit(db: Session, row, *, folio_id, amount: Decimal, method: str,
                  amount, currency, business_date, source_type, source_id,
                  source_line_key)
             VALUES (:id, :org, :prop, :folio, 'credit', :amt, :cur,
-                    CURRENT_DATE, :st, :src, :slk)
+                    :bd, :st, :src, :slk)
             """
         ),
         {"id": entry_id, "org": row["organization_id"],
          "prop": row["property_id"], "folio": folio_id, "amt": amount,
-         "cur": row["currency"], "st": source_type, "src": str(payment_id),
+         "cur": resolve_currency(db, stated=None, folio_ids=[folio_id]),
+         "bd": trading_day(db, row["property_id"]),
+         "st": source_type, "src": str(payment_id),
          "slk": f"{source_type}:{payment_id}"},
     )
     db.execute(
@@ -650,12 +657,15 @@ def complete_check_out(
                      amount, currency, business_date, source_type,
                      source_line_key)
                 VALUES (:id, :org, :prop, :folio, 'debit', :amt, :cur,
-                        CURRENT_DATE, 'deposit_refund', :slk)
+                        :bd, 'deposit_refund', :slk)
                 """
             ),
             {"id": entry_id, "org": row["organization_id"],
              "prop": property_id, "folio": folio["id"], "amt": deposit,
-             "cur": row["currency"], "slk": f"deposit_refund:{unit_id}"},
+             "cur": resolve_currency(db, stated=None,
+                                     folio_ids=[folio["id"]]),
+             "bd": trading_day(db, property_id),
+             "slk": f"deposit_refund:{unit_id}"},
         )
         refunded = deposit
         balance += deposit

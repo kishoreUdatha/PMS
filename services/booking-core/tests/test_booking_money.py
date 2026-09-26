@@ -347,13 +347,13 @@ def test_two_simultaneous_cancellations_release_the_rooms_once(tenant):
 # --------------------------------------------------------------------------
 # 3. No-show release
 # --------------------------------------------------------------------------
-def _mark_no_show(t, unit_id):
+def _mark_no_show(t, unit_id, basis="one_night"):
     from booking_core.noshow_routes import NoShowIn, mark_no_show
 
     with t.session() as s:
         return mark_no_show(
             unit_id, t.prop,
-            NoShowIn(penalty_basis="one_night", reason="did_not_arrive"),
+            NoShowIn(penalty_basis=basis, reason="did_not_arrive"),
             caller=t.caller(), db=s)
 
 
@@ -750,3 +750,91 @@ def test_resetting_counters_is_refused_under_live_bookings(tenant):
 
     # A night with nothing live can still be reset.
     _seed_route(t, arrival, arrival, cap=2, reset=True)
+
+
+# --------------------------------------------------------------------------
+# 8. Folio postings go through the ledger's rules
+# --------------------------------------------------------------------------
+def _folio_and_tax(t, reservation_id, *, open_day: date):
+    """A folio, a 12% room tax, and a business day the audit has not closed."""
+    folio = uuid.uuid4()
+    with t.owner.begin() as c:
+        c.execute(text(
+            "INSERT INTO finance.folios (id, organization_id, property_id, "
+            "reservation_id, type, currency, status) "
+            "VALUES (:f, :o, :p, :r, 'guest', :cur, 'open')"),
+            {"f": folio, "o": t.org, "p": t.prop, "r": reservation_id,
+             "cur": t.currency})
+        c.execute(text(
+            "INSERT INTO finance.tax_rules (organization_id, property_id, "
+            "code, effective_from, name, charge_type, rate_type, rate_value, "
+            "apply_as, applicability, is_default) VALUES (:o, :p, 'GST12', "
+            "'2000-01-01', 'GST 12', 'tax_group', 'percent', 12, "
+            "'exclusive', ARRAY['rooms'], true)"),
+            {"o": t.org, "p": t.prop})
+        c.execute(text(
+            "INSERT INTO finance.business_days (organization_id, property_id, "
+            "business_date, status) VALUES (:o, :p, :d, 'open')"),
+            {"o": t.org, "p": t.prop, "d": open_day})
+    return folio
+
+
+def test_a_cancellation_fee_is_posted_through_the_ledger(tenant):
+    """booking-core wrote the fee straight into folio_entries.
+
+    Untaxed (finance taxes a cancellation fee as a room), stamped with UTC's
+    CURRENT_DATE rather than the ledger's open business day, and in the
+    reservation's currency whatever the folio kept. It now goes through the
+    same posting code finance uses.
+    """
+    t = tenant(currency="USD")
+    arrival = date.today() + timedelta(days=1)  # inside the 2-day window
+    t.seed(arrival, 2)
+    a = t.hold(arrival, 2, rate=Decimal("100.00"))
+    t.confirm(a.reservation_id)
+    open_day = date.today() - timedelta(days=3)
+    folio = _folio_and_tax(t, a.reservation_id, open_day=open_day)
+
+    out = _cancel(t, a.reservation_id)
+    assert out.penalty_amount == Decimal("100.00")
+
+    with t.owner.connect() as c:
+        rows = c.execute(text(
+            "SELECT source_type, amount, currency, business_date "
+            "FROM finance.folio_entries WHERE folio_id = :f "
+            "ORDER BY source_type"), {"f": folio}).all()
+    assert [(r.source_type, r.amount, r.currency, r.business_date)
+            for r in rows] == [
+        ("cancellation_fee", Decimal("100.0000"), "USD", open_day),
+        ("cancellation_fee_tax", Decimal("12.0000"), "USD", open_day),
+    ]
+
+
+def test_a_no_show_penalty_is_taxed_by_the_engine_it_is_quoted_from(tenant):
+    """The desk computed no-show tax with its own mirror and wrote it raw.
+
+    Now the quote and the posting are the same engine, and the line keys are
+    the night audit's, so the two paths cannot charge twice.
+    """
+    t = tenant(currency="USD")
+    arrival = date.today() - timedelta(days=1)
+    t.seed(arrival, 2)
+    a = t.hold(arrival, 2)
+    t.confirm(a.reservation_id)
+    open_day = date.today() - timedelta(days=1)
+    folio = _folio_and_tax(t, a.reservation_id, open_day=open_day)
+
+    out = _mark_no_show(t, a.reservation_unit_id, basis="one_night_tax")
+    assert out.penalty_charged == Decimal("112.00")
+    with t.owner.connect() as c:
+        rows = c.execute(text(
+            "SELECT source_type, source_line_key, amount, business_date "
+            "FROM finance.folio_entries WHERE folio_id = :f "
+            "ORDER BY source_type"), {"f": folio}).all()
+    u = a.reservation_unit_id
+    assert [tuple(r) for r in rows] == [
+        ("no_show_penalty", f"no_show_penalty:{u}", Decimal("100.0000"),
+         open_day),
+        ("no_show_penalty_tax", f"no_show_penalty:{u}#tax",
+         Decimal("12.0000"), open_day),
+    ]
