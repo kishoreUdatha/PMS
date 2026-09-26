@@ -115,6 +115,12 @@ class GatewaySettings(BaseSettings):
     #: Presented on calls the gateway makes on its own behalf — a flow that
     #: has no user to borrow a token from. Shared with the services.
     service_token: str = ""
+    #: Strict-Transport-Security max-age, sent on responses to HTTPS requests
+    #: (directly, or as reported by the TLS terminator in X-Forwarded-Proto).
+    #: 0 turns it off -- the escape hatch for a deployment still moving to
+    #: HTTPS, since a browser that has seen the header refuses plain HTTP to
+    #: the host until it expires.
+    hsts_max_age_seconds: int = 180 * 24 * 3600
 
 
 settings = GatewaySettings()
@@ -132,6 +138,45 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+#: Everything the gateway answers with except the booking page is JSON, a PDF
+#: or an image -- none of which should ever run script, load anything, or be
+#: framed. The strict policy says exactly that.
+_CSP_STRICT = "default-src 'none'; frame-ancestors 'none'"
+#: The booking page is a real page with inline script and styles, and a
+#: policy precise enough not to break it would have to be kept in step with
+#: every edit to it. Refusing to be framed is the part that matters there
+#: (clickjacking a payment step), so that is all it gets.
+_CSP_PAGE = "frame-ancestors 'none'"
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Headers that tell a browser how little to trust what comes back.
+
+    Here rather than in each service because the gateway is the only thing a
+    browser talks to. ``setdefault`` throughout, so a route that deliberately
+    says something different keeps its own answer.
+
+    The staff SPA is built by Vite and served elsewhere, so the strict CSP
+    here cannot break it; its own host sets its page policy.
+    """
+    response = await call_next(request)
+    h = response.headers
+    h.setdefault("X-Content-Type-Options", "nosniff")
+    h.setdefault("X-Frame-Options", "DENY")
+    h.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    is_page = response.headers.get("content-type", "").startswith("text/html")
+    h.setdefault("Content-Security-Policy", _CSP_PAGE if is_page else _CSP_STRICT)
+    # Only over HTTPS: browsers ignore it on plain HTTP anyway, and a local
+    # stack on http://localhost should not learn to refuse itself.
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    if settings.hsts_max_age_seconds > 0 and proto.split(",")[0].strip() == "https":
+        h.setdefault("Strict-Transport-Security",
+                     f"max-age={settings.hsts_max_age_seconds}")
+    return response
+
 
 _ROUTES = {
     "iam": settings.iam_url,
