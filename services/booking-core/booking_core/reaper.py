@@ -192,6 +192,32 @@ async def channel_push_loop() -> None:
         await asyncio.sleep(settings.channel_push_seconds)
 
 
+async def channel_feed_loop() -> None:
+    """Collect any booking the webhook missed, forever.
+
+    A webhook is a push, and a push to a deployment that was down, or to an
+    address that changed, is simply lost. The channel manager keeps every
+    revision it has not had an acknowledgement for; asking for those on a
+    timer means a missed delivery is late rather than gone.
+    """
+    from . import channel_routes
+
+    log.info("channel booking feed poll started (every %ds)",
+             settings.channel_feed_seconds)
+    await asyncio.sleep(60)
+    while True:
+        try:
+            n = await asyncio.to_thread(channel_routes.poll_feed, SessionFactory)
+            if n:
+                log.warning("channel feed: recovered %d booking(s) the "
+                            "webhook had not delivered", n)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("channel feed poll failed")
+        await asyncio.sleep(settings.channel_feed_seconds)
+
+
 async def channel_provision_loop() -> None:
     """Keep every property in step with the channel manager, forever.
 

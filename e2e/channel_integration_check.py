@@ -262,6 +262,11 @@ def main():
                 {"event": "test"}, {"X-Channex-Webhook-Secret": SECRET})
     check("Inbound", "Channex 'test' event is answered OK", s == 200 and b.get("status") == "ok", b)
 
+    inv_sql = ("SELECT held_units || '|' || reserved_units FROM booking.room_type_inventory_days d "
+               "JOIN property.room_types rt ON rt.id=d.room_type_id "
+               f"WHERE rt.name='Deluxe Sea View' AND d.property_id='{A['prop']}' "
+               f"AND d.stay_date='{arrive.isoformat()}'")
+    inv_before = [int(x) for x in (sql(inv_sql) or "0|0").split("|")]
     rid, rev = revision(ext_prop, [room(ext_deluxe, arrive, 2, 11000)])
     s, b = webhook(rid)
     ev = event_row(rid).split("|")
@@ -281,12 +286,10 @@ def main():
               r)
         check("Inbound", "Booking acknowledged to the channel manager after it was saved",
               ev[3] == "t" and fake_state()["revisions"][rid].get("acknowledged") is True, f"acknowledged={ev[3]}")
-        inv = sql("SELECT held_units, reserved_units FROM booking.room_type_inventory_days d "
-                  "JOIN property.room_types rt ON rt.id=d.room_type_id "
-                  f"WHERE rt.name='Deluxe Sea View' AND d.property_id='{A['prop']}' "
-                  f"AND d.stay_date='{arrive.isoformat()}'").split("|")
+        inv = [int(x) for x in sql(inv_sql).split("|")]
+        d_held, d_res = inv[0] - inv_before[0], inv[1] - inv_before[1]
         check("Inbound", "Inventory counts the channel booking as reserved (not left as a hold)",
-              inv == ["0", "1"], f"held_units={inv[0]} reserved_units={inv[1] if len(inv) > 1 else '?'}",
+              (d_held, d_res) == (0, 1), f"change: held_units {d_held:+d}, reserved_units {d_res:+d}",
               severity="High")
         bs = sql(f"SELECT coalesce(business_source_id::text,'') FROM booking.reservations WHERE id='{res_id}'")
         check("Inbound", "Channel booking is attributed to the Agoda partner (for counts and commission)",
@@ -318,8 +321,11 @@ def main():
           n == "1", f"first={b1.get('status')} (HTTP {s1}), redelivery={b2.get('status')}, reservations={n}",
           severity="Critical")
 
-    rid_m, rev_m = revision(ext_prop, [room(ext_deluxe, arrive + timedelta(days=5), 2, 11000),
-                                       room(ext_suite, arrive + timedelta(days=5), 2, 19000)])
+    # A date nothing else in this or an earlier run has booked, so the check
+    # measures the booking logic rather than leftover test data.
+    fresh = date.today() + timedelta(days=120 + (uuid.uuid4().int % 250))
+    rid_m, rev_m = revision(ext_prop, [room(ext_deluxe, fresh, 2, 11000),
+                                       room(ext_suite, fresh, 2, 19000)])
     s, b = webhook(rid_m)
     types = sql("SELECT string_agg(rt.name, ',' ORDER BY rt.name) FROM booking.reservation_units u "
                 "JOIN booking.reservations r ON r.id=u.reservation_id "
@@ -362,8 +368,12 @@ def main():
     s, b = api("POST", f"/booking/reservations/{d_res}/cancel?property_id={A['prop']}", A["token"],
                {"reason": "guest_request", "notes": "OTA cancelled by phone", "waive_penalty": True})
     after_c = sql(inv_q)
+    pre = sql(inv_q.replace("held_units || '/' || reserved_units", "0"))  # row exists
+    booked = [int(x) for x in before_c.split("/")]
+    freed = [int(x) for x in after_c.split("/")]
     check("Edge cases", "Desk cancelling an OTA booking puts the room back on sale",
-          after_c == "0/0", f"cancel HTTP {s}; held/reserved before={before_c} after={after_c}",
+          sum(booked) - sum(freed) == 1,
+          f"cancel HTTP {s}; held/reserved with booking={before_c} after cancel={after_c}",
           severity="High")
 
     # --------------------------------------------------------- isolation --

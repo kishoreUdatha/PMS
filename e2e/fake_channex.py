@@ -119,6 +119,14 @@ async def restrictions(request: Request):
     return {"data": [{"id": str(uuid.uuid4()), "type": "task"}], "meta": {"message": "Success"}}
 
 
+@app.get(f"{API}/booking_revisions/feed")
+async def revision_feed():
+    """Revisions not yet acknowledged -- what Channex offers a PMS to poll."""
+    return {"data": [_obj("booking_revision", r)
+                     for r in store["revisions"].values()
+                     if not r.get("acknowledged")]}
+
+
 @app.get(f"{API}/booking_revisions/{{rid}}")
 async def get_revision(rid: str):
     if control["fail_fetch"] > 0:

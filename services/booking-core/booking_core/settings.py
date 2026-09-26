@@ -107,6 +107,9 @@ class BookingSettings(BaseServiceSettings):
     #: change hourly; room types and rate plans change a few times a year, and
     #: each property costs several calls to the far side to check.
     channel_provision_seconds: int = 900
+    #: How often to ask the channel manager for bookings it still holds
+    #: unacknowledged -- the safety net under the webhook.
+    channel_feed_seconds: int = 300
     #: How many properties per sweep. A ceiling, not a target — it stops a
     #: first run against a large estate turning into a thousand API calls in
     #: one burst. The rest are picked up next pass, oldest first.

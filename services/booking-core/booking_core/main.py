@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from .channel_routes import channel_router
 from .public_routes import public_router
 from .reaper import (
-    channel_provision_loop, channel_push_loop,
+    channel_feed_loop, channel_provision_loop, channel_push_loop,
     hold_reaper_loop,
     block_cutoff_loop,
     occupancy_sweep_loop,
@@ -67,6 +67,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # date, the other is rooms permanently off sale.
     if settings.channel_push_enabled and settings.channex_api_key:
         tasks.append(asyncio.create_task(channel_push_loop()))
+        tasks.append(asyncio.create_task(channel_feed_loop()))
     # Structural rather than numerical: this is what makes sure the far side
     # knows about every property and every room type in the first place. Its
     # own task again — a provisioning sweep stalling on one slow property must

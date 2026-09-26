@@ -322,6 +322,10 @@ def _paid(db: Session, reservation_id: uuid.UUID):
 
 def _may_approve(db: Session, caller: Caller, property_id: uuid.UUID) -> bool:
     from chirala_common.authz import _GRANT_SQL
+    if caller.is_service:
+        # The platform acting on a fact from outside -- an OTA cancellation
+        # the hotel must honour -- not a clerk asking for an exception.
+        return True
     if caller.user_id is None:
         return False
     return bool(db.execute(text(_GRANT_SQL), {
