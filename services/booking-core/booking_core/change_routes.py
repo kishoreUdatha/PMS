@@ -196,9 +196,27 @@ _RES_SQL = """
 """
 
 
-def _reservation(db: Session, rid: uuid.UUID, property_id: uuid.UUID):
+def _reservation(db: Session, rid: uuid.UUID, property_id: uuid.UUID, *,
+                 lock: bool = False):
+    """The reservation, optionally locked for the rest of the transaction.
+
+    Every path that *changes* a booking passes ``lock=True``. Without it two
+    writers -- a desk cancelling while the OTA's redelivered cancellation
+    arrives, say -- both read ``confirmed``, both pass ``_blocked`` and both
+    give the rooms back, so ``reserved_units`` went down twice for one
+    booking and the property sold a room it did not have. With the row
+    locked the second writer waits, then reads the status the first one
+    committed and is refused by the same check.
+
+    The lock is taken before the units are read, so the units a writer acts
+    on are the ones the winner left behind, not a snapshot from before it.
+    ``OF r``: the guest row is joined for display and must not be locked --
+    an outer join's nullable side cannot be, and a guest shared by two
+    bookings would serialise unrelated changes.
+    """
     row = db.execute(
-        text(_RES_SQL + " WHERE r.id = :id AND r.property_id = :prop"),
+        text(_RES_SQL + " WHERE r.id = :id AND r.property_id = :prop"
+             + (" FOR UPDATE OF r" if lock else "")),
         {"id": rid, "prop": property_id},
     ).mappings().first()
     if row is None:
@@ -560,7 +578,7 @@ def modify_reservation(
     """Apply the change, in one transaction, only if it can be accommodated."""
     assert_property_in_org(db, caller, property_id)
     _check_reason(body.reason)
-    res = _reservation(db, reservation_id, property_id)
+    res = _reservation(db, reservation_id, property_id, lock=True)
     units = _units(db, reservation_id)
     warnings: list[str] = []
 
@@ -721,7 +739,7 @@ def cancel_reservation(
     """Cancel the booking, charge the policy's penalty, release the rooms."""
     assert_property_in_org(db, caller, property_id)
     _check_reason(body.reason)
-    res = _reservation(db, reservation_id, property_id)
+    res = _reservation(db, reservation_id, property_id, lock=True)
     units = _units(db, reservation_id)
     warnings: list[str] = []
 
@@ -807,15 +825,17 @@ def cancel_reservation(
                  "WHERE reservation_unit_id = :u AND status = 'active'"),
             {"u": u["id"]},
         )
+        # Guarded on state as well as locked above: a unit something else
+        # already ended is not ended again.
         db.execute(
             text("UPDATE booking.reservation_units SET status = 'cancelled', "
                  "assigned_room_id = NULL, version = version + 1 "
-                 "WHERE id = :id"),
+                 "WHERE id = :id AND status NOT IN ('cancelled', 'no_show')"),
             {"id": u["id"]},
         )
     db.execute(
         text("UPDATE booking.reservations SET status = 'cancelled', "
-             "version = version + 1 WHERE id = :id"),
+             "version = version + 1 WHERE id = :id AND status <> 'cancelled'"),
         {"id": reservation_id},
     )
 
@@ -1142,7 +1162,7 @@ def extend_stay(
     """Keep the guest where they are for longer. One transaction."""
     assert_property_in_org(db, caller, property_id)
     _check_reason(body.reason)
-    res = _reservation(db, reservation_id, property_id)
+    res = _reservation(db, reservation_id, property_id, lock=True)
     units = _units(db, reservation_id)
     warnings: list[str] = []
 

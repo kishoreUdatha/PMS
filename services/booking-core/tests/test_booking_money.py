@@ -287,3 +287,58 @@ def test_a_new_reservation_is_in_its_propertys_currency(tenant):
             "SELECT currency FROM booking.reservations WHERE id = :r"),
             {"r": held.reservation_id}).scalar_one()
     assert cur == "USD"
+
+
+# --------------------------------------------------------------------------
+# 2. Cancel / modify race
+# --------------------------------------------------------------------------
+def _cancel(t, reservation_id, *, waive=False, reason="guest_request"):
+    from booking_core.change_routes import CancelIn, cancel_reservation
+
+    with t.session() as s:
+        return cancel_reservation(
+            reservation_id, t.prop,
+            CancelIn(reason=reason, notes="test", waive_penalty=waive),
+            caller=t.caller(), db=s)
+
+
+def test_two_simultaneous_cancellations_release_the_rooms_once(tenant):
+    """A desk cancel racing an OTA's redelivered cancel gave the rooms back twice.
+
+    Both read the booking as confirmed before either committed, so both
+    decremented ``reserved_units``: the second decrement came off *another*
+    booking's night and the property sold a room it did not have. Two
+    bookings share the nights here precisely so a double release shows up as
+    1 -> 0 rather than being hidden by the counter's floor at zero.
+    """
+    from fastapi import HTTPException
+
+    t = tenant(rooms=2)
+    arrival = date.today() + timedelta(days=30)
+    t.seed(arrival, 2)
+    a = t.hold(arrival, 2)
+    b = t.hold(arrival, 2)
+    t.confirm(a.reservation_id)
+    t.confirm(b.reservation_id)
+    assert t.counters(arrival, 2).reserved == 4
+
+    barrier = threading.Barrier(2)
+    outcomes: list[str] = []
+
+    def attempt():
+        barrier.wait(timeout=5)
+        try:
+            _cancel(t, a.reservation_id, waive=True)
+            outcomes.append("cancelled")
+        except HTTPException as exc:
+            outcomes.append(f"refused {exc.status_code}")
+
+    threads = [threading.Thread(target=attempt) for _ in range(2)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+
+    assert sorted(outcomes) == ["cancelled", "refused 422"], outcomes
+    # Booking b still holds both of its nights.
+    assert t.counters(arrival, 2).reserved == 2
