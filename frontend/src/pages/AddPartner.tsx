@@ -16,6 +16,7 @@ import {
   type ChannelLink, type ConnectionTest,
 } from '../api'
 import { Crumbs } from '../components/Crumbs'
+import { errorText } from '../lib/forms'
 
 /**
  * Add a partner — the booking channel or agent a property sells through.
@@ -315,8 +316,7 @@ export default function AddPartner() {
       }
       nav('/channels')
     } catch (e) {
-      const er = e as { response?: { data?: { detail?: string } } }
-      setErr(er.response?.data?.detail ?? 'Could not add that partner.')
+      setErr(errorText(e, 'Could not add that partner.'))
       setBusy(false)
     }
   }

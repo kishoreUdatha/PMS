@@ -14,6 +14,7 @@ import {
   getChannelLink, getOtaStatus,
   type ChannelPartner,
 } from '../api'
+import { errorText } from '../lib/forms'
 
 /**
  * Screen 024 — the partners this organisation sells through.
@@ -112,8 +113,7 @@ export default function ChannelPartners() {
       await setChannelPartnerType(p.id, value || null)
       await refetch()
     } catch (e) {
-      const er = e as { response?: { data?: { detail?: string } } }
-      setErr(er.response?.data?.detail ?? 'Could not update that partner.')
+      setErr(errorText(e, 'Could not update that partner.'))
     } finally { setBusy('') }
   }
 

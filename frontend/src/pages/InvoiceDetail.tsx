@@ -12,6 +12,7 @@ import {
 } from '../api'
 import { Crumbs } from '../components/Crumbs'
 import { useActivePropertyId } from '../hooks/useProperty'
+import { errorText } from '../lib/forms'
 
 const money = (v: string | number, cur = 'INR') =>
   new Intl.NumberFormat('en-IN', {
@@ -50,8 +51,7 @@ export default function InvoiceDetail() {
     qc.invalidateQueries({ queryKey: ['invoices'] })
   }
   function fail(e: unknown) {
-    const er = e as { response?: { data?: { detail?: string } }; message?: string }
-    setErr(er.response?.data?.detail ?? er.message ?? 'That did not work.')
+    setErr(errorText(e, 'That did not work.'))
   }
 
   async function doIssue() {

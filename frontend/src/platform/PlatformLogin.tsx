@@ -4,6 +4,7 @@ import { AlertTriangle, Loader2, ShieldCheck } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext'
 import { returnPath } from '../auth/sessionEvents'
 import { MfaRequired } from '../api'
+import { errorText } from '../lib/forms'
 
 /**
  * Platform sign-in.
@@ -50,9 +51,7 @@ export default function PlatformLogin() {
         setError('')
         return
       }
-      const detail = (err as { response?: { data?: { detail?: string } } })
-        .response?.data?.detail
-      setError(detail || 'Sign-in failed.')
+      setError(errorText(err, 'Sign-in failed.'))
     } finally {
       setBusy(false)
     }

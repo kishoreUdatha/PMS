@@ -15,6 +15,7 @@ import {
 } from '../api'
 import { Crumbs } from '../components/Crumbs'
 import { useActivePropertyId } from '../hooks/useProperty'
+import { errorText } from '../lib/forms'
 
 /** Screen 059 — Add or Edit Room. */
 
@@ -70,10 +71,7 @@ function fromRoom(r: RoomDetail): FormState {
 }
 
 function apiError(e: unknown): string {
-  const detail = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
-  if (typeof detail === 'string') return detail
-  if (Array.isArray(detail)) return 'Some fields are invalid. Check the highlighted values.'
-  return 'Could not save the room. Please try again.'
+  return errorText(e, 'Could not save the room. Please try again.')
 }
 
 function Field({ label, required, children }: {

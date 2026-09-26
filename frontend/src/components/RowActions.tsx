@@ -15,6 +15,7 @@ import {
   openFolioPdf, openRegistrationCard, setHousekeepingStatus,
 } from '../api'
 import { usePaymentMethods } from '../lib/paymentMethods'
+import { errorText } from '../lib/forms'
 
 /** Everything a desk can do to one booking from a list.
  *
@@ -111,8 +112,7 @@ export default function RowActions({ ctx, open, onOpenChange }: {
   async function run(what: string, fn: () => Promise<void>) {
     setBusy(what); setErr(''); setNote('')
     try { await fn() } catch (e) {
-      const er = e as { response?: { data?: { detail?: string } } }
-      setErr(er.response?.data?.detail ?? 'That did not go through.')
+      setErr(errorText(e, 'That did not go through.'))
     } finally { setBusy('') }
   }
 
@@ -415,8 +415,7 @@ function useSave(onSaved: () => void) {
   async function save(fn: () => Promise<unknown>) {
     setBusy(true); setErr('')
     try { await fn(); onSaved() } catch (e) {
-      const er = e as { response?: { data?: { detail?: string } } }
-      setErr(er.response?.data?.detail ?? 'That did not go through.')
+      setErr(errorText(e, 'That did not go through.'))
     } finally { setBusy(false) }
   }
   return { busy, err, save }

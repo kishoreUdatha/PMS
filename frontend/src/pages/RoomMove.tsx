@@ -15,6 +15,7 @@ import {
 } from '../api'
 import { Crumbs } from '../components/Crumbs'
 import { useActivePropertyId } from '../hooks/useProperty'
+import { errorText } from '../lib/forms'
 
 /**
  * Screen 053 — Room Move and Upgrade.
@@ -122,8 +123,7 @@ export default function RoomMove() {
         to: r.to_room, warnings: r.warnings })
     },
     onError: (e) => {
-      const er = e as { response?: { data?: { detail?: string } } }
-      setError(er.response?.data?.detail ?? 'The move could not be completed.')
+      setError(errorText(e, 'The move could not be completed.'))
     },
   })
 

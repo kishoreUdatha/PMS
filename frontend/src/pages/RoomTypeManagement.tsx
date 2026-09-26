@@ -15,6 +15,7 @@ import {
   setRoomTypePrimaryPhoto, deleteRoomTypePhoto,
   type RoomTypeRow, type RoomTypeStats, type AmenityRow,
 } from '../api'
+import { errorText } from '../lib/forms'
 
 /** Screen 060 — Room Type Management. */
 
@@ -40,10 +41,7 @@ function money(v: string | null): string {
 }
 
 function apiError(e: unknown): string {
-  const d = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
-  if (typeof d === 'string') return d
-  if (Array.isArray(d)) return 'Some fields are invalid. Check the highlighted values.'
-  return 'Could not save. Please try again.'
+  return errorText(e, 'Could not save. Please try again.')
 }
 
 function Kpi({

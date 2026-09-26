@@ -15,6 +15,7 @@ import {
   listManagedRoomTypes, ADDON_CATEGORIES, PRICING_UNITS,
   type ResortPackage, type PromoCode, type Addon,
 } from '../api'
+import { errorText } from '../lib/forms'
 
 /**
  * Screen 035 — Packages & Promotions.
@@ -38,10 +39,7 @@ const money = (v: string | null) =>
   v === null ? '—' : `₹${Number(v).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`
 
 function apiError(e: unknown): string {
-  const d = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
-  if (typeof d === 'string') return d
-  if (Array.isArray(d)) return 'Some fields are invalid. Check the highlighted values.'
-  return 'Could not save. Please try again.'
+  return errorText(e, 'Could not save. Please try again.')
 }
 
 const STATE_STYLE: Record<string, string> = {

@@ -14,6 +14,7 @@ import {
   type ManagedUser, type ActivityEntry,
 } from '../api'
 import { Crumbs } from '../components/Crumbs'
+import { errorText } from '../lib/forms'
 
 const PAGE_SIZE = 10
 const AVATAR = ['bg-teal-500', 'bg-rose-500', 'bg-blue-500', 'bg-purple-500', 'bg-amber-500', 'bg-indigo-500', 'bg-teal-600', 'bg-slate-500']
@@ -30,8 +31,7 @@ function mfaView(m: string) {
   return { label: 'Disabled', cls: 'bg-red-50 text-red-500' }
 }
 function errMsg(e: unknown): string {
-  const err = e as { response?: { data?: { detail?: string } }; message?: string }
-  return err.response?.data?.detail ?? err.message ?? 'Something went wrong'
+  return errorText(e, 'Something went wrong')
 }
 
 export default function UserManagement() {

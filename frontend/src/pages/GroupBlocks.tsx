@@ -26,6 +26,7 @@ import {
   listRoomTypes, listCommercialAccounts,
   type GroupBlockRow, type GroupBlock,
 } from '../api'
+import { errorText } from '../lib/forms'
 
 const field = 'w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-brand'
 const lbl = 'mb-1 block text-xs font-medium text-slate-500'
@@ -301,8 +302,7 @@ function CreateBlock({ propertyId, onClose, onSaved }: {
       })
       onSaved()
     } catch (e) {
-      const ax = e as { response?: { data?: { detail?: string } } }
-      setErr(ax?.response?.data?.detail ?? 'The block could not be created.')
+      setErr(errorText(e, 'The block could not be created.'))
     } finally { setBusy(false) }
   }
 
@@ -472,12 +472,10 @@ function BlockDetail({ blockId, propertyId, onClose, onChanged }: {
       await q.refetch()
       onChanged()
     } catch (e) {
-      const ax = e as { response?: { data?: { detail?: string } } }
       // Going definite can legitimately fail: the nights may have sold
       // while the block was only provisional, and that refusal is the
       // honest answer rather than an overbooking.
-      setErr(ax?.response?.data?.detail
-        ?? 'The commitment could not be changed.')
+      setErr(errorText(e, 'The commitment could not be changed.'))
     } finally { setBusy(false) }
   }
 
@@ -489,8 +487,7 @@ function BlockDetail({ blockId, propertyId, onClose, onChanged }: {
       await q.refetch()
       onChanged()
     } catch (e) {
-      const ax = e as { response?: { data?: { detail?: string } } }
-      setErr(ax?.response?.data?.detail ?? 'The block could not be released.')
+      setErr(errorText(e, 'The block could not be released.'))
     } finally { setBusy(false) }
   }
 

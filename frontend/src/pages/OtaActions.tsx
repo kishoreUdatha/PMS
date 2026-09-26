@@ -29,6 +29,7 @@ import { useActivePropertyId } from '../hooks/useProperty'
 import {
   listOtaActions, closeOtaAction, type OtaAction,
 } from '../api'
+import { errorText } from '../lib/forms'
 
 const field = 'w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-brand'
 const lbl = 'mb-1 block text-xs font-medium text-slate-500'
@@ -253,8 +254,7 @@ function CloseDialog({ action, propertyId, onClose, onDone }: {
       })
       onDone()
     } catch (e) {
-      const ax = e as { response?: { data?: { detail?: string } } }
-      setErr(ax?.response?.data?.detail ?? 'It could not be closed.')
+      setErr(errorText(e, 'It could not be closed.'))
     } finally { setBusy(false) }
   }
 

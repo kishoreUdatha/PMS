@@ -18,6 +18,7 @@ import {
 } from '../api'
 import { useActivePropertyId } from '../hooks/useProperty'
 import { usePaymentMethods } from '../lib/paymentMethods'
+import { errorText } from '../lib/forms'
 
 /**
  * Screen 058 — Deposit Schedule.
@@ -160,9 +161,8 @@ export default function DepositSchedule() {
 
   function flash(m: string) { setError(''); setToast(m); setTimeout(() => setToast(''), 3000) }
   function fail(e: unknown) {
-    const er = e as { response?: { data?: { detail?: string } } }
     setToast('')
-    setError(er.response?.data?.detail ?? 'That did not work. Please try again.')
+    setError(errorText(e, 'That did not work. Please try again.'))
   }
   function done(message: string) {
     return () => {

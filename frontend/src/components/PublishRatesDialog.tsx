@@ -7,6 +7,7 @@ import {
   previewRulePublish, publishRules,
   type PublishDay, type PublishPreview,
 } from '../api'
+import { errorText } from '../lib/forms'
 
 /**
  * Turn the rules into the prices the system actually quotes.
@@ -60,8 +61,7 @@ export default function PublishRatesDialog({ propertyId, onClose }: {
       onClose()
     },
     onError: (e) => {
-      const er = e as { response?: { data?: { detail?: string } } }
-      notify(er.response?.data?.detail ?? 'Nothing was published.',
+      notify(errorText(e, 'Nothing was published.'),
         'That did not go through')
     },
   })
@@ -126,7 +126,7 @@ export default function PublishRatesDialog({ propertyId, onClose }: {
           {err && (
             <p className="flex items-start gap-2 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
               <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-              {err.response?.data?.detail ?? 'That range could not be previewed.'}
+              {errorText(err, 'That range could not be previewed.')}
             </p>
           )}
 

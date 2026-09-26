@@ -10,6 +10,7 @@ import {
   type FormCRow, type FormCDetail,
 } from '../api'
 import { useActivePropertyId } from '../hooks/useProperty'
+import { errorText } from '../lib/forms'
 
 /**
  * Form C register — who has been reported to the Bureau of Immigration.
@@ -235,8 +236,7 @@ function FormCDialog({ unitId, propertyId, onClose, onSaved }: {
   const run = async (fn: () => Promise<unknown>) => {
     setErr('')
     try { await fn(); onSaved() } catch (e) {
-      const er = e as { response?: { data?: { detail?: string } } }
-      setErr(er.response?.data?.detail ?? 'That did not go through.')
+      setErr(errorText(e, 'That did not go through.'))
     }
   }
 
@@ -362,9 +362,7 @@ function FormCDialog({ unitId, propertyId, onClose, onSaved }: {
               {err && <p className="text-xs text-rose-600">{err}</p>}
               {(save.error || file.error) && (
                 <p className="text-xs text-rose-600">
-                  {((save.error ?? file.error) as {
-                    response?: { data?: { detail?: string } }
-                  })?.response?.data?.detail ?? 'That did not go through.'}
+                  {errorText((save.error ?? file.error), 'That did not go through.')}
                 </p>
               )}
 

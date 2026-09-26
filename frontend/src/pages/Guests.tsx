@@ -15,6 +15,7 @@ import {
 import EntityCards, { type Tone } from '../components/EntityCards'
 import { StayLayoutToggle, useListLayout } from '../lib/listLayout'
 import { useOrgId } from '../hooks/useProperty'
+import { errorText } from '../lib/forms'
 
 const AVATAR = ['bg-teal-500', 'bg-rose-500', 'bg-blue-500', 'bg-purple-500',
   'bg-amber-500', 'bg-indigo-500']
@@ -583,8 +584,7 @@ function GuestModal({ mode, guest, orgId, onClose, onDone }: {
       }
       onClose()
     } catch (e) {
-      const er = e as { response?: { data?: { detail?: string } }; message?: string }
-      setErr(er.response?.data?.detail ?? er.message ?? 'Failed to save')
+      setErr(errorText(e, 'Failed to save'))
     } finally { setBusy(false) }
   }
 

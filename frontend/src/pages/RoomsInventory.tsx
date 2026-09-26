@@ -26,6 +26,7 @@ import AmenitiesManagement from './AmenitiesManagement'
 import RoomBlocks from './RoomBlocks'
 import RatePlans from './RatePlans'
 import { useActivePropertyId } from '../hooks/useProperty'
+import { errorText } from '../lib/forms'
 
 
 const filterSelect = `${FILTER_SELECT} bg-white outline-none focus:border-brand`
@@ -415,9 +416,7 @@ function RoomInventoryTab({ propertyId }: { propertyId: string }) {
     },
     onError: (e: unknown) => {
       setConfirmBulk(false)
-      const detail = (e as { response?: { data?: { detail?: string } } })
-        ?.response?.data?.detail
-      setError(detail ?? 'Could not delete the selected rooms.')
+      setError(errorText(e, 'Could not delete the selected rooms.'))
     },
   })
 
@@ -436,8 +435,7 @@ function RoomInventoryTab({ propertyId }: { propertyId: string }) {
       qc.invalidateQueries({ queryKey: ['blockStats', propertyId] })
     },
     onError: (e: unknown) => {
-      const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      setError(detail ?? 'Could not release the room.')
+      setError(errorText(e, 'Could not release the room.'))
     },
   })
 

@@ -21,6 +21,7 @@ import {
 } from '../api'
 import { useActivePropertyId } from '../hooks/useProperty'
 import { useMethodLabel } from '../lib/paymentMethods'
+import { errorText } from '../lib/forms'
 
 /**
  * Screen 036 — Payment & Cashiering Centre.
@@ -202,8 +203,7 @@ export default function Cashiering() {
     }
   }
   const fail = (e: unknown) => {
-    const er = e as { response?: { data?: { detail?: string } } }
-    setError(er.response?.data?.detail ?? 'That did not work. Please try again.')
+    setError(errorText(e, 'That did not work. Please try again.'))
     setToast('')
   }
   const done = (msg: string) => { setToast(msg); setError(''); refresh() }
@@ -245,7 +245,7 @@ export default function Cashiering() {
     return (
       <p className="flex items-start gap-2 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-        {er?.response?.data?.detail ?? 'The cashiering centre could not be loaded.'}
+        {errorText(er, 'The cashiering centre could not be loaded.')}
       </p>
     )
   }
@@ -1242,8 +1242,7 @@ function CashDropDialog({ shift, onClose, onDone }: {
       })
       onDone(`${exact.format(value)} banked to the safe.`)
     } catch (e) {
-      const ax = e as { response?: { data?: { detail?: string } } }
-      setErr(ax?.response?.data?.detail ?? 'The drop could not be recorded.')
+      setErr(errorText(e, 'The drop could not be recorded.'))
     } finally { setBusy(false) }
   }
 

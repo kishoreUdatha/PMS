@@ -20,6 +20,7 @@ import {
   listProperties, listBookingAttributes,
   type ReservationFull,
 } from '../api'
+import { errorText } from '../lib/forms'
 
 const money = (v: string | number, cur = 'INR') =>
   new Intl.NumberFormat('en-IN', {
@@ -658,8 +659,7 @@ function BookingEditModal({ r, onClose }: {
       qc.invalidateQueries({ queryKey: ['reservations'] })
       onClose()
     } catch (e) {
-      const er = e as { response?: { data?: { detail?: string } }; message?: string }
-      setErr(er.response?.data?.detail ?? er.message ?? 'Could not save.')
+      setErr(errorText(e, 'Could not save.'))
     } finally { setBusy(false) }
   }
 

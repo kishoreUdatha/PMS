@@ -10,6 +10,7 @@ import {
   listInvoices, createInvoice, getOpenFolios, type OpenFolio,
 } from '../api'
 import { useActivePropertyId } from '../hooks/useProperty'
+import { errorText } from '../lib/forms'
 
 const plain = (v: string | number) =>
   new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2 }).format(Number(v))
@@ -116,8 +117,7 @@ export default function Invoices() {
                   className="p-10 text-center text-sm text-red-600">
                   <AlertTriangle size={16} className="mx-auto mb-2" />
                   Could not load invoices.
-                  {' '}{(error as { response?: { data?: { detail?: string } } })
-                    .response?.data?.detail ?? (error as Error).message}
+                  {' '}{errorText(error, (error as Error).message)}
                 </td></tr>
               )}
               {!isLoading && !error && rows.length === 0 && (
@@ -196,8 +196,7 @@ function NewInvoice({ propertyId, onClose }: {
       })
       nav(`/finance/invoices/${inv.id}`)
     } catch (e) {
-      const er = e as { response?: { data?: { detail?: string } }; message?: string }
-      setErr(er.response?.data?.detail ?? er.message ?? 'Could not start the invoice.')
+      setErr(errorText(e, 'Could not start the invoice.'))
     } finally { setBusy(false) }
   }
 
