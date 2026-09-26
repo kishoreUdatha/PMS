@@ -74,8 +74,10 @@ test-platform:
 # The invariants every money screen has to keep, checked against the RUNNING
 # services -- which is where the defects lived. Brings the stack up first,
 # because a skipped test protects nothing and this one skips without it.
+# REQUIRE_STACK=1 makes that skip a failure: if the stack came up but the
+# tests still cannot reach it, the target goes red instead of green.
 test-money: up
-	BOOKING_BASE=$(BOOKING_BASE_CMD) FINANCE_BASE=$(FINANCE_BASE_CMD) SERVICE_TOKEN=$(TOKEN_CMD) uv run pytest tests/test_money_invariants.py -v
+	REQUIRE_STACK=1 BOOKING_BASE=$(BOOKING_BASE_CMD) FINANCE_BASE=$(FINANCE_BASE_CMD) SERVICE_TOKEN=$(TOKEN_CMD) uv run pytest tests/test_money_invariants.py -v
 
 # The platform operations console against the RUNNING stack: every handler
 # called for real, every refusal checked, and the whole thing rolled back so
@@ -91,7 +93,7 @@ check-platform-ops: up
 # so this leaves a trail -- point it at a scratch property, not a tenant with
 # paying guests.
 test-flows: up
-	BOOKING_BASE=$(BOOKING_BASE_CMD) FINANCE_BASE=$(FINANCE_BASE_CMD) SERVICE_TOKEN=$(TOKEN_CMD) uv run pytest tests/test_operational_flows.py -v
+	REQUIRE_STACK=1 BOOKING_BASE=$(BOOKING_BASE_CMD) FINANCE_BASE=$(FINANCE_BASE_CMD) SERVICE_TOKEN=$(TOKEN_CMD) uv run pytest tests/test_operational_flows.py -v
 
 frontend:
 	cd frontend && npm install && npm run dev
