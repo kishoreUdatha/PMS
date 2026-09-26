@@ -51,6 +51,8 @@ from chirala_common.objectstore import (
     put_object,
 )
 from chirala_common.routing import TransactionalRoute
+from chirala_common.folio_posting import resolve_currency
+from chirala_common.property_time import trading_day
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -851,12 +853,16 @@ def _post_deposit(db: Session, row, *, folio_id, amount: Decimal, method: str):
                  amount, currency, business_date, source_type, source_id,
                  source_line_key)
             VALUES (:id, :org, :prop, :folio, 'credit', :amt, :cur,
-                    CURRENT_DATE, 'security_deposit', :src, :slk)
+                    :bd, 'security_deposit', :src, :slk)
             """
         ),
+        # The ledger's open day and the folio's currency; see
+        # chirala_common.property_time.trading_day for why not CURRENT_DATE.
         {"id": entry_id, "org": row["organization_id"],
          "prop": row["property_id"], "folio": folio_id, "amt": amount,
-         "cur": row["currency"], "src": str(payment_id),
+         "cur": resolve_currency(db, stated=None, folio_ids=[folio_id]),
+         "bd": trading_day(db, row["property_id"]),
+         "src": str(payment_id),
          "slk": f"security_deposit:{payment_id}"},
     )
     db.execute(

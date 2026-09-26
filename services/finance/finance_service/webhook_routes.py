@@ -35,6 +35,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from chirala_common.property_time import local_today
+
 from .credentials import by_webhook_ref
 from .database import get_session
 from .ledger import Allocation, post_payment
@@ -329,12 +331,14 @@ async def _receive(
         _finish(db, event_id, "malformed", detail="Capture had no amount.")
         return {"status": "malformed", "event_id": event_id}
 
+    # The oldest day not yet closed, else the property's own date -- not
+    # CURRENT_DATE, which is UTC and a day behind India until 05:30.
     business_date = db.execute(
-        text("SELECT coalesce((SELECT min(business_date) "
+        text("SELECT min(business_date) "
              "FROM finance.business_days WHERE property_id = :p "
-             "AND status <> 'closed'), CURRENT_DATE)"),
+             "AND status <> 'closed'"),
         {"p": intent["property_id"]},
-    ).scalar_one()
+    ).scalar() or local_today(db, intent["property_id"])
 
     result = post_payment(
         db,
@@ -367,24 +371,35 @@ async def _receive(
     )
 
     # The booking becomes real here and nowhere else.
-    confirmed, why = confirm_booking(intent["reservation_id"],
-                                     intent["organization_id"])
-    _finish(
-        db, event_id,
-        "settled" if confirmed else "paid_unconfirmed",
-        payment_id=result.payment_id,
-        detail=(f"Credited {paid}." if confirmed
-                else f"Credited {paid}, but confirming failed: {why}. The "
-                     f"money is on the folio; the booking is still held."),
-    )
+    confirmed, why, final = await confirm_booking(intent["reservation_id"],
+                                                  intent["organization_id"])
+    if confirmed:
+        outcome, detail = "settled", f"Credited {paid}."
+    elif final:
+        # booking-core has *decided*: the hold expired and its rooms were sold
+        # before the guest's money arrived, or the booking was cancelled.
+        # Retrying will never confirm it. The guest has paid for a room they
+        # will not get, so this is recorded as a refund owed rather than
+        # folded in with a network blip -- the two need different people
+        # doing different things, and "paid_unconfirmed" said neither.
+        outcome = "paid_needs_refund"
+        detail = (f"Credited {paid}, but the booking cannot be confirmed: "
+                  f"{why} Refund the guest from the folio (the payment is on "
+                  f"it), or move the money to a new booking.")
+    else:
+        outcome = "paid_unconfirmed"
+        detail = (f"Credited {paid}, but confirming failed: {why}. The money "
+                  f"is on the folio; the booking is still held. Confirm it "
+                  f"from the reservation once booking-core is reachable.")
+    _finish(db, event_id, outcome, payment_id=result.payment_id,
+            detail=detail)
     if not confirmed:
         # Paid but unconfirmed is the one state that needs a person. Loud, and
         # left in the record for them to find.
-        log.error("order %s paid but reservation %s not confirmed: %s",
-                  order_id, intent["reservation_id"], why)
+        log.error("order %s paid but reservation %s not confirmed (%s): %s",
+                  order_id, intent["reservation_id"], outcome, why)
     log.info("razorpay event %s settled order %s (%s)", event_id, order_id, paid)
-    return {"status": "settled" if confirmed else "paid_unconfirmed",
-            "event_id": event_id}
+    return {"status": outcome, "event_id": event_id}
 
 
 def _finish(db: Session, event_id: str, outcome: str, *,
@@ -398,8 +413,17 @@ def _finish(db: Session, event_id: str, outcome: str, *,
     )
 
 
-def confirm_booking(reservation_id, organization_id) -> tuple[bool, str]:
+async def confirm_booking(reservation_id, organization_id
+                          ) -> tuple[bool, str, bool]:
     """Ask booking-core to turn the hold into a booking.
+
+    Returns ``(confirmed, why, final)``. ``final`` says booking-core answered
+    and refused -- the booking cannot be confirmed, now or on a retry -- as
+    against a failure to ask at all.
+
+    Asynchronous, because the webhook handler is: a blocking ``httpx.post``
+    inside it stalled the whole event loop for up to fifteen seconds, and with
+    it every other request this worker was serving.
 
     Over HTTP with the platform's own credential rather than reimplementing
     it here. Confirming moves held nights to reserved under row locks and
@@ -414,16 +438,22 @@ def confirm_booking(reservation_id, organization_id) -> tuple[bool, str]:
     from .settings import settings
 
     if not settings.service_token:
-        return False, "no service credential configured"
+        return False, "no service credential configured", False
     try:
-        resp = httpx.post(
-            f"{settings.booking_url}/reservations/{reservation_id}/confirm",
-            headers={"X-Service-Token": settings.service_token,
-                     "X-Service-Org": str(organization_id)},
-            timeout=15.0,
-        )
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                f"{settings.booking_url}/reservations/{reservation_id}/confirm",
+                headers={"X-Service-Token": settings.service_token,
+                         "X-Service-Org": str(organization_id)},
+            )
     except httpx.HTTPError as exc:
-        return False, str(exc)
+        return False, str(exc), False
+    if resp.status_code in (404, 409, 422):
+        try:
+            why = str(resp.json().get("detail") or resp.text[:300])
+        except ValueError:
+            why = resp.text[:300]
+        return False, why, True
     if resp.status_code >= 400:
-        return False, f"{resp.status_code} {resp.text[:160]}"
-    return True, ""
+        return False, f"{resp.status_code} {resp.text[:160]}", False
+    return True, "", False

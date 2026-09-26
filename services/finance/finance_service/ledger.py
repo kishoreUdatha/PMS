@@ -25,11 +25,11 @@ from chirala_common.outbox import enqueue_event
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from .tax_engine import (
-    SOURCE_CATEGORY,
-    compute_tax,
-    record_tax_lines,
-    resolve_rules,
+from chirala_common.folio_posting import (  # noqa: F401 - EntryResult re-exported
+    EntryResult,
+    PostingError,
+    post_charge as _common_post_charge,
+    resolve_currency as _common_resolve_currency,
 )
 
 from .provider import PaymentProvider, ProviderResult, default_provider
@@ -40,6 +40,21 @@ class LedgerError(Exception):
     def __init__(self, message: str, *, conflict: bool = False) -> None:
         self.conflict = conflict
         super().__init__(message)
+
+
+# --------------------------------------------------------------------------
+# Currency
+# --------------------------------------------------------------------------
+def _resolve_currency(
+    session: Session, *, stated: str | None, folio_ids=(), payment_id=None,
+) -> str:
+    """The currency a posting is in; see ``folio_posting.resolve_currency``."""
+    try:
+        return _common_resolve_currency(session, stated=stated,
+                                        folio_ids=folio_ids,
+                                        payment_id=payment_id)
+    except PostingError as exc:
+        raise LedgerError(str(exc), conflict=exc.conflict) from exc
 
 
 # --------------------------------------------------------------------------
@@ -65,147 +80,18 @@ def folio_balance(session: Session, folio_id: uuid.UUID) -> Decimal:
 # --------------------------------------------------------------------------
 # Post a charge (debit) — idempotent
 # --------------------------------------------------------------------------
-@dataclass
-class EntryResult:
-    entry_id: uuid.UUID
-    created: bool
-
-
-def post_charge(
-    session: Session,
-    *,
-    organization_id: uuid.UUID,
-    property_id: uuid.UUID,
-    folio_id: uuid.UUID,
-    amount: Decimal,
-    business_date: date,
-    source_type: str,
-    source_line_key: str,
-    charge_code_id: uuid.UUID | None = None,
-    source_id: str | None = None,
-    currency: str = "INR",
-    tax_category: str | None = None,
-    tax_units: int = 1,
-    #: What a person typed at the desk. All optional, and all only meaningful
-    #: on a hand-entered charge -- the night audit's room posting is described
-    #: perfectly well by its source type.
-    note: str | None = None,
-    quantity: Decimal | None = None,
-    unit_amount: Decimal | None = None,
-    discount_amount: Decimal | None = None,
-    #: The subject of whoever posted it, for the folio's User column. Left None
-    #: by the night audit and anything else the system does on its own.
-    posted_by: str | None = None,
-) -> EntryResult:
+def post_charge(session: Session, **kwargs) -> EntryResult:
     """Post an immutable debit, with the tax the rules require.
 
-    Tax is applied when the charge says what kind of charge it is, either via
-    ``tax_category`` or a ``source_type`` that maps to one unambiguously. An
-    unrecognised source posts untaxed rather than guessing a category, because
-    guessing wrong means billing a guest the wrong amount.
-
-    The tax breakdown is written against this entry, and any *exclusive* tax is
-    posted as a second debit so the folio balance actually includes it. That
-    second entry derives its line key from this one, so a replayed post stays
-    idempotent for both.
+    The implementation is ``chirala_common.folio_posting.post_charge``, shared
+    with booking-core so a cancellation fee or a no-show penalty posted from
+    the desk is taxed, dated and labelled exactly as one posted here. This
+    wrapper only keeps finance's error type.
     """
-    if amount <= 0:
-        raise LedgerError("Charge amount must be positive")
-
-    existing = session.execute(
-        text(
-            """
-            SELECT id FROM finance.folio_entries
-            WHERE folio_id = :fid AND source_type = :st AND source_line_key = :slk
-            """
-        ),
-        {"fid": folio_id, "st": source_type, "slk": source_line_key},
-    ).first()
-    if existing is not None:
-        return EntryResult(entry_id=existing.id, created=False)
-
-    entry_id = uuid.uuid4()
-    session.execute(
-        text(
-            """
-            INSERT INTO finance.folio_entries
-                (id, organization_id, property_id, folio_id, entry_type, amount,
-                 currency, business_date, charge_code_id, source_type, source_id,
-                 source_line_key, note, quantity, unit_amount, discount_amount,
-                 posted_by)
-            VALUES (:id, :org, :prop, :fid, 'debit', :amt, :cur, :bd, :cc, :st,
-                    :sid, :slk, :note, :qty, :unit, :disc, :by)
-            """
-        ),
-        {
-            "id": entry_id,
-            "org": organization_id,
-            "prop": property_id,
-            "fid": folio_id,
-            "amt": amount,
-            "note": (note or "").strip() or None,
-            "qty": quantity,
-            "unit": unit_amount,
-            "disc": discount_amount,
-            "cur": currency,
-            "bd": business_date,
-            "cc": charge_code_id,
-            "st": source_type,
-            "sid": source_id,
-            "slk": source_line_key,
-            # Who decided this. Null where nobody did -- the night audit
-            # charging a room because the clock passed midnight is the system,
-            # not a person, and saying so is more honest than attributing it to
-            # whoever happened to be signed in.
-            "by": posted_by,
-        },
-    )
-
-    category = tax_category or SOURCE_CATEGORY.get(source_type)
-    if category:
-        # A charge code may name the tax group it belongs to; otherwise the
-        # area's default group applies.
-        group_id = None
-        if charge_code_id is not None:
-            group_id = session.execute(
-                text(
-                    "SELECT tax_rule_id FROM finance.charge_codes WHERE id = :id"
-                ),
-                {"id": charge_code_id},
-            ).scalar_one_or_none()
-        rules = resolve_rules(
-            session, property_id=property_id, category=category,
-            on_date=business_date, tax_group_id=group_id,
-        )
-        # ``tax_units`` is the nights this charge covers -- the night audit
-        # posts one night at a time, so it is 1 there. Named as nights so a
-        # per-stay rule is not multiplied by it.
-        tax = compute_tax(rules, amount=amount, units=tax_units,
-                          nights=tax_units)
-        if tax.any_tax:
-            record_tax_lines(session, folio_entry_id=entry_id, result=tax)
-        if tax.exclusive_total > 0:
-            # Its own debit, or the balance would never include it.
-            session.execute(
-                text(
-                    """
-                    INSERT INTO finance.folio_entries
-                        (organization_id, property_id, folio_id, entry_type,
-                         amount, currency, business_date, charge_code_id,
-                         source_type, source_id, source_line_key, posted_by)
-                    VALUES (:org, :prop, :fid, 'debit', :amt, :cur, :bd, :cc,
-                            :st, :sid, :slk, :by)
-                    """
-                ),
-                {
-                    "org": organization_id, "prop": property_id, "fid": folio_id,
-                    "amt": tax.exclusive_total, "cur": currency,
-                    "bd": business_date, "cc": charge_code_id,
-                    "st": f"{source_type}_tax", "sid": source_id,
-                    "slk": f"{source_line_key}#tax", "by": posted_by,
-                },
-            )
-    return EntryResult(entry_id=entry_id, created=True)
+    try:
+        return _common_post_charge(session, **kwargs)
+    except PostingError as exc:
+        raise LedgerError(str(exc), conflict=exc.conflict) from exc
 
 
 # --------------------------------------------------------------------------
@@ -231,7 +117,7 @@ def post_payment(
     method: str,
     business_date: date,
     allocations: list[Allocation],
-    currency: str = "INR",
+    currency: str | None = None,
     provider: PaymentProvider | None = None,
     intent_id: uuid.UUID | None = None,
     settled_transaction_id: str | None = None,
@@ -295,6 +181,10 @@ def post_payment(
         method=method,
         direction="in",
     )
+
+    currency = _resolve_currency(
+        session, stated=currency,
+        folio_ids=sorted({a.folio_id for a in allocations}, key=str))
 
     total = sum((a.amount for a in allocations), Decimal("0"))
     if settled_transaction_id:
@@ -421,7 +311,7 @@ def allocate_payment(
     folio_id: uuid.UUID,
     amount: Decimal,
     business_date: date,
-    currency: str = "INR",
+    currency: str | None = None,
 ) -> uuid.UUID:
     """Add an allocation to an already-captured payment.
 
@@ -443,6 +333,8 @@ def allocate_payment(
     ).first()
     if pay is None:
         raise LedgerError("Payment not found or not settled")
+    currency = _resolve_currency(
+        session, stated=currency, folio_ids=[folio_id], payment_id=payment_id)
 
     already = session.execute(
         text(
@@ -594,7 +486,7 @@ def post_refund(
     amount: Decimal,
     business_date: date,
     reason: str | None = None,
-    currency: str = "INR",
+    currency: str | None = None,
     provider: PaymentProvider | None = None,
     #: The drawer the money physically came out of, and how it left. Only
     #: cash touches a till -- a card refund goes back down the rails it came
@@ -643,6 +535,9 @@ def post_refund(
     # subtraction it exists to make has never once fired. A cashier who
     # refunded cash mid-shift showed a shortage they did not cause.
     method = method or pay.method
+    # Refunded in the currency it was paid in -- the payment row says which.
+    currency = _resolve_currency(session, stated=currency,
+                                 payment_id=payment_id)
 
     _assert_drawer_can_take_cash(
         session,
