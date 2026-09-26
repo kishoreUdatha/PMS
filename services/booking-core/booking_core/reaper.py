@@ -22,11 +22,23 @@ import logging
 from datetime import date
 
 from chirala_common.db import system_context
+from chirala_common.locks import run_exclusively
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from .database import SessionFactory
+from .database import SessionFactory, engine
 from .settings import settings
+
+#: Advisory-lock names for the sweeps that must run once per cycle across ALL
+#: replicas, not once per replica: polling the channel feed, provisioning at
+#: the channel manager and re-pricing on occupancy each talk to the outside
+#: world or rewrite a calendar, and N replicas doing it N times is N times the
+#: API calls and N racing writers. The hold reaper and the outbox drains are
+#: not here: they already divide their work with SKIP LOCKED. Nor is the
+#: block cut-off sweep, which is idempotent by construction.
+CHANNEL_FEED_LOCK = "chirala:booking:channel-feed"
+CHANNEL_PROVISION_LOCK = "chirala:booking:channel-provision"
+OCCUPANCY_SWEEP_LOCK = "chirala:booking:occupancy-sweep"
 
 #: A child of uvicorn's logger so it inherits handlers the server configured.
 #: A plain module logger propagates to a bare root and prints nothing, which
@@ -209,7 +221,8 @@ async def channel_feed_loop() -> None:
     await asyncio.sleep(60)
     while True:
         try:
-            n = await asyncio.to_thread(channel_routes.poll_feed, SessionFactory)
+            n = await asyncio.to_thread(run_exclusively, engine, CHANNEL_FEED_LOCK,
+                                        channel_routes.poll_feed, SessionFactory)
             if n:
                 log.warning("channel feed: recovered %d booking(s) the "
                             "webhook had not delivered", n)
@@ -247,6 +260,7 @@ async def channel_provision_loop() -> None:
             # the event loop, or the service stops answering requests for as
             # long as the channel manager takes to reply.
             results = await asyncio.to_thread(
+                run_exclusively, engine, CHANNEL_PROVISION_LOCK,
                 channel_provision.provision_all,
                 SessionFactory,
                 retry_minutes=settings.channel_provision_retry_minutes,
@@ -293,7 +307,9 @@ async def occupancy_sweep_loop() -> None:
         try:
             with SessionFactory() as session:
                 try:
-                    results = rate_publish.sweep_occupancy_rules(session)
+                    results = run_exclusively(
+                        engine, OCCUPANCY_SWEEP_LOCK,
+                        rate_publish.sweep_occupancy_rules, session, if_busy=[])
                     session.commit()
                 except Exception:
                     session.rollback()

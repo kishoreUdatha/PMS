@@ -10,7 +10,7 @@ Two places need "only one of us does this":
 
 * **Background sweeps.** A loop that runs in every replica runs N times per
   cycle with N replicas -- N polls of a channel feed, N occupancy recounts.
-  :func:`try_advisory_xact_lock` lets the first replica take the cycle and the
+  :func:`run_exclusively` lets the first replica take the cycle and the
   others skip it quietly.
 
 Keys are derived from a readable name with ``hashtext`` inside Postgres, the
@@ -21,11 +21,17 @@ needs to know who is holding what.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import logging
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from typing import Any, TypeVar
 
 from sqlalchemy import text
-from sqlalchemy.engine import Connection
+from sqlalchemy.engine import Connection, Engine
+
+log = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 #: One key for every service's migrations, not one per service. The schemas
 #: are separate but the migrations are not independent -- booking-core's
@@ -59,3 +65,39 @@ def migration_lock(connection: Connection, name: str = MIGRATION_LOCK) -> Iterat
             connection.rollback()
         connection.execute(text("SELECT pg_advisory_unlock(hashtext(:n))"), {"n": name})
         connection.commit()
+
+
+def run_exclusively(engine: Engine, name: str, fn: Callable[..., T], *args: Any,
+                    if_busy: Any = None, **kwargs: Any) -> T | Any:
+    """Run ``fn(*args, **kwargs)`` only if no other process is running ``name``.
+
+    For a background sweep that every replica of a service runs on a timer.
+    The first replica to reach a cycle takes the lock and does the work; the
+    others find it taken, return ``if_busy`` straight away, and try again next
+    cycle. Nobody waits: a replica that queued behind the lock would only run
+    the same sweep a second time the moment the first one finished.
+
+    The lock is session-level, on a connection of its own, and that
+    connection is left OUTSIDE a transaction while ``fn`` runs. Both matter:
+
+    * ``fn`` opens and commits its own sessions -- per property, per revision
+      -- and a transaction-level lock would be released at the first commit.
+    * The runtime role has ``idle_in_transaction_session_timeout`` set, so a
+      lock connection left idle in a transaction for a minute would be killed
+      by Postgres mid-sweep, silently handing the lock to another replica.
+
+    If this process dies, Postgres drops the connection and the lock with it,
+    so a crashed replica can never wedge a sweep for the others.
+    """
+    with engine.connect() as conn:
+        got = conn.execute(text("SELECT pg_try_advisory_lock(hashtext(:n))"),
+                           {"n": name}).scalar()
+        conn.commit()
+        if not got:
+            log.debug("%s: another process holds the lock; skipping this cycle", name)
+            return if_busy
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            conn.execute(text("SELECT pg_advisory_unlock(hashtext(:n))"), {"n": name})
+            conn.commit()
