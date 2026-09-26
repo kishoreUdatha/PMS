@@ -16,6 +16,7 @@ import {
   type RoomTypeRow, type RoomTypeStats, type AmenityRow,
 } from '../api'
 import { errorText } from '../lib/forms'
+import { clickableRow } from '../lib/a11y'
 
 /** Screen 060 — Room Type Management. */
 
@@ -586,7 +587,7 @@ export default function RoomTypeManagement({ propertyId }: { propertyId: string 
                 <tbody className="divide-y divide-slate-100">
                   {rows.map((rt) => (
                     <tr key={rt.id}
-                      onClick={() => { setCreating(false); setEditing(rt.id) }}
+                      {...clickableRow(() => { setCreating(false); setEditing(rt.id) })}
                       className={`cursor-pointer ${editing === rt.id ? 'bg-brand-light' : 'hover:bg-slate-50'}`}>
                       <td className="px-3 py-3">
                         <div className="flex items-center gap-3">

@@ -17,6 +17,7 @@ import {
 import { Crumbs } from '../components/Crumbs'
 import { useActivePropertyId } from '../hooks/useProperty'
 import { errorText } from '../lib/forms'
+import { clickableRow } from '../lib/a11y'
 
 /**
  * Screen 118 — Tax and Service Charge Setup.
@@ -627,7 +628,7 @@ export default function TaxCharges() {
                 )}
                 {items.map((c) => (
                   <tr key={c.id}
-                    onClick={() => { setCreating(false); setSelected(c) }}
+                    {...clickableRow(() => { setCreating(false); setSelected(c) })}
                     className={`cursor-pointer border-b border-slate-100 last:border-0 hover:bg-slate-50 ${
                       selected?.id === c.id ? 'bg-brand-light/40' : ''}`}>
                     <td className="px-4 py-3 text-sm font-bold text-slate-700">{c.code}</td>

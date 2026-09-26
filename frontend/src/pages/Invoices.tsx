@@ -11,6 +11,7 @@ import {
 } from '../api'
 import { useActivePropertyId } from '../hooks/useProperty'
 import { errorText } from '../lib/forms'
+import { clickableRow } from '../lib/a11y'
 
 const plain = (v: string | number) =>
   new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2 }).format(Number(v))
@@ -126,7 +127,7 @@ export default function Invoices() {
                 </td></tr>
               )}
               {rows.map((r) => (
-                <tr key={r.id} onClick={() => nav(`/finance/invoices/${r.id}`)}
+                <tr key={r.id} {...clickableRow(() => nav(`/finance/invoices/${r.id}`), 'link')}
                   className="cursor-pointer text-slate-700 hover:bg-slate-50/60">
                   <td className="px-5 py-3 font-semibold text-slate-800">
                     {r.display_number}

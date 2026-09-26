@@ -10,6 +10,7 @@ import {
   getAuditEvents, getAuditEvent, getAuditActions,
   type AuditEvent, type AuditEventDetail,
 } from '../api'
+import { clickableRow } from '../lib/a11y'
 
 function riskBadge(risk: string) {
   const map: Record<string, string> = {
@@ -111,7 +112,7 @@ export default function AuditLog() {
               </tr></thead>
               <tbody className="divide-y divide-slate-50">
                 {events.map((e: AuditEvent) => (
-                  <tr key={e.id} onClick={() => setSelectedId(e.id)} className={`cursor-pointer ${selectedId === e.id ? 'bg-brand-light' : 'hover:bg-slate-50'}`}>
+                  <tr key={e.id} {...clickableRow(() => setSelectedId(e.id))} className={`cursor-pointer ${selectedId === e.id ? 'bg-brand-light' : 'hover:bg-slate-50'}`}>
                     <td className="px-4 py-2.5 text-xs text-slate-500">{e.occurred_at}</td>
                     <td className="px-4 py-2.5 text-slate-700">{e.actor_subject ?? '—'}</td>
                     <td className="px-4 py-2.5 text-slate-600">{e.action}</td>

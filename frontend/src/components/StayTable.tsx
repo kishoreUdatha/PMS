@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { Loader2 } from 'lucide-react'
 import { fmtDate, whenLabel } from '../lib/dates'
+import { clickableRow } from '../lib/a11y'
 
 /** The one stay list, used by Reservations, Arrivals, In-house and Departures.
  *
@@ -102,7 +103,7 @@ export default function StayTable({
             </td></tr>
           )}
           {!loading && rows.map((r) => (
-            <tr key={r.key} onClick={r.onClick}
+            <tr key={r.key} {...(r.onClick ? clickableRow(r.onClick) : {})}
               className={`border-b border-slate-100 last:border-0 ${
                 r.onClick ? 'cursor-pointer' : ''} ${
                 r.selected ? 'bg-brand-light' : 'hover:bg-slate-50'}`}>

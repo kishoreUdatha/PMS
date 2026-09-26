@@ -27,6 +27,7 @@ import {
   type GroupBlockRow, type GroupBlock,
 } from '../api'
 import { errorText } from '../lib/forms'
+import { clickableRow } from '../lib/a11y'
 
 const field = 'w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-brand'
 const lbl = 'mb-1 block text-xs font-medium text-slate-500'
@@ -213,7 +214,7 @@ function BlockRow({ b, onOpen }: { b: GroupBlockRow; onOpen: () => void }) {
   const held = Math.max(b.rooms_blocked - b.rooms_picked_up, 0)
   const days = daysToCutOff(b.cut_off_date)
   return (
-    <tr onClick={onOpen} className="cursor-pointer hover:bg-slate-50">
+    <tr {...clickableRow(onOpen)} className="cursor-pointer hover:bg-slate-50">
       <td className="px-4 py-3 font-semibold text-slate-700">{b.code}</td>
       <td className="px-4 py-3">
         <span className="font-medium text-slate-700">{b.name}</span>

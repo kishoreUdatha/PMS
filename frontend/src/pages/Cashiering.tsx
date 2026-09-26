@@ -22,6 +22,7 @@ import {
 import { useActivePropertyId } from '../hooks/useProperty'
 import { useMethodLabel } from '../lib/paymentMethods'
 import { errorText } from '../lib/forms'
+import { clickableRow } from '../lib/a11y'
 
 /**
  * Screen 036 — Payment & Cashiering Centre.
@@ -776,7 +777,7 @@ export default function Cashiering() {
                 )}
                 {(txns.data ?? []).map((t: CashTxn) => (
                   <tr key={t.payment_id}
-                    onClick={() => setSelected(t.payment_id)}
+                    {...clickableRow(() => setSelected(t.payment_id))}
                     className={`cursor-pointer hover:bg-slate-50 ${
                       selected === t.payment_id ? 'bg-brand-light/50' : ''}`}>
                     {/* Date and time on every row, stacked so the column
