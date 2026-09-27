@@ -136,16 +136,23 @@ appears about 20 s after saving; copy its task id into the form.
 | 6 | Stop sell: Twin BAR 14 Nov · Double BAR 16 Nov · Double B&B 20 Nov | Range panel, *Stop sell* = Yes, 3 lines, **Save all** | 1 row, `stop_sell: true` ×3 |
 | 7 | Twin BAR 1–10 Nov CTA, max 4, min 1 · Twin B&B 12–16 Nov CTD, min 6 · Double BAR 10–16 Nov CTA, min 2 · Double B&B 1–20 Nov min 10 | Range panel, 4 lines (CTA/CTD Yes; stays in the fields), **Save all** | 1 row, 4 ranges |
 | 8 | Twin BAR 1 Dec 2026–1 May 2027 rate 432, min 2 · Double BAR same range 342, min 3 | Range panel, 2 lines, **Save all** | 1 row, 2 ranges |
-| 9 | Availability Twin 8 / Double 1, then a booking brings them to 7 / 0 | **Block / Out of Order** (`/rooms/blocks`): one block of 2 Twin rooms and one of 4 Double rooms for the night, less than 20 s apart. Then take one booking with a Twin and a Double for that night (Reservations → New, or Booking CRS). | 1 row for the blocks, then 1 row for the booking (7 / 0) |
-| 10 | Twin 10–16 Nov = 3 · Double 17–24 Nov = 4 | Block / Out of Order: tick 7 Twin rooms for 10–16 Nov and save, then 1 Double room for 17–24 Nov and save, less than 20 s apart | 1 row, *Availability*, 2 ranges |
-| 11 | Booking new / modify / cancel | In Channex staging, use **Booking CRS** (or the Booking.com test account) to create, then modify, then cancel a booking | Sales Channels → **Booking deliveries**: *Booked* → *Changed* → *Cancelled*, each linked to the reservation. Screenshot this and the reservation; give its OTA code / Channex booking id. |
+| 9 | **Twin 21 Nov** = 8 · **Double 25 Nov** = 1, then a booking brings them to 7 / 0 | **Block / Out of Order** (`/rooms/blocks`): 2 Twin rooms for 21 Nov and 4 Double rooms for 25 Nov, less than 20 s apart. Then book one Twin for 21 Nov and one Double for 25 Nov, less than 20 s apart (Reservations → New). | 1 row for the blocks (8 / 1), then 1 row for the bookings (7 / 0). Two task ids. |
+| 10 | Twin 10–16 Nov = 3 · Double 17–24 Nov = 4 | Block / Out of Order: tick 7 Twin rooms for 10–16 Nov and save, then 1 Double room for 17–24 Nov and save, less than 20 s apart | 1 row, *Availability*, exactly 2 ranges covering the whole of each span |
+| 11 | Booking new / modify / cancel | In Channex staging, use **Booking CRS** (or the Booking.com test account) to create, then modify, then cancel a booking. **Run the PMS from one stable public address with the webhook registered** (see below). | Sales Channels → **Booking deliveries**: *Booked* → *Changed* → *Cancelled*, each linked to the reservation. Give the booking id and the three revision ids. |
 | 12 | Rate limits | Nothing to do; see §1 | |
 | 13 | Update logic | Nothing to do; see §1 | |
 
 Notes:
-- **Only changes are sent.** In tests 7 and 8, "CTA false" or "min stay 1"
-  is already the value on those nights, so it is correctly *not* sent.
-  That is the update logic Channex asks for.
+- **Only changes are sent -- except what the user wrote.** Values the PMS
+  works out (availability, rule prices) go out only when they differ from
+  what Channex last accepted. A field the user saves in the rate plan
+  calendar goes out for those nights even when Channex already holds it:
+  test 7's "min stay 1" is sent although 1 is the default. (The first
+  certification attempt failed test 7 because it was diffed away.)
+- **Start the availability tests from a clean slate.** A booking or block
+  left over from an earlier test changes the numbers on its nights: the
+  first attempt's test 9 booking on 21 Nov split test 10's Double range, and
+  the check wants 17–24 Nov as one range. Cancel leftovers first.
 - **Values are ranges.** Nights with equal values become one range, so test 4
   is three ranges, not 37 values.
 - **Resetting.** To hand nights back to the defaults, tick *Reset* (price and
@@ -156,6 +163,34 @@ Notes:
 - **Missed webhooks.** A delivery that could not be placed (room not mapped,
   none free) shows **Replay** and is not acknowledged to Channex until placed.
   The PMS also reads Channex's booking feed every 5 minutes.
+
+---
+
+### Test 11 and the calling address
+
+Channex attributes every call to the IP it came from and judges a revision
+by whether it was announced (feed or webhook) to the same address that then
+downloads and acknowledges it. The first attempt failed on exactly that: it
+ran behind a NAT pool where every new connection left from a different
+address, and the PMS opened a new connection per call.
+
+What the PMS does now:
+
+- **One connection** for all booking traffic (feed reads, acknowledgements,
+  webhook fetches), kept open and shared across the process, so they leave
+  from one address for as long as it stays open.
+- **No second download**: a revision read from the feed is applied from the
+  feed item itself, not fetched again by id.
+
+How to run the test:
+
+- Best: a server with one outbound address and `APP_BASE_URL` on a public
+  `https://` host, so the webhook registers and Channex notifies the PMS.
+- Behind a NAT pool (as in the second attempt, which passed locally): start
+  booking-core with `CHANNEL_FEED_SECONDS=5` for the duration of the test,
+  so each revision is read, applied and acknowledged within seconds on the
+  same warm connection, then do new → modify → cancel in Booking CRS one
+  after another. Put the interval back to 300 afterwards.
 
 ---
 

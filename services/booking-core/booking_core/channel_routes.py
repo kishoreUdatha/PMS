@@ -33,7 +33,9 @@ from __future__ import annotations
 
 import hmac
 import logging
+import threading
 import uuid
+from contextlib import contextmanager
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -71,14 +73,43 @@ HANDLED = {"booking", "booking_new", "booking_modification",
            "booking_cancellation"}
 
 
-def _client() -> httpx.Client:
-    """An authenticated client for pulling and acknowledging revisions."""
-    return httpx.Client(
-        base_url=settings.channex_api_url.rstrip("/"),
-        headers={"user-api-key": settings.channex_api_key,
-                 "Content-Type": "application/json"},
-        timeout=20.0,
-    )
+_shared: dict = {}
+_shared_lock = threading.Lock()
+
+
+@contextmanager
+def _client():
+    """The one connection this process pulls and acknowledges revisions on.
+
+    Shared and kept open rather than opened per call. Channex's certification
+    attributes every call to the address it came from, and judges a revision
+    by whether it was announced (read from the feed, or webhooked) to the
+    same address that then downloads and acknowledges it. Behind a NAT pool
+    -- a cloud host, a corporate proxy -- each new connection can leave from
+    a different address, so a feed read, its acknowledgement and the next
+    poll looked like three unrelated clients, and the booking test failed on
+    it. One connection, one address, for as long as it stays open.
+
+    One connection at a time on purpose: booking traffic is a handful of
+    calls a minute, and a second connection is a second address.
+    """
+    key = (settings.channex_api_url.rstrip("/"), settings.channex_api_key)
+    with _shared_lock:
+        c = _shared.get("client")
+        if c is None or c.is_closed or _shared.get("key") != key:
+            if c is not None and not c.is_closed:
+                c.close()
+            c = httpx.Client(
+                base_url=key[0],
+                headers={"user-api-key": key[1],
+                         "Content-Type": "application/json"},
+                timeout=20.0,
+                limits=httpx.Limits(max_connections=1,
+                                    max_keepalive_connections=1,
+                                    keepalive_expiry=300),
+            )
+            _shared.update(client=c, key=key)
+    yield c
 
 
 @channel_router.post("/channex/webhook", status_code=status.HTTP_200_OK)
@@ -176,8 +207,14 @@ RETRYABLE = ("claimed", "failed", "unmapped", "no_inventory")
 
 
 def ingest(db: Session, revision_id: str, event_type: str, *,
-           replay: bool = False) -> dict:
-    """Claim, fetch, apply, acknowledge."""
+           replay: bool = False, attrs: dict | None = None) -> dict:
+    """Claim, fetch, apply, acknowledge.
+
+    ``attrs`` is the revision as the feed already delivered it. Given, it is
+    used as is rather than fetched again by id: Channex's certification counts
+    a by-id download of a revision it announced through the feed as a second,
+    unannounced read, and the feed item is the same revision anyway.
+    """
     # Which hotel a channel booking belongs to is not known until its property
     # id is matched to a link, so the claim and that match read across
     # tenants. The moment the property is known, the transaction narrows.
@@ -217,6 +254,8 @@ def ingest(db: Session, revision_id: str, event_type: str, *,
                   revision_id)
         return {"status": "unconfigured", "revision_id": revision_id}
 
+    if attrs:
+        return _apply(db, revision_id, attrs)
     try:
         with _client() as c:
             resp = c.get(f"/booking_revisions/{revision_id}")
@@ -813,7 +852,8 @@ def poll_feed(db_factory) -> int:
             continue
         with db_factory() as db:
             try:
-                res = ingest(db, rid, "booking")
+                res = ingest(db, rid, "booking",
+                             attrs=item.get("attributes") or None)
                 db.commit()
                 done += res["status"] not in ("duplicate",)
             except Exception:
