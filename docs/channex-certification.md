@@ -166,20 +166,31 @@ Notes:
 
 ---
 
-### Test 11 needs a stable address
+### Test 11 and the calling address
 
-Channex attributes every call to the IP it came from and only counts the
-ones from the address that reads the feed. The first attempt ran in a cloud
-container whose outbound address changed per connection, so the feed read,
-the revision fetches and the acknowledgements came from different IPs and
-the booking test failed. Run it from a server (or the named Cloudflare
-tunnel host) with one outbound address, and with `APP_BASE_URL` on a public
-`https://` host so the webhook registers and Channex notifies the PMS
-directly.
+Channex attributes every call to the IP it came from and judges a revision
+by whether it was announced (feed or webhook) to the same address that then
+downloads and acknowledges it. The first attempt failed on exactly that: it
+ran behind a NAT pool where every new connection left from a different
+address, and the PMS opened a new connection per call.
 
-The PMS no longer downloads a feed revision a second time by id: the feed
-item already carries the whole revision, and Channex counts a by-id download
-it did not announce as a failure.
+What the PMS does now:
+
+- **One connection** for all booking traffic (feed reads, acknowledgements,
+  webhook fetches), kept open and shared across the process, so they leave
+  from one address for as long as it stays open.
+- **No second download**: a revision read from the feed is applied from the
+  feed item itself, not fetched again by id.
+
+How to run the test:
+
+- Best: a server with one outbound address and `APP_BASE_URL` on a public
+  `https://` host, so the webhook registers and Channex notifies the PMS.
+- Behind a NAT pool (as in the second attempt, which passed locally): start
+  booking-core with `CHANNEL_FEED_SECONDS=5` for the duration of the test,
+  so each revision is read, applied and acknowledged within seconds on the
+  same warm connection, then do new → modify → cancel in Booking CRS one
+  after another. Put the interval back to 300 afterwards.
 
 ---
 
