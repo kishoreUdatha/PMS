@@ -176,8 +176,14 @@ RETRYABLE = ("claimed", "failed", "unmapped", "no_inventory")
 
 
 def ingest(db: Session, revision_id: str, event_type: str, *,
-           replay: bool = False) -> dict:
-    """Claim, fetch, apply, acknowledge."""
+           replay: bool = False, attrs: dict | None = None) -> dict:
+    """Claim, fetch, apply, acknowledge.
+
+    ``attrs`` is the revision as the feed already delivered it. Given, it is
+    used as is rather than fetched again by id: Channex's certification counts
+    a by-id download of a revision it announced through the feed as a second,
+    unannounced read, and the feed item is the same revision anyway.
+    """
     # Which hotel a channel booking belongs to is not known until its property
     # id is matched to a link, so the claim and that match read across
     # tenants. The moment the property is known, the transaction narrows.
@@ -217,6 +223,8 @@ def ingest(db: Session, revision_id: str, event_type: str, *,
                   revision_id)
         return {"status": "unconfigured", "revision_id": revision_id}
 
+    if attrs:
+        return _apply(db, revision_id, attrs)
     try:
         with _client() as c:
             resp = c.get(f"/booking_revisions/{revision_id}")
@@ -813,7 +821,8 @@ def poll_feed(db_factory) -> int:
             continue
         with db_factory() as db:
             try:
-                res = ingest(db, rid, "booking")
+                res = ingest(db, rid, "booking",
+                             attrs=item.get("attributes") or None)
                 db.commit()
                 done += res["status"] not in ("duplicate",)
             except Exception:

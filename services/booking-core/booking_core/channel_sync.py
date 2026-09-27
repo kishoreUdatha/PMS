@@ -257,10 +257,16 @@ def _describe(endpoint: str, values: list[dict]) -> str:
 def _dirty_scope(db: Session, conn, rows):
     """What the outbox rows name, as channel ids and date ranges.
 
-    Returns (first night, last night, predicate over state keys). An
-    availability row names a room type; a rates row names a rate plan, or a
-    room type (every plan priced from it), or neither (every plan -- a rule
-    for all plans).
+    Returns (first night, last night, predicate over state keys, keys that
+    must be sent). An availability row names a room type; a rates row names a
+    rate plan, or a room type (every plan priced from it), or neither (every
+    plan -- a rule for all plans).
+
+    The last is what somebody wrote: a rate-plan calendar row records the
+    fields its save changed, and those go out for those nights even when the
+    channel already holds the same value. A user who sets "min stay 1" has
+    said something, and a request that leaves it out reads, on the far side,
+    as a PMS that lost it.
     """
     rooms = dict(db.execute(
         text("SELECT room_type_id::text, external_id FROM "
@@ -276,6 +282,7 @@ def _dirty_scope(db: Session, conn, rows):
         {"l": conn["id"]}).all()
     avail: dict[str, list] = {}
     rates: dict[str, list] = {}
+    written: set[tuple] = set()
     lo = hi = None
     for r in rows:
         span = (r["date_from"], r["date_to"])
@@ -293,12 +300,17 @@ def _dirty_scope(db: Session, conn, rows):
                     and str(r["room_type_id"]) != room):
                 continue
             rates.setdefault(ext, []).append(span)
+            for field in r.get("fields") or ():
+                day = span[0]
+                while day <= span[1]:
+                    written.add((field, ext, day))
+                    day += timedelta(days=1)
 
     def wanted(key) -> bool:
         field, ext, day = key
         spans = (avail if field == "availability" else rates).get(ext, ())
         return any(a <= day <= b for a, b in spans)
-    return lo, hi, wanted
+    return lo, hi, wanted, written
 
 
 def sync(db: Session, link_id, *, full: bool = False,
@@ -341,6 +353,7 @@ def sync(db: Session, link_id, *, full: bool = False,
     start = conn["today"]
     end = start + timedelta(days=settings.channel_sync_days - 1)
     wanted = None
+    written: set[tuple] = set()
     if dirty is not None and not full:
         if not db.execute(text("SELECT 1 FROM distribution.channel_ari_state "
                                "WHERE link_id = :l LIMIT 1"),
@@ -350,7 +363,7 @@ def sync(db: Session, link_id, *, full: bool = False,
             # it is recorded as the full sync it is.
             full, trigger = True, "full_sync"
         else:
-            lo, hi, wanted = _dirty_scope(db, conn, dirty)
+            lo, hi, wanted, written = _dirty_scope(db, conn, dirty)
             if lo is None:
                 return {"status": "ok", "detail": "Nothing to send.",
                         "endpoints": {}}
@@ -362,7 +375,8 @@ def sync(db: Session, link_id, *, full: bool = False,
     if wanted is not None:
         now_values = {k: v for k, v in now_values.items() if wanted(k)}
     before = {} if full else _stored(db, link_id, start, end)
-    changed = {k: v for k, v in now_values.items() if before.get(k) != v}
+    changed = {k: v for k, v in now_values.items()
+               if before.get(k) != v or k in written}
 
     if not changed:
         return {"status": "ok", "detail": "Nothing changed.", "sent": 0,
@@ -497,7 +511,7 @@ def drain_outbox(db_factory) -> list[dict]:
                     text(
                         """
                         SELECT id, scope, room_type_id, rate_plan_id,
-                               date_from, date_to, attempts
+                               date_from, date_to, attempts, fields
                         FROM distribution.ari_outbox
                         WHERE property_id = :p AND next_attempt_at <= now()
                         ORDER BY id
