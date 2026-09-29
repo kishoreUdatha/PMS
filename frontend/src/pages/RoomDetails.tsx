@@ -15,6 +15,7 @@ import {
   type RoomOverview, type RoomPhoto, type StatusEvent,
 } from '../api'
 import { useActivePropertyId } from '../hooks/useProperty'
+import { errorText } from '../lib/forms'
 
 /**
  * Screen 011 — Room Details.
@@ -99,8 +100,7 @@ function money(v: string | null): string {
 }
 
 function apiError(e: unknown): string {
-  const d = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
-  return typeof d === 'string' ? d : 'Something went wrong. Please try again.'
+  return errorText(e, 'Something went wrong. Please try again.')
 }
 
 function Badge({ tone, children }: { tone: string; children: React.ReactNode }) {

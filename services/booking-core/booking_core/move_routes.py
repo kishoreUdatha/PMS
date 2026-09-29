@@ -32,6 +32,8 @@ from decimal import Decimal
 from chirala_common.audit import record_audit
 from chirala_common.authz import Caller, assert_property_in_org, build_authz
 from chirala_common.routing import TransactionalRoute
+from chirala_common.folio_posting import post_charge
+from chirala_common.property_time import trading_day
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -801,23 +803,20 @@ def _post_difference(db: Session, row, quote: MoveQuote, to_room, reference):
     ).scalar_one_or_none()
     if folio_id is None:
         return None
-    entry_id = uuid.uuid4()
-    db.execute(
-        text(
-            """
-            INSERT INTO finance.folio_entries
-                (id, organization_id, property_id, folio_id, entry_type,
-                 amount, currency, business_date, source_type, source_line_key)
-            VALUES (:id, :org, :prop, :folio, 'debit', :amt, :cur,
-                    CURRENT_DATE, 'room_upgrade', :slk)
-            """
-        ),
-        {"id": entry_id, "org": row["organization_id"],
-         "prop": row["property_id"], "folio": folio_id,
-         "amt": quote.total_additional, "cur": row["currency"],
-         "slk": f"room_upgrade:{reference}"},
-    )
-    return entry_id
+    # Through the shared posting path, not a raw row: an upgrade is room
+    # revenue and is taxed as a room, it belongs to the ledger's open day
+    # rather than UTC's calendar date, and it is in the folio's currency.
+    # Written raw it was none of those -- untaxed, and dated a day the night
+    # audit might already have closed.
+    return post_charge(
+        db, organization_id=row["organization_id"],
+        property_id=row["property_id"], folio_id=folio_id,
+        amount=quote.total_additional,
+        business_date=trading_day(db, row["property_id"]),
+        source_type="room_upgrade", source_line_key=f"room_upgrade:{reference}",
+        # Per-night levies are charged for the nights the upgrade covers.
+        tax_units=max(int(quote.nights_applicable or 1), 1),
+    ).entry_id
 
 
 @move_router.get("/room-moves", response_model=list[dict])

@@ -1,0 +1,21 @@
+# Ruff, as CI and `make lint` run it.
+#
+# A BASELINE, not a style guide. There was no config at all, so every ruff
+# version checked whatever its own defaults were -- and a recent one reports
+# ~1,800 findings on this tree, almost all of it style (B008 on every FastAPI
+# `Depends()` default alone is ~1,450). A gate that fails on day one gets
+# switched off, so this selects what passes today and is worth failing on:
+#
+#   E9  -- the file does not parse.
+#   F   -- pyflakes: undefined names, redefinitions, `return` outside a
+#          function, duplicate dict keys... real bugs, not taste.
+#
+# Ignored for now, because they are present today and fixing them means
+# touching files other work is in the middle of: F401 unused import, F541
+# f-string without placeholders, F841 unused variable. Remove an entry here
+# once its count reaches zero -- the list should only ever get shorter.
+target-version = "py312"
+
+[lint]
+select = ["E9", "F"]
+ignore = ["F401", "F541", "F841"]

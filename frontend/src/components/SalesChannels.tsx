@@ -9,6 +9,7 @@ import {
   provisionChannelLink, getOtaStatus, type PropertyModule,
   type ProvisionResult, type OtaStatus,
 } from '../api'
+import { errorText } from '../lib/forms'
 
 /**
  * Whether this property is on sale to the public, and the link that sells it.
@@ -84,7 +85,7 @@ export default function SalesChannels({ propertyId, propertyCode }: {
       const er = e as { response?: { status?: number; data?: { detail?: string } } }
       setSyncErr(er.response?.status === 403
         ? 'Your role does not permit changing channel settings.'
-        : er.response?.data?.detail ?? 'Could not reach the channel manager.')
+        : errorText(er, 'Could not reach the channel manager.'))
     } finally { setSyncing(false) }
   }
 
@@ -102,7 +103,7 @@ export default function SalesChannels({ propertyId, propertyCode }: {
       setErr(er.response?.status === 403
         ? 'Your role does not permit changing sales channels. This needs '
           + 'the distribution permission, which sits with management.'
-        : er.response?.data?.detail ?? 'Could not change that setting.')
+        : errorText(er, 'Could not change that setting.'))
     } finally { setBusy('') }
   }
 

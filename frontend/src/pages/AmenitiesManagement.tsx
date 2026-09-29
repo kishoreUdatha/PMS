@@ -11,6 +11,7 @@ import {
   listManagedRoomTypes, AMENITY_CATEGORIES,
   type AmenityRow, type AmenityStats, type RoomTypeRow,
 } from '../api'
+import { errorText } from '../lib/forms'
 
 /** Screen 062 — Amenities Management. */
 
@@ -22,10 +23,7 @@ const ICON_CHOICES = [
 ]
 
 function apiError(e: unknown): string {
-  const d = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
-  if (typeof d === 'string') return d
-  if (Array.isArray(d)) return 'Some fields are invalid. Check the highlighted values.'
-  return 'Could not save. Please try again.'
+  return errorText(e, 'Could not save. Please try again.')
 }
 
 function Kpi({

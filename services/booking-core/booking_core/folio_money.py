@@ -128,3 +128,42 @@ def folio_money(db: Session, reservation_id: uuid.UUID) -> dict:
             "has_folio": bool(row and row["has_folio"]),
             "total": total, "charged": charged,
             "paid": paid, "balance": total - paid}
+
+
+def primary_folio(db: Session, reservation_id: uuid.UUID
+                  ) -> tuple[uuid.UUID | None, Decimal]:
+    """The folio a booking's own charges go to, and what has been paid on it.
+
+    **Which folio** is decided, not left to the database. A booking can have
+    several -- a group master beside each guest's, a split folio for the
+    company -- and ``GROUP BY f.id LIMIT 1`` returned whichever the planner
+    happened to meet first, so a cancellation fee could land on a guest's bar
+    folio one day and the master the next. The rule is the night audit's: the
+    group master first (the organiser agreed to pay for rooms), then the
+    oldest.
+
+    **Paid** is net of refunds. Summing credits alone counted money that had
+    already gone back to the guest, so a cancellation after a refund quoted a
+    second refund of the same money.
+    """
+    row = db.execute(
+        text(
+            """
+            SELECT f.id AS folio_id,
+                   COALESCE(SUM(e.amount) FILTER (
+                       WHERE e.entry_type = 'credit'), 0)
+                   - COALESCE(SUM(e.amount) FILTER (
+                       WHERE e.entry_type = 'debit'
+                         AND e.source_type IN ('refund', 'deposit_refund')),
+                     0) AS paid
+            FROM finance.folios f
+            LEFT JOIN finance.folio_entries e ON e.folio_id = f.id
+            WHERE f.reservation_id = :r
+            GROUP BY f.id, f.type, f.created_at
+            ORDER BY (f.type = 'group') DESC, f.created_at, f.id
+            LIMIT 1
+            """
+        ),
+        {"r": reservation_id},
+    ).mappings().first()
+    return (row["folio_id"], Decimal(row["paid"])) if row else (None, Decimal("0"))

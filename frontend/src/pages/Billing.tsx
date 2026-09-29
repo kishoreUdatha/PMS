@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AlertTriangle, Check, Loader2, Receipt } from 'lucide-react'
 import { api } from '../api'
+import { errorText } from '../lib/forms'
 
 /** A tenant's own subscription — the customer side of the SaaS product.
  *
@@ -60,7 +61,7 @@ export default function Billing() {
         setLimits(s.data.limits || {})
         setInvoices(i.data)
       })
-      .catch((e) => setErr(e?.response?.data?.detail || 'Could not load billing.'))
+      .catch((e) => setErr(errorText(e, 'Could not load billing.')))
       .finally(() => setBusy(false))
   }
   useEffect(load, [])
@@ -71,9 +72,7 @@ export default function Billing() {
       await api.post('/iam/billing/subscribe', { plan_code: code })
       load()
     } catch (e) {
-      const detail = (e as { response?: { data?: { detail?: string } } })
-        .response?.data?.detail
-      setErr(detail || 'That plan could not be selected.')
+      setErr(errorText(e, 'That plan could not be selected.'))
     } finally { setSaving('') }
   }
 

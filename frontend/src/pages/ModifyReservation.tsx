@@ -14,6 +14,7 @@ import {
   type ModifyQuote, type CancelQuote, type StaySide,
 } from '../api'
 import { useActivePropertyId } from '../hooks/useProperty'
+import { errorText } from '../lib/forms'
 
 /**
  * Screen 029 — Modify or Cancel Reservation.
@@ -121,9 +122,8 @@ export default function ModifyReservation() {
     }
   }
   function fail(e: unknown) {
-    const er = e as { response?: { data?: { detail?: string } } }
     setDone(null)
-    setError(er.response?.data?.detail ?? 'That could not be completed.')
+    setError(errorText(e, 'That could not be completed.'))
   }
 
   const save = useMutation({

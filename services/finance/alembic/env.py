@@ -5,6 +5,7 @@ from __future__ import annotations
 from logging.config import fileConfig
 
 from alembic import context
+from chirala_common.locks import migration_lock
 from chirala_common.models import Base
 from sqlalchemy import engine_from_config, pool
 
@@ -50,7 +51,9 @@ def run_migrations_online() -> None:
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
-    with connectable.connect() as connection:
+    # Serialised across every service and replica: without the lock, two
+    # runners read the same alembic_version and both apply the next revision.
+    with connectable.connect() as connection, migration_lock(connection):
         context.configure(
             connection=connection,
             target_metadata=target_metadata,

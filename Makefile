@@ -1,12 +1,13 @@
-.PHONY: help infra up down migrate migrate-iam migrate-booking lint test test-guards test-platform check-platform-ops test-money test-flows fmt frontend
+.PHONY: help infra up down migrate migrate-iam migrate-finance migrate-booking lint test test-guards test-platform check-platform-ops test-money test-flows fmt frontend
 
 help:
 	@echo "Targets:"
 	@echo "  infra           Start infrastructure only (postgres, redis, nats, minio, keycloak)"
 	@echo "  up              Build and start all services"
 	@echo "  down            Stop everything"
-	@echo "  migrate         Run all service migrations"
+	@echo "  migrate         Run all service migrations (iam -> finance -> booking-core)"
 	@echo "  migrate-iam     Run IAM migrations"
+	@echo "  migrate-finance Run finance migrations"
 	@echo "  migrate-booking Run booking-core migrations"
 	@echo "  lint            Ruff + mypy across services and libs"
 	@echo "  test            Run pytest across services and the repo-wide tests"
@@ -37,10 +38,21 @@ up:
 down:
 	docker compose down
 
-migrate: migrate-iam migrate-booking
+# In this order and as one recipe, not as prerequisites: finance's migrations
+# reference iam's tables and booking-core's reference finance.folios, and
+# `make -j` would run prerequisites side by side. This target used to skip
+# finance altogether, so booking-core failed at 0023 on a fresh database.
+# The compose `migrate` service (infra/migrate/migrate.sh) runs the same order.
+migrate:
+	cd services/iam && uv run alembic upgrade head
+	cd services/finance && uv run alembic upgrade head
+	cd services/booking-core && uv run alembic upgrade head
 
 migrate-iam:
 	cd services/iam && uv run alembic upgrade head
+
+migrate-finance:
+	cd services/finance && uv run alembic upgrade head
 
 migrate-booking:
 	cd services/booking-core && uv run alembic upgrade head
@@ -74,8 +86,10 @@ test-platform:
 # The invariants every money screen has to keep, checked against the RUNNING
 # services -- which is where the defects lived. Brings the stack up first,
 # because a skipped test protects nothing and this one skips without it.
+# REQUIRE_STACK=1 makes that skip a failure: if the stack came up but the
+# tests still cannot reach it, the target goes red instead of green.
 test-money: up
-	BOOKING_BASE=$(BOOKING_BASE_CMD) FINANCE_BASE=$(FINANCE_BASE_CMD) SERVICE_TOKEN=$(TOKEN_CMD) uv run pytest tests/test_money_invariants.py -v
+	REQUIRE_STACK=1 BOOKING_BASE=$(BOOKING_BASE_CMD) FINANCE_BASE=$(FINANCE_BASE_CMD) SERVICE_TOKEN=$(TOKEN_CMD) uv run pytest tests/test_money_invariants.py -v
 
 # The platform operations console against the RUNNING stack: every handler
 # called for real, every refusal checked, and the whole thing rolled back so
@@ -91,7 +105,7 @@ check-platform-ops: up
 # so this leaves a trail -- point it at a scratch property, not a tenant with
 # paying guests.
 test-flows: up
-	BOOKING_BASE=$(BOOKING_BASE_CMD) FINANCE_BASE=$(FINANCE_BASE_CMD) SERVICE_TOKEN=$(TOKEN_CMD) uv run pytest tests/test_operational_flows.py -v
+	REQUIRE_STACK=1 BOOKING_BASE=$(BOOKING_BASE_CMD) FINANCE_BASE=$(FINANCE_BASE_CMD) SERVICE_TOKEN=$(TOKEN_CMD) uv run pytest tests/test_operational_flows.py -v
 
 frontend:
 	cd frontend && npm install && npm run dev

@@ -37,11 +37,12 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from chirala_common.ratelimit import _redis, client_ip
 from chirala_common.routing import TransactionalRoute
 
 from .database import get_session
 from .public_routes import _ENTITLED, _public_property
-from .ratelimit import _redis, client_ip, rate_limit
+from .ratelimit import rate_limit
 from .settings import settings
 
 log = logging.getLogger("uvicorn.error").getChild("chat")
@@ -100,7 +101,7 @@ def _anthropic():
 
 def _allow(key: str, limit: int, window: int) -> bool:
     """A fixed-window counter in Redis. Fails open, like the main limiter."""
-    conn = _redis()
+    conn = _redis(settings.redis_url)
     if conn is None:
         return True
     bucket = f"{key}:{int(time.time()) // window}"
@@ -275,7 +276,7 @@ def chat(property_code: str, body: ChatIn, request: Request,
         raise HTTPException(status_code=404, detail="Chat is not available.")
     prop = _public_property(db, property_code)
 
-    if not _allow(f"rl:chat:ip:{client_ip(request)}",
+    if not _allow(f"rl:chat:ip:{client_ip(request, settings.trusted_proxies)}",
                   settings.chat_messages_per_visitor, 600):
         raise HTTPException(
             status_code=429, headers={"Retry-After": "600"},

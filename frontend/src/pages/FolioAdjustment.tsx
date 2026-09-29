@@ -14,6 +14,7 @@ import {
   type AdjContext, type AdjCharge, type AdjRow,
 } from '../api'
 import { useActivePropertyId } from '../hooks/useProperty'
+import { errorText } from '../lib/forms'
 
 /**
  * Screen 114 — Guest Folio Adjustment.
@@ -85,8 +86,7 @@ export default function FolioAdjustment() {
 
   const refresh = () => qc.invalidateQueries({ queryKey: ['adj-context'] })
   const fail = (e: unknown) => {
-    const er = e as { response?: { data?: { detail?: string } } }
-    setError(er.response?.data?.detail ?? 'That did not work. Please try again.')
+    setError(errorText(e, 'That did not work. Please try again.'))
     setToast('')
   }
   const reset = () => {
@@ -109,9 +109,7 @@ export default function FolioAdjustment() {
         try {
           await uploadAdjustmentEvidence(made.id, propertyId, pendingFile)
         } catch (e) {
-          const er = e as { response?: { data?: { detail?: string } } }
-          attachFailed = er.response?.data?.detail
-            ?? 'the file could not be attached'
+          attachFailed = errorText(e, 'the file could not be attached')
         }
       }
       return { ...made, attachFailed }
@@ -155,7 +153,7 @@ export default function FolioAdjustment() {
     return (
       <p className="flex items-start gap-2 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-        {er?.response?.data?.detail ?? 'This folio could not be loaded.'}
+        {errorText(er, 'This folio could not be loaded.')}
       </p>
     )
   }

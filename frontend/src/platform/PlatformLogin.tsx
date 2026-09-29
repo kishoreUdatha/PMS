@@ -3,7 +3,9 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import BrandMark from '../components/BrandMark'
 import { AlertTriangle, Loader2, ShieldCheck } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext'
+import { returnPath } from '../auth/sessionEvents'
 import { MfaRequired } from '../api'
+import { errorText } from '../lib/forms'
 
 /**
  * Platform sign-in.
@@ -19,7 +21,7 @@ import { MfaRequired } from '../api'
 export default function PlatformLogin() {
   const { signInPlatform, verifyPlatform } = useAuth()
   const navigate = useNavigate()
-  const location = useLocation() as { state?: { from?: string } }
+  const location = useLocation()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -42,7 +44,7 @@ export default function PlatformLogin() {
       } else {
         await signInPlatform(email.trim(), password)
       }
-      navigate(location.state?.from || '/platform', { replace: true })
+      navigate(returnPath(location, '/platform'), { replace: true })
     } catch (err) {
       if (err instanceof MfaRequired) {
         setChallenge(err.challenge)
@@ -50,9 +52,7 @@ export default function PlatformLogin() {
         setError('')
         return
       }
-      const detail = (err as { response?: { data?: { detail?: string } } })
-        .response?.data?.detail
-      setError(detail || 'Sign-in failed.')
+      setError(errorText(err, 'Sign-in failed.'))
     } finally {
       setBusy(false)
     }

@@ -27,11 +27,11 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from chirala_common.audit import record_audit
-from chirala_common.authz import Caller, assert_property_in_org, build_authz, assert_org_matches_caller, caller_org
+from chirala_common.authz import Caller, assert_property_in_org, build_authz, assert_org_matches_caller, caller_org, require_property_permission
 from chirala_common.routing import TransactionalRoute
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -714,6 +714,22 @@ class MappingsIn(BaseModel):
     rates: list[MappingIn] | None = None
 
 
+def _ota_listing_taken(exc: IntegrityError) -> str | None:
+    """The message for an OTA listing another connection already has.
+
+    Every tenant shares one channel-manager account, so one listing connected
+    twice is two hotels selling through somebody else's Booking.com page. The
+    unique index sees across tenants; this only says so in words, and names
+    nobody -- the other connection may belong to another customer.
+    """
+    diag = getattr(getattr(exc, "orig", None), "diag", None)
+    if getattr(diag, "constraint_name", None) != "uq_channel_connection_ota_hotel":
+        return None
+    return ("That property id is already connected on this platform. Check "
+            "the id with the OTA; if this hotel really is that listing, the "
+            "other connection has to be removed first.")
+
+
 def _require_ota_id(db: Session, partner_id: uuid.UUID,
                     ota_hotel_id: str | None) -> str | None:
     """An online channel needs the OTA's own id for this hotel. Enforced here.
@@ -869,7 +885,10 @@ def create_connection(
     own identifiers, which is the work that has to happen before any
     integration can be wired in.
     """
-    assert_property_in_org(db, caller, body.property_id)
+    # Named in the body, where the dependency cannot see it: re-checked
+    # against this property, not just the organisation.
+    require_property_permission(db, caller, body.property_id,
+                                "distribution", "configure")
     if body.payment_model and body.payment_model not in PAYMENT_MODELS:
         raise HTTPException(
             status_code=422,
@@ -907,10 +926,11 @@ def create_connection(
              "hid": hotel_id,
              "by": caller.user_id},
         ).scalar_one()
-    except IntegrityError:
+    except IntegrityError as exc:
         raise HTTPException(
             status_code=409,
-            detail="This partner is already connected to this property.",
+            detail=_ota_listing_taken(exc)
+            or "This partner is already connected to this property.",
         ) from None
 
     record_audit(
@@ -935,9 +955,14 @@ def update_connection(
 ):
     """Change the channel's identifiers or commercial terms."""
     # The property is named in the body, where guard_request_tenancy
-    # cannot see it.
-    assert_property_in_org(db, caller, body.property_id)
-    _connection_or_404(db, caller, connection_id)
+    # cannot see it -- and the connection being changed has a property of
+    # its own, which is the one the change actually lands on.
+    require_property_permission(db, caller, body.property_id,
+                                "distribution", "configure")
+    existing = _connection_or_404(db, caller, connection_id)
+    if existing["property_id"] != body.property_id:
+        require_property_permission(db, caller, existing["property_id"],
+                                    "distribution", "configure")
     if body.payment_model and body.payment_model not in PAYMENT_MODELS:
         raise HTTPException(
             status_code=422,
@@ -963,9 +988,11 @@ def update_connection(
              "notes": body.notes, "hid": hotel_id,
              "by": caller.user_id, "i": connection_id},
         )
-    except IntegrityError:
+    except IntegrityError as exc:
         raise HTTPException(
-            status_code=409, detail="Could not save those terms.") from None
+            status_code=409,
+            detail=_ota_listing_taken(exc) or "Could not save those terms.",
+        ) from None
     return _present(db, _connection_or_404(db, caller, connection_id))
 
 
@@ -1046,6 +1073,9 @@ def delete_connection(
     code means nothing except in relation to one channel at one property.
     """
     row = _connection_or_404(db, caller, connection_id)
+    # The id names a property the dependency never saw.
+    require_property_permission(db, caller, row["property_id"],
+                                "distribution", "configure")
     db.execute(
         text("DELETE FROM distribution.channel_connections WHERE id = :i"),
         {"i": connection_id},
@@ -1462,7 +1492,8 @@ def upsert_link(
     so asking a caller to know whether it exists yet is asking them to track
     something the database already knows.
     """
-    assert_property_in_org(db, caller, body.property_id)
+    require_property_permission(db, caller, body.property_id,
+                                "distribution", "configure")
     try:
         db.execute(
             text(
@@ -1744,7 +1775,8 @@ def set_sync_settings(
     ).mappings().first()
     if link is None:
         raise HTTPException(status_code=404, detail="No such connection.")
-    assert_property_in_org(db, caller, link["property_id"])
+    require_property_permission(db, caller, link["property_id"],
+                                "distribution", "configure")
 
     before = db.execute(
         text("SELECT send_availability, send_rates, send_restrictions, "
@@ -1796,6 +1828,8 @@ def set_link_mappings(
     the same pairs several times and watching them drift.
     """
     row = _link_or_404(db, caller, link_id)
+    require_property_permission(db, caller, row["property_id"],
+                                "distribution", "configure")
     _write_mappings(db, link_id, body)
     record_audit(
         db, action="channel_link.mapped", entity_type="channel_manager_link",
@@ -1814,10 +1848,63 @@ def push_link(
         require_org_permission("distribution", "configure")),
     db: Session = Depends(get_session),
 ):
-    """Send this property's rates and availability to the channel manager now."""
-    _link_or_404(db, caller, link_id)
-    from .channel_push import push
-    return PushResult(**push(db, link_id))
+    """Full sync: send every rate, availability and stay rule, now.
+
+    500 days for every mapped room and rate plan, whatever was sent before --
+    for go-live, and for recovering from anything that may have left the
+    channel manager out of step. Day-to-day changes need no button: they go
+    out on their own within a sync interval.
+    """
+    row = _link_or_404(db, caller, link_id)
+    require_property_permission(db, caller, row["property_id"],
+                                "distribution", "configure")
+    from .channel_sync import sync
+    res = sync(db, link_id, full=True)
+    record_audit(
+        db, action="channel_link.full_sync", entity_type="channel_manager_link",
+        entity_id=str(link_id), organization_id=caller.organization_id,
+        actor_subject=caller.subject, after={"status": res["status"]},
+    )
+    return PushResult(status=res["status"], detail=res["detail"])
+
+
+class SyncLogRow(BaseModel):
+    id: uuid.UUID
+    created_at: datetime
+    endpoint: str
+    trigger: str
+    outcome: str
+    status_code: int | None = None
+    value_count: int
+    date_from: date | None = None
+    date_to: date | None = None
+    task_ids: list[str] = []
+    summary: str | None = None
+    error: str | None = None
+    request_excerpt: str | None = None
+
+
+@attribute_router.get("/channel-links/{link_id}/sync-log",
+                      response_model=list[SyncLogRow])
+def sync_log(
+    link_id: uuid.UUID,
+    limit: int = Query(50, ge=1, le=500),
+    caller: Caller = Depends(require_org_permission("distribution", "view")),
+    db: Session = Depends(get_session),
+):
+    """Every request sent to the channel manager for this property, newest
+    first, with the task ids it returned -- the receipt for each update."""
+    row = _link_or_404(db, caller, link_id)
+    require_property_permission(db, caller, row["property_id"],
+                                "distribution", "view")
+    rows = db.execute(
+        text("SELECT id, created_at, endpoint, trigger, outcome, status_code, "
+             "value_count, date_from, date_to, task_ids, summary, error, "
+             "request_excerpt FROM distribution.channel_sync_log "
+             "WHERE link_id = :l ORDER BY created_at DESC LIMIT :n"),
+        {"l": link_id, "n": limit},
+    ).mappings().all()
+    return [SyncLogRow(**r) for r in rows]
 
 
 class ProvisionResult(BaseModel):

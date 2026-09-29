@@ -10,6 +10,7 @@ import { fmtDateTime } from '../lib/dates'
 import {
   getOnboarding, patchOnboarding, activateProperty, getPropertyLogo, listProperties, runTestBooking, resendWelcomeEmails, type OnboardingState, type TestBookingResult, type OnboardingStep,
 } from '../api'
+import { errorText } from '../lib/forms'
 
 /**
  * Getting a property from nothing to open.
@@ -841,7 +842,7 @@ export function OnboardingGoLive() {
           {err && (
             <p className="mt-4 flex items-start gap-2 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
               <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-              {err.response?.data?.detail ?? 'The property could not be activated.'}
+              {errorText(err, 'The property could not be activated.')}
             </p>
           )}
           {data.activated_at && (<>
@@ -887,8 +888,7 @@ export function OnboardingGoLive() {
                 )}
                 {resend.error != null && (
                   <span className="mt-1 block max-w-xs text-xs text-red-700">
-                    {(resend.error as { response?: { data?: { detail?: string } } })
-                      .response?.data?.detail ?? 'They could not be sent.'}
+                    {errorText(resend.error, 'They could not be sent.')}
                   </span>
                 )}
               </span>

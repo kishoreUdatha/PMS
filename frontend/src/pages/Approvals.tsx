@@ -8,6 +8,7 @@ import {
   getApprovalQueue, getApprovalPolicies, approveRequest, rejectRequest,
   getApprovalHistory, type ApprovalRequest, type ApprovalPolicy,
 } from '../api'
+import { errorText } from '../lib/forms'
 
 const CATEGORIES = [
   { key: '', label: 'All' },
@@ -58,10 +59,8 @@ export default function Approvals() {
       // A refusal is not a success. It used to share the green toast and then
       // disappear after two seconds, so someone blocked from approving their
       // own request saw a tick and no explanation. Errors stay until dismissed.
-      const err = e as { response?: { data?: { detail?: string } } }
       setToast('')
-      setError(err.response?.data?.detail
-        ?? 'That decision could not be recorded. Please try again.')
+      setError(errorText(e, 'That decision could not be recorded. Please try again.'))
     }
   }
 

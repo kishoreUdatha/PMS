@@ -611,10 +611,14 @@ export async function mfaStatus(): Promise<MfaStatus> {
   return data
 }
 
-export async function mfaEnrol(): Promise<{
+/** Start (or restart) enrolment. Replacing an active factor needs a current
+ *  authenticator code or an unused recovery code -- otherwise anyone holding
+ *  a session could quietly swap the second factor for their own. */
+export async function mfaEnrol(currentCode?: string): Promise<{
   secret: string; otpauth_uri: string; recovery_codes: string[]
 }> {
-  const { data } = await api.post('/iam/auth/mfa/enrol', {})
+  const { data } = await api.post('/iam/auth/mfa/enrol',
+    currentCode ? { code: currentCode } : {})
   return data
 }
 

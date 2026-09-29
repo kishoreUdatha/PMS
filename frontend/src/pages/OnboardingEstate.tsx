@@ -19,6 +19,7 @@ import {
   uploadRoomTypePhoto, deleteRoomTypePhoto, bulkCreateRooms, listRooms,
   updateRoom, deleteRoom, type BuildingRow, type RoomTypeRow, type RoomRow,
 } from '../api'
+import { errorText } from '../lib/forms'
 
 /**
  * Onboarding steps 3 and 4: the shape of the property, then what is in it.
@@ -68,8 +69,7 @@ export function OnboardingStructure() {
     qc.invalidateQueries({ queryKey: ['onboarding', propertyId] })
   }
   const fail = (e: unknown) => setErr(
-    (e as { response?: { data?: { detail?: string } } })
-      .response?.data?.detail ?? 'That could not be saved.')
+    errorText(e, 'That could not be saved.'))
 
   const addBuilding = useMutation({
     mutationFn: () => createBuilding(propertyId, {
@@ -532,8 +532,7 @@ export function OnboardingRooms() {
     qc.invalidateQueries({ queryKey: ['onboarding', propertyId] })
   }
   const fail = (e: unknown) => setErr(
-    (e as { response?: { data?: { detail?: string } } })
-      .response?.data?.detail ?? 'That could not be saved.')
+    errorText(e, 'That could not be saved.'))
 
   const addType = useMutation({
     mutationFn: () => createManagedRoomType(propertyId, {

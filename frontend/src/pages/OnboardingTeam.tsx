@@ -15,6 +15,7 @@ import {
   listRoles, listInvitations, createInvitation,
   type NamedOption, type InvitationResult,
 } from '../api'
+import { errorText } from '../lib/forms'
 
 /**
  * Onboarding step 7 — the people who will run the property.
@@ -132,8 +133,7 @@ export function OnboardingTeam() {
           })
           out.push({ ...row, result: 'done' })
         } catch (e) {
-          const detail = (e as { response?: { data?: { detail?: string } } })
-            .response?.data?.detail ?? 'Could not be invited.'
+          const detail = errorText(e, 'Could not be invited.')
           out.push({ ...row, result: detail })
         }
       }

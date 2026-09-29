@@ -13,6 +13,7 @@ import {
   listInHouseGuests, listServiceItems, listServiceOrders, postServiceOrder,
   type InHouseGuest, type ServiceItem,
 } from '../api'
+import { errorText } from '../lib/forms'
 
 /**
  * Guest Services — what a guest ordered during the stay.
@@ -109,8 +110,7 @@ export default function GuestOrders() {
         'Posted to the bill')
     },
     onError: (e) => {
-      const er = e as { response?: { data?: { detail?: string } } }
-      notify(er.response?.data?.detail ?? 'That did not go through.',
+      notify(errorText(e, 'That did not go through.'),
         'Nothing was posted')
     },
   })

@@ -55,9 +55,7 @@ class BookingSettings(BaseServiceSettings):
     #: tight for anything walking a year of the rate calendar.
     public_rate_limit: int = 60
     public_rate_limit_seconds: int = 60
-    #: Peers whose X-Forwarded-For may be believed. Only our own gateway; a
-    #: header from anyone else is a claim, not evidence.
-    trusted_proxies: str = ""
+    # ``trusted_proxies`` is shared with iam now; see BaseServiceSettings.
     # --- channel manager (Channex) ------------------------------------
     #: Where Channex lives. Staging by default: a deployment that has not been
     #: told otherwise must not be talking to a production channel manager.
@@ -85,10 +83,24 @@ class BookingSettings(BaseServiceSettings):
     #: nothing, and the sweep writes inventory that channels then re-push.
     block_cutoff_sweep_enabled: bool = True
     block_cutoff_sweep_seconds: int = 3600
-    #: How often. Channex asks for batching rather than a call per change —
-    #: their guide suggests thirty to sixty seconds per property — because a
-    #: hotel editing a week of rates should reach the channel as one push.
-    channel_push_seconds: int = 60
+    #: How often the worker looks at the ARI outbox. Changes are recorded by
+    #: triggers as they are saved; this is only how quickly the queue is
+    #: picked up, not a scan for changes.
+    channel_push_seconds: int = 3
+    #: A property's changes are sent once it has been quiet this long, so a
+    #: burst of edits (three prices typed one after another, a few seconds
+    #: apart) is one request. Changes saved together -- a range edit, or the
+    #: plan calendar's "save all" -- are one request whatever this is.
+    channel_sync_quiet_seconds: int = 20
+    #: ...but nothing waits longer than this for a property that never goes
+    #: quiet.
+    channel_sync_max_wait_seconds: int = 60
+    #: How far ahead a full sync publishes, and how far ahead changes are
+    #: watched. Channex's certification asks for 500 days.
+    channel_sync_days: int = 500
+    #: Channex allows ten availability and ten rate/restriction requests a
+    #: minute per property and answers 429 above that.
+    channex_requests_per_minute: int = 10
 
     #: Whether this process keeps every property in step with the channel
     #: manager by itself. On by default: provisioning on go-live and a button
@@ -100,6 +112,9 @@ class BookingSettings(BaseServiceSettings):
     #: change hourly; room types and rate plans change a few times a year, and
     #: each property costs several calls to the far side to check.
     channel_provision_seconds: int = 900
+    #: How often to ask the channel manager for bookings it still holds
+    #: unacknowledged -- the safety net under the webhook.
+    channel_feed_seconds: int = 300
     #: How many properties per sweep. A ceiling, not a target — it stops a
     #: first run against a large estate turning into a thousand API calls in
     #: one burst. The rest are picked up next pass, oldest first.

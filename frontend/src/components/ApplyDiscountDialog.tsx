@@ -22,6 +22,7 @@ import { Link } from 'react-router-dom'
 import { AlertTriangle, Loader2, Percent, X } from 'lucide-react'
 import Select from './Select'
 import { getAdjustmentContext, createAdjustment, postAdjustment } from '../api'
+import { errorText } from '../lib/forms'
 
 const field = 'w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-brand'
 const lbl = 'mb-1 block text-xs font-medium text-slate-600'
@@ -90,8 +91,7 @@ export default function ApplyDiscountDialog({
       setNote(made.message
         || 'Recorded, and waiting for approval before it comes off the folio.')
     } catch (e) {
-      const ax = e as { response?: { data?: { detail?: string } } }
-      setErr(ax?.response?.data?.detail ?? 'The adjustment could not be made.')
+      setErr(errorText(e, 'The adjustment could not be made.'))
     } finally { setBusy(false) }
   }
 

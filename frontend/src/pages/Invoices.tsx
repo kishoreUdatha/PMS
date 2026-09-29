@@ -10,6 +10,8 @@ import {
   listInvoices, createInvoice, getOpenFolios, type OpenFolio,
 } from '../api'
 import { useActivePropertyId } from '../hooks/useProperty'
+import { errorText } from '../lib/forms'
+import { clickableRow } from '../lib/a11y'
 
 const plain = (v: string | number) =>
   new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2 }).format(Number(v))
@@ -116,8 +118,7 @@ export default function Invoices() {
                   className="p-10 text-center text-sm text-red-600">
                   <AlertTriangle size={16} className="mx-auto mb-2" />
                   Could not load invoices.
-                  {' '}{(error as { response?: { data?: { detail?: string } } })
-                    .response?.data?.detail ?? (error as Error).message}
+                  {' '}{errorText(error, (error as Error).message)}
                 </td></tr>
               )}
               {!isLoading && !error && rows.length === 0 && (
@@ -126,7 +127,7 @@ export default function Invoices() {
                 </td></tr>
               )}
               {rows.map((r) => (
-                <tr key={r.id} onClick={() => nav(`/finance/invoices/${r.id}`)}
+                <tr key={r.id} {...clickableRow(() => nav(`/finance/invoices/${r.id}`), 'link')}
                   className="cursor-pointer text-slate-700 hover:bg-slate-50/60">
                   <td className="px-5 py-3 font-semibold text-slate-800">
                     {r.display_number}
@@ -196,8 +197,7 @@ function NewInvoice({ propertyId, onClose }: {
       })
       nav(`/finance/invoices/${inv.id}`)
     } catch (e) {
-      const er = e as { response?: { data?: { detail?: string } }; message?: string }
-      setErr(er.response?.data?.detail ?? er.message ?? 'Could not start the invoice.')
+      setErr(errorText(e, 'Could not start the invoice.'))
     } finally { setBusy(false) }
   }
 
