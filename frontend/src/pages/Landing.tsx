@@ -394,6 +394,19 @@ export default function Landing() {
         </p>
       </section>
 
+      {/* ── Real screens ─────────────────────────────────────────── */}
+      <section id="tour" aria-labelledby="tour-title" className="scroll-mt-16 bg-slate-50">
+        <div className="mx-auto max-w-7xl px-4 py-20 sm:px-6">
+          <div className="mx-auto max-w-2xl text-center">
+            <p className="text-sm font-semibold uppercase tracking-wider text-brand-deep">See it at work</p>
+            <h2 id="tour-title" className="mt-3 text-3xl font-bold tracking-tight text-ink sm:text-4xl">
+              The screens your team will use every day
+            </h2>
+          </div>
+          <div className="mt-10"><ScreenTour /></div>
+        </div>
+      </section>
+
       {/* ── Journey strip ──────────────────────────────────────── */}
       <section className="border-y border-slate-100 bg-slate-50">
         <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6">
@@ -699,62 +712,21 @@ function FeatureCard({ icon: Icon, title, body, level = 'h4' }: Feature & {
   )
 }
 
-/** An illustrative Stayview: not live data, just a picture of the screen.
- *  The guest names are obviously placeholder, so nobody takes it for a real
- *  booking. */
+/** The hero picture: the real Stayview, from the fictional demo property
+ *  (scripts/seed_demo_property.py), in a browser frame. The two floating
+ *  cards are decoration and say nothing a screenshot could contradict. */
 function HeroMock() {
-  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-  const rows: { room: string; bars: { from: number; span: number; tone: string; label: string }[] }[] = [
-    { room: '101', bars: [{ from: 0, span: 3, tone: 'bg-brand', label: 'Guest A' }] },
-    { room: '102', bars: [{ from: 1, span: 4, tone: 'bg-[#375AAC]', label: 'Group B' }] },
-    { room: '103', bars: [{ from: 0, span: 2, tone: 'bg-brand-accent', label: 'OTA' }, { from: 4, span: 3, tone: 'bg-brand', label: 'Guest C' }] },
-    { room: '201', bars: [{ from: 2, span: 3, tone: 'bg-[#9C6017]', label: 'Hold' }] },
-    { room: '202', bars: [{ from: 3, span: 4, tone: 'bg-brand-accent', label: 'Direct' }] },
-  ]
-  const kpis = [
-    { label: 'Occupancy', value: '84%' },
-    { label: 'Arrivals', value: '12' },
-    { label: 'Departures', value: '9' },
-  ]
   return (
     <div className="relative" aria-hidden="true">
-      <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-2xl shadow-ink/10 sm:p-5">
-        <div className="flex items-center gap-1.5 pb-4">
+      <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-2xl shadow-ink/10">
+        <div className="flex items-center gap-1.5 border-b border-slate-100 px-4 py-2.5">
           <span className="h-2.5 w-2.5 rounded-full bg-[#f87171]" />
           <span className="h-2.5 w-2.5 rounded-full bg-[#fbbf24]" />
           <span className="h-2.5 w-2.5 rounded-full bg-[#34d399]" />
           <span className="ml-3 text-xs font-semibold text-slate-400">Stayview</span>
         </div>
-        <div className="grid grid-cols-3 gap-3">
-          {kpis.map((k) => (
-            <div key={k.label} className="rounded-xl bg-slate-50 p-3">
-              <p className="text-[11px] font-medium text-slate-400">{k.label}</p>
-              <p className="text-xl font-bold text-ink">{k.value}</p>
-            </div>
-          ))}
-        </div>
-        <div className="mt-4 overflow-hidden rounded-xl border border-slate-100">
-          <div className="grid grid-cols-[44px_repeat(7,1fr)] bg-slate-50 text-[11px] font-semibold text-slate-400">
-            <span className="px-2 py-2">Room</span>
-            {days.map((d) => <span key={d} className="py-2 text-center">{d}</span>)}
-          </div>
-          {rows.map((r) => (
-            <div key={r.room} className="relative grid h-10 grid-cols-[44px_repeat(7,1fr)] border-t border-slate-100">
-              <span className="flex items-center px-2 text-xs font-semibold text-ink">{r.room}</span>
-              {days.map((d) => <span key={d} className="border-l border-slate-75" />)}
-              {r.bars.map((b) => (
-                <span key={b.label}
-                  className={`absolute top-1.5 flex h-7 items-center rounded-md px-2 text-[11px] font-semibold text-white ${b.tone}`}
-                  style={{
-                    left: `calc(44px + (100% - 44px) * ${b.from / 7} + 2px)`,
-                    width: `calc((100% - 44px) * ${b.span / 7} - 4px)`,
-                  }}>
-                  <span className="truncate">{b.label}</span>
-                </span>
-              ))}
-            </div>
-          ))}
-        </div>
+        <img src="/screens/stayview-hero.webp" width={1256} height={609} alt=""
+          className="block w-full" />
       </div>
       <div className="absolute -bottom-6 -left-4 hidden items-center gap-3 rounded-xl border border-slate-100 bg-white px-4 py-3 shadow-xl sm:flex">
         <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-pf-ok-bg text-pf-ok-text">
@@ -774,6 +746,48 @@ function HeroMock() {
           <p className="text-[11px] text-slate-400">Synced to calendar</p>
         </div>
       </div>
+    </div>
+  )
+}
+
+/** A few real screens, one at a time. From the fictional demo property. */
+const SCREENS = [
+  { id: 'dashboard', label: 'Dashboard', src: '/screens/dashboard.webp',
+    caption: "Today's occupancy, arrivals, departures and revenue at a glance." },
+  { id: 'stayview', label: 'Stayview', src: '/screens/stayview.webp',
+    caption: 'Every room across the dates, with rates and the bookings still to place.' },
+  { id: 'pos', label: 'Restaurant POS', src: '/screens/pos.webp',
+    caption: 'Tables, the open check and the menu, with kitchen tickets for each round.' },
+]
+
+function ScreenTour() {
+  const [active, setActive] = useState(SCREENS[0].id)
+  const screen = SCREENS.find((x) => x.id === active) ?? SCREENS[0]
+  return (
+    <div>
+      <div className="flex justify-center gap-2 overflow-x-auto" role="tablist">
+        {SCREENS.map((x) => (
+          <button key={x.id} type="button" role="tab" aria-selected={x.id === active}
+            onClick={() => setActive(x.id)}
+            className={`shrink-0 rounded-full px-5 py-2.5 text-sm font-semibold transition ${x.id === active
+              ? 'bg-ink text-white shadow-md'
+              : 'border border-slate-200 bg-white text-slate-500 hover:border-brand hover:text-brand'}`}>
+            {x.label}
+          </button>
+        ))}
+      </div>
+      <figure className="mx-auto mt-8 max-w-6xl">
+        <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-2xl shadow-ink/10">
+          <div className="flex items-center gap-1.5 border-b border-slate-100 px-4 py-2.5">
+            <span className="h-2.5 w-2.5 rounded-full bg-[#f87171]" />
+            <span className="h-2.5 w-2.5 rounded-full bg-[#fbbf24]" />
+            <span className="h-2.5 w-2.5 rounded-full bg-[#34d399]" />
+          </div>
+          <img key={screen.id} src={screen.src} width={1556} height={675} loading="lazy"
+            alt={`${screen.label} screen in MyGuest`} className="block w-full" />
+        </div>
+        <figcaption className="mt-4 text-center text-sm text-slate-500">{screen.caption}</figcaption>
+      </figure>
     </div>
   )
 }
