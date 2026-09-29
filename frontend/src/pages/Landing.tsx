@@ -156,6 +156,7 @@ const MODULES: Module[] = [
 const MENU = [
   { id: 'products', label: 'Products' },
   { id: 'features', label: 'Features' },
+  { id: 'channels', label: 'Channel manager' },
   { id: 'compliance', label: 'Compliance' },
   { id: 'onboarding', label: 'Getting started' },
   { id: 'faq', label: 'FAQ' },
@@ -165,11 +166,34 @@ const PRODUCTS = [
   { icon: ConciergeBell, title: 'Hotel PMS',
     body: 'Front desk, reservations, housekeeping and night audit.' },
   { icon: Network, title: 'Channel manager',
-    body: 'Rates and availability synced with the OTAs.' },
+    body: 'Booking.com, Airbnb, Expedia, Agoda and more, synced both ways.' },
   { icon: Globe, title: 'Booking engine',
     body: 'Commission-free direct bookings on your own domain.' },
   { icon: Receipt, title: 'Billing & tax',
     body: 'Folios, payments, tax invoices and cashiering.' },
+]
+
+/** The channels MyGuest provisions through its channel manager. Kept in step
+ *  with CHANNEL_CODES in booking-core's channel_provision.py: a name here that
+ *  is not there is a promise the demo cannot keep. Plain text, not logos. */
+const OTAS = [
+  'Booking.com', 'Airbnb', 'Expedia', 'Agoda', 'MakeMyTrip', 'Goibibo',
+  'Trip.com', 'Cleartrip', 'Yatra', 'Google Hotel Ads',
+]
+
+const CHANNEL_FLOW = [
+  { icon: TrendingUp, title: 'Rates, availability and restrictions out',
+    body: 'Prices, rooms left, minimum stay, closed to arrival or departure and stop-sell, published a full year ahead to every connected channel.' },
+  { icon: CalendarDays, title: 'Bookings in, on their own',
+    body: 'An OTA booking lands in your calendar with the guest\'s details and the rate they paid. A repeat of the same booking is recognised, never doubled.' },
+  { icon: Layers, title: 'Map rooms once',
+    body: 'Link each channel\'s rooms to yours one time. A booking for a room that is not mapped is flagged for the desk, never silently lost.' },
+  { icon: History, title: 'Cancellations and no-shows tracked',
+    body: 'Cancellations land in a queue for the desk, and each no-show shows the clock on reporting it to the OTA before the window closes.' },
+  { icon: Handshake, title: 'Commission per channel',
+    body: 'Each OTA and travel agent carries its own commission rate, with a commission report to check the statement against.' },
+  { icon: Globe, title: 'Your own booking engine beside them',
+    body: 'Direct bookings on your website sell from the same inventory as the OTAs, with no commission to anyone.' },
 ]
 
 const COMPLIANCE = [
@@ -213,7 +237,7 @@ const FAQ = [
   { q: 'Can I bring my existing bookings across?',
     a: 'Yes. The import step takes your reservations, in-house guests and opening balances from a CSV file, so the calendar is full on day one.' },
   { q: 'Which OTAs are supported?',
-    a: 'Rates and availability sync through an integrated channel manager, which connects to the major OTAs. OTA bookings arrive in your calendar automatically.' },
+    a: 'Booking.com, Airbnb, Expedia, Agoda, MakeMyTrip, Goibibo, Trip.com, Cleartrip, Yatra and Google Hotel Ads, through the integrated channel manager. Rates, availability and restrictions go out to them, and their bookings come into your calendar automatically.' },
   { q: 'Whose payment gateway is used?',
     a: 'Yours. You connect your own gateway account, so guest payments go straight to your bank and never pass through ours.' },
   { q: 'Is my data safe from other properties on the platform?',
@@ -411,6 +435,26 @@ export default function Landing() {
             <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {mod.features.map((f) => <FeatureCard key={f.title} {...f} />)}
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Channel manager & OTAs ──────────────────────────────── */}
+      <section id="channels" className="scroll-mt-16 bg-slate-50">
+        <div className="mx-auto max-w-7xl px-4 py-24 sm:px-6">
+          <SectionHead eyebrow="Channel manager"
+            title="Sell on every major OTA from one calendar"
+            body="A built-in channel manager keeps your rooms, rates and restrictions in step across the online travel agencies, and brings their bookings straight into MyGuest." />
+          <div className="mt-10 flex flex-wrap justify-center gap-2.5">
+            {OTAS.map((o) => (
+              <span key={o}
+                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-ink shadow-sm">
+                {o}
+              </span>
+            ))}
+          </div>
+          <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {CHANNEL_FLOW.map((f) => <FeatureCard key={f.title} {...f} />)}
           </div>
         </div>
       </section>
