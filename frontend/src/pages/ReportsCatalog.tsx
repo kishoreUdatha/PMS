@@ -83,6 +83,11 @@ export default function ReportsCatalog() {
             {live} of {reports.length} reports run on this property's data today
           </span>
         </div>
+        {/* The questions nobody wrote a report for. */}
+        <Link to="/reports/builder"
+          className="rounded-lg bg-brand px-3 py-2 text-sm font-medium text-white hover:bg-brand-dark">
+          Build a report
+        </Link>
       </div>
 
       {/* One row: category chips (seven categories plus Favourites -- too

@@ -8096,3 +8096,44 @@ export async function settlePosCheck(propertyId: string, id: string, body: {
 export async function voidPosCheck(propertyId: string, id: string, reason?: string): Promise<PosCheck> {
   return (await api.post<PosCheck>(`/finance/pos/checks/${id}/void`, { reason: reason || null }, P(propertyId))).data
 }
+
+// ------------------------------------------------------ report builder ----
+
+export interface BuilderColumn { key: string; label: string; kind: 'text' | 'date' | 'number' | 'money'; choices: boolean; ops: string[] }
+export interface BuilderDataset { key: string; label: string; description: string; date_column: string; default_columns: string[]; columns: BuilderColumn[] }
+export interface BuilderFilter { column: string; op: string; value: string }
+export interface BuilderDefinition {
+  dataset: string; columns: string[]; date_from?: string | null; date_to?: string | null
+  filters: BuilderFilter[]; group_by?: string | null; sort?: string | null; descending?: boolean
+}
+export interface BuilderResult {
+  columns: { key: string; label: string; kind: string }[]
+  rows: Record<string, string | number | null>[]
+  totals: Record<string, number | string>
+  truncated: boolean; row_limit: number; date_from: string; date_to: string
+}
+export interface SavedReport { id: string; name: string; dataset: string; definition: BuilderDefinition; updated_at: string }
+
+export async function builderDatasets(): Promise<BuilderDataset[]> {
+  return (await api.get<BuilderDataset[]>('/finance/reports/builder/datasets')).data
+}
+export async function builderValues(propertyId: string, dataset: string, column: string): Promise<string[]> {
+  return (await api.get<string[]>(`/finance/reports/builder/${dataset}/values`,
+    { params: { property_id: propertyId, column } })).data
+}
+export async function runBuilder(propertyId: string, def: BuilderDefinition): Promise<BuilderResult> {
+  return (await api.post<BuilderResult>('/finance/reports/builder/run', def,
+    { params: { property_id: propertyId } })).data
+}
+export async function listSavedReports(propertyId: string): Promise<SavedReport[]> {
+  return (await api.get<SavedReport[]>('/finance/reports/builder/saved',
+    { params: { property_id: propertyId } })).data
+}
+export async function saveReport(propertyId: string, name: string, definition: BuilderDefinition) {
+  return (await api.post('/finance/reports/builder/saved', { name, definition },
+    { params: { property_id: propertyId } })).data
+}
+export async function deleteSavedReport(propertyId: string, id: string) {
+  return (await api.delete(`/finance/reports/builder/saved/${id}`,
+    { params: { property_id: propertyId } })).data
+}

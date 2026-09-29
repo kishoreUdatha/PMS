@@ -79,6 +79,7 @@ const Pos = lazy(() => import('./pages/Pos'))
 const SetPassword = lazy(() => import('./pages/SetPassword'))
 const LedgerReportScreen = lazy(() => import('./pages/LedgerReport'))
 const ReportsCatalog = lazy(() => import('./pages/ReportsCatalog'))
+const ReportBuilder = lazy(() => import('./pages/ReportBuilder'))
 const BackOfficeReport = lazy(() => import('./pages/BackOfficeReport'))
 const WorkOrders = lazy(() => import('./pages/WorkOrders'))
 const ExpenseVouchers = lazy(() => import('./pages/ExpenseVouchers'))
@@ -312,6 +313,7 @@ export default function App() {
             its own screen and the rest render through one report screen. */}
         <Route path="reports" element={<ReportsCatalog />} />
         <Route path="reports/ledger" element={<LedgerReportScreen />} />
+        <Route path="reports/builder" element={<ReportBuilder />} />
         <Route path="reports/:slug" element={<BackOfficeReport />} />
         <Route path="staff" element={<UserManagement />} />
         <Route path="admin/users" element={<UserManagement />} />
