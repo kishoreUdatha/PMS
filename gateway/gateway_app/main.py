@@ -198,6 +198,9 @@ class SettleFlowIn(BaseModel):
     business_date: str
     method: str | None = None
     advance_amount: Decimal | None = None
+    #: The transaction reference for methods that need one (UPI, card...).
+    #: Finance refuses those without it, and this flow used to send none.
+    reference: str | None = None
 
 
 @app.post("/flows/reservations/{reservation_id}/settle", tags=["flows"])
@@ -219,6 +222,7 @@ async def flow_settle(reservation_id: str, body: SettleFlowIn, authorization: st
                 business_date=body.business_date,
                 method=body.method,
                 advance_amount=str(body.advance_amount) if body.advance_amount else None,
+                reference=body.reference,
                 organization_id=_stated_org(x_service_token, x_service_org),
             )
         except OrchestrationError as exc:

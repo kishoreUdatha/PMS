@@ -213,6 +213,7 @@ async def settle_reservation(
     business_date: str,
     method: str | None = None,
     advance_amount: str | None = None,
+    reference: str | None = None,
     organization_id: str | None = None,
 ) -> dict:
     """Create the folio and, if one is offered, take the advance.
@@ -264,6 +265,7 @@ async def settle_reservation(
                 "method": method,
                 "business_date": business_date,
                 "allocations": [{"folio_id": folio["id"], "amount": advance_amount}],
+                **({"reference": reference} if reference else {}),
             },
             _org=org,
         )

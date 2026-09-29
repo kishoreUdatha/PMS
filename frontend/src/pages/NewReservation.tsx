@@ -187,6 +187,9 @@ export default function NewReservation() {
   // *not* paying looked like a way of paying.
   const [payMethod, setPayMethod] = useState('')
   const [advanceAmount, setAdvanceAmount] = useState<number>(0)
+  // UPI, card and the like need the transaction reference: finance refuses
+  // them without one, and the advance step used to send none at all.
+  const [payReference, setPayReference] = useState('')
 
   const [reservation, setReservation] = useState<{ id: string; number: string } | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -614,6 +617,7 @@ export default function NewReservation() {
         business_date: checkIn,
         method: withAdvance ? payMethod : undefined,
         advance_amount: withAdvance ? advanceAmount : undefined,
+        reference: withAdvance && payReference.trim() ? payReference.trim() : undefined,
       })
       setResult({ number: reservation.number, balance: res.balance, advancePaid: res.advance_paid })
     } catch (e) {
@@ -1328,10 +1332,16 @@ export default function NewReservation() {
                 </div>
               </div>
 
-              <div className="mt-4 max-w-xs">
-                <Field label="Advance Amount (₹)">
+              <div className="mt-4 grid max-w-xl gap-4 sm:grid-cols-2">
+                <Field label="Advance amount">
                   <input type="number" value={advanceAmount} onChange={(e) => setAdvanceAmount(Number(e.target.value))} className={inputCls} />
                 </Field>
+                {payMethods.find((m) => m.value === payMethod)?.needs_reference && (
+                  <Field label="Payment reference">
+                    <input value={payReference} onChange={(e) => setPayReference(e.target.value)}
+                      placeholder="UTR, approval code or cheque no." className={inputCls} />
+                  </Field>
+                )}
               </div>
 
               <div className="mt-5 flex justify-between">
@@ -1339,7 +1349,9 @@ export default function NewReservation() {
                   className="rounded-xl border border-slate-200 px-5 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">
                   Complete without payment
                 </button>
-                <button onClick={() => handleSettle(true)} disabled={submitting || payMethod === '' || advanceAmount <= 0}
+                <button onClick={() => handleSettle(true)}
+                  disabled={submitting || payMethod === '' || advanceAmount <= 0
+                    || (!!payMethods.find((m) => m.value === payMethod)?.needs_reference && !payReference.trim())}
                   className="flex items-center gap-2 rounded-xl bg-brand px-5 py-2.5 text-sm font-medium text-white enabled:hover:bg-brand/90 disabled:opacity-50">
                   {submitting ? <Loader2 size={16} className="animate-spin" /> : <CreditCard size={16} />}
                   Collect Advance &amp; Finish

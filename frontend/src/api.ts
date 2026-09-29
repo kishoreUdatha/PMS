@@ -1904,6 +1904,7 @@ export async function settleReservation(
     business_date: string
     method?: string
     advance_amount?: number
+    reference?: string
   },
 ): Promise<SettleResult> {
   const { data } = await api.post<SettleResult>(
