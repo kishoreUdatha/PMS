@@ -536,15 +536,72 @@ export default function Landing() {
       </section>
 
       {/* ── Footer ─────────────────────────────────────────────── */}
-      <footer className="border-t border-slate-100">
-        <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 px-4 py-8 text-sm text-slate-400 sm:flex-row sm:px-6">
-          <span className="flex items-center gap-2 font-semibold text-ink">
-            <BedDouble size={18} className="text-brand" /> {WORDMARK}
-          </span>
-          <span>© {new Date().getFullYear()} {WORDMARK}</span>
+      {/* Dark, so the page visibly ends. Every link scrolls within this page,
+          like the header menu. Sign in and Book a demo stay in the sticky
+          header only, so they are never on screen twice. No contact details, social links or legal pages yet:
+          those are the business's to supply, and a link to a page that does
+          not exist is worse than no link. */}
+      <footer className="bg-ink text-[#b9c6da]">
+        <div className="mx-auto grid max-w-7xl gap-10 px-4 py-14 sm:grid-cols-2 sm:px-6 lg:grid-cols-[2fr_1fr_1fr]">
+          <div>
+            <button type="button" onClick={() => go('top')} className="flex items-center gap-2.5">
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand text-white">
+                <BedDouble size={20} />
+              </span>
+              <span className="text-lg font-bold tracking-tight text-white">{WORDMARK}</span>
+            </button>
+            <p className="mt-4 max-w-xs text-sm leading-relaxed">
+              Hotel management software for hotels and resorts: front desk,
+              channel manager, booking engine and billing in one system.
+            </p>
+          </div>
+
+          <FooterColumn title="Product" items={[
+            { label: 'Hotel PMS', to: 'products' },
+            { label: 'Channel manager', to: 'channels' },
+            { label: 'Booking engine', to: 'products' },
+            { label: 'Billing & tax', to: 'features' },
+          ]} go={go} />
+
+          <FooterColumn title="Explore" items={[
+            { label: 'Features', to: 'features' },
+            { label: 'Compliance', to: 'compliance' },
+            { label: 'Getting started', to: 'onboarding' },
+            { label: 'FAQ', to: 'faq' },
+          ]} go={go} />
+
+        </div>
+        <div className="border-t border-white/10">
+          <div className="mx-auto flex max-w-7xl flex-col gap-2 px-4 py-6 text-xs sm:flex-row sm:items-center sm:justify-between sm:px-6">
+            <span>© {new Date().getFullYear()} {WORDMARK}. All rights reserved.</span>
+            <span>Made for hotels, resorts and homestays.</span>
+          </div>
         </div>
       </footer>
       {demoOpen && <DemoDialog onClose={() => setDemoOpen(false)} />}
+    </div>
+  )
+}
+
+
+function FooterColumn({ title, items, go }: {
+  title: string
+  items: { label: string; to: string }[]
+  go: (id: string) => void
+}) {
+  return (
+    <div>
+      <p className="text-sm font-semibold text-white">{title}</p>
+      <ul className="mt-4 space-y-2.5">
+        {items.map((i) => (
+          <li key={i.label}>
+            <button type="button" onClick={() => go(i.to)}
+              className="text-sm hover:text-white">
+              {i.label}
+            </button>
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }
