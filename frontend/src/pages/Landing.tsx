@@ -328,6 +328,7 @@ export default function Landing() {
         )}
       </header>
 
+      <main>
       {/* ── Hero ───────────────────────────────────────────────── */}
       <section id="top" className="relative overflow-hidden bg-gradient-to-b from-[#f0fafa] via-white to-white">
         <div className="pointer-events-none absolute -right-40 -top-40 h-[520px] w-[520px] rounded-full bg-brand-accent/10 blur-3xl" />
@@ -356,7 +357,9 @@ export default function Landing() {
       </section>
 
       {/* ── Four products, one system ──────────────────────────── */}
-      <section id="products" className="mx-auto max-w-7xl scroll-mt-24 px-4 pb-16 sm:px-6">
+      <section id="products" aria-labelledby="products-title"
+        className="mx-auto max-w-7xl scroll-mt-24 px-4 pb-16 sm:px-6">
+        <h2 id="products-title" className="sr-only">Products</h2>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {PRODUCTS.map((p) => {
             const Icon = p.icon
@@ -449,7 +452,7 @@ export default function Landing() {
             ))}
           </ul>
           <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {CHANNEL_FLOW.map((f) => <FeatureCard key={f.title} {...f} />)}
+            {CHANNEL_FLOW.map((f) => <FeatureCard key={f.title} {...f} level="h3" />)}
           </div>
         </div>
       </section>
@@ -535,6 +538,8 @@ export default function Landing() {
         </div>
       </section>
 
+      </main>
+
       {/* ── Footer ─────────────────────────────────────────────── */}
       {/* Dark, so the page visibly ends. Every link scrolls within this page,
           like the header menu. Sign in and Book a demo stay in the sticky
@@ -592,11 +597,11 @@ function FooterColumn({ title, items, go }: {
   return (
     <div>
       <p className="text-sm font-semibold text-white">{title}</p>
-      <ul className="mt-4 space-y-2.5">
+      <ul className="mt-3 space-y-1">
         {items.map((i) => (
           <li key={i.label}>
             <button type="button" onClick={() => go(i.to)}
-              className="text-sm hover:text-white">
+              className="-my-1 py-2 text-sm hover:text-white">
               {i.label}
             </button>
           </li>
@@ -616,13 +621,17 @@ function SectionHead({ eyebrow, title, body }: { eyebrow: string; title: string;
   )
 }
 
-function FeatureCard({ icon: Icon, title, body }: Feature) {
+function FeatureCard({ icon: Icon, title, body, level = 'h4' }: Feature & {
+  /** h4 under a module headline (h3); h3 directly under a section's h2. */
+  level?: 'h3' | 'h4'
+}) {
+  const Heading = level
   return (
     <div className="rounded-2xl border border-slate-100 bg-white p-6 shadow-pf-card transition hover:-translate-y-0.5 hover:border-brand/40">
       <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-light text-brand-deep">
         <Icon size={22} />
       </span>
-      <h4 className="mt-4 font-semibold text-ink">{title}</h4>
+      <Heading className="mt-4 font-semibold text-ink">{title}</Heading>
       <p className="mt-1.5 text-sm leading-relaxed text-slate-500">{body}</p>
     </div>
   )
