@@ -53,9 +53,17 @@ export default function PlatformSettings() {
     // Keep the stored type. A locale list is an array and a name is a string,
     // and turning one into the other from a text box is how a reader of this
     // value starts seeing a character at a time.
-    const value = Array.isArray(original)
-      ? raw.split(',').map((x) => x.trim()).filter(Boolean)
-      : raw
+    let value: unknown = raw
+    if (Array.isArray(original)) {
+      value = raw.split(',').map((x) => x.trim()).filter(Boolean)
+    } else if (original !== null && typeof original === 'object') {
+      // An object is shown as JSON and has to go back as one. Saving the
+      // text as a string turned a structured setting into a sentence.
+      try { value = JSON.parse(raw) } catch {
+        setErr('That setting holds JSON. Check the quotes and brackets.')
+        return
+      }
+    }
     setErr('')
     try { await putSetting(key, value); load() }
     catch (e) { setErr(errorText(e, 'That setting was not saved.')) }

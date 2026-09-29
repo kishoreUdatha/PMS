@@ -148,6 +148,7 @@ _ROUTES = {
 #: the PMS frontend instead would ship the whole staff application -- a hundred
 #: screens and the auth layer -- to somebody who wants to book a room.
 _BOOKING_PAGE = Path(__file__).parent / "static" / "book.html"
+_WIDGET = Path(__file__).parent / "static" / "widget.js"
 
 
 @app.get("/health", tags=["meta"])
@@ -173,6 +174,19 @@ def booking_page(property_code: str) -> FileResponse:
         raise HTTPException(status_code=500, detail="Booking page missing.")
     return FileResponse(_BOOKING_PAGE, media_type="text/html",
                         headers={"Cache-Control": "no-store"})
+
+
+@app.get("/widget.js", include_in_schema=False)
+def booking_widget() -> FileResponse:
+    """The booking widget a hotel embeds on its own website.
+
+    Cached for an hour and served to any origin, because being loaded from
+    somebody else's site is the whole point. It carries no data and makes
+    no calls: it only builds a link to /book/{code}.
+    """
+    return FileResponse(_WIDGET, media_type="application/javascript",
+                        headers={"Cache-Control": "public, max-age=3600",
+                                 "Access-Control-Allow-Origin": "*"})
 
 
 # -------------------- BFF orchestration flows --------------------

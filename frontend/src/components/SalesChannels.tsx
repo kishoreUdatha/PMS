@@ -119,6 +119,20 @@ export default function SalesChannels({ propertyId, propertyCode }: {
       .catch(() => setErr('The clipboard is not available.'))
   }
 
+  // The website widget: one tag the hotel pastes into its own site, which
+  // draws a date-and-guests box and opens the booking link with the search
+  // filled in (gateway static/widget.js).
+  const widgetTag = propertyCode
+    ? `<script src="${window.location.origin}/widget.js" data-property="${propertyCode}" async></script>`
+    : null
+  const [widgetCopied, setWidgetCopied] = useState(false)
+  function copyWidget() {
+    if (!widgetTag) return
+    void navigator.clipboard.writeText(widgetTag)
+      .then(() => { setWidgetCopied(true); setTimeout(() => setWidgetCopied(false), 2000) })
+      .catch(() => setErr('The clipboard is not available.'))
+  }
+
   if (isLoading) {
     return (
       <div className="max-w-3xl rounded-2xl border border-slate-100 bg-white p-6 shadow-sm">
@@ -258,6 +272,25 @@ export default function SalesChannels({ propertyId, propertyCode }: {
               <ExternalLink size={15} /> Open
             </a>
           </div>
+          {widgetTag && (
+            <>
+              <p className="mb-2 mt-4 text-sm font-medium text-slate-600">Booking widget for your website</p>
+              <p className="mb-2 text-xs text-slate-500">
+                Paste this where the booking box should appear on your website. Guests pick
+                dates there and land on your booking page with rooms and prices already showing.
+              </p>
+              <div className="flex items-start gap-2">
+                <code className="flex-1 overflow-x-auto whitespace-pre-wrap break-all rounded-lg bg-slate-50 px-3 py-2.5 text-xs text-slate-700">
+                  {widgetTag}
+                </code>
+                <button onClick={copyWidget}
+                  className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600 hover:border-brand hover:text-brand">
+                  {widgetCopied ? <Check size={15} /> : <Copy size={15} />}
+                  {widgetCopied ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+            </>
+          )}
         </div>
       )}
 
