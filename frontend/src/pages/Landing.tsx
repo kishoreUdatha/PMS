@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  ArrowRight, BarChart3, BedDouble, BookOpenCheck, Building2, CalendarDays,
+  BarChart3, BedDouble, BookOpenCheck, Building2, CalendarDays,
   Camera, Check, ChevronDown, ConciergeBell, CreditCard, FileText, Globe,
   Handshake, History, KeyRound, Landmark, Layers, LayoutGrid, Lock, MapPin,
   Loader2, Menu, Moon, Network, Percent, Plane, Receipt, Rocket, ScrollText,
@@ -343,7 +343,7 @@ export default function Landing() {
               to an audit trail.
             </p>
             <ul className="mt-9 grid gap-2.5 text-sm text-slate-500 sm:grid-cols-2">
-              {['Guided step-by-step setup', 'Import your existing bookings',
+              {['Guided setup after your demo', 'Import your existing bookings',
                 'Your own payment gateway', 'Works in any browser'].map((t) => (
                 <li key={t} className="flex items-center gap-2">
                   <Check size={16} className="shrink-0 text-positive" /> {t}
@@ -468,10 +468,6 @@ export default function Landing() {
               are collected as you go, and the records are ready when someone
               asks for them.
             </p>
-            <button type="button" onClick={openDemo}
-              className="mt-8 inline-flex items-center gap-2 rounded-xl bg-brand-accent px-5 py-3 font-semibold text-ink hover:bg-white">
-              See it in a demo <ArrowRight size={18} />
-            </button>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             {COMPLIANCE.map((c) => {
@@ -490,38 +486,11 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ── All features at a glance ───────────────────────────── */}
-      <section className="bg-slate-50">
-        <div className="mx-auto max-w-7xl px-4 py-24 sm:px-6">
-          <SectionHead eyebrow="At a glance" title="Everything included"
-            body="Every screen below exists in the product today. Which modules you get depends on your plan." />
-          <div className="mt-12 grid gap-x-8 gap-y-10 sm:grid-cols-2 lg:grid-cols-5">
-            {MODULES.map((m) => {
-              const Icon = m.icon
-              return (
-                <div key={m.id}>
-                  <p className="flex items-center gap-2 font-semibold text-ink">
-                    <Icon size={18} className="text-brand" /> {m.label}
-                  </p>
-                  <ul className="mt-4 space-y-2.5">
-                    {m.features.map((f) => (
-                      <li key={f.title} className="flex items-start gap-2 text-sm text-slate-500">
-                        <Check size={15} className="mt-0.5 shrink-0 text-positive" /> {f.title}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      </section>
-
       {/* ── Onboarding ─────────────────────────────────────────── */}
       <section id="onboarding" className="scroll-mt-16">
         <div className="mx-auto max-w-7xl px-4 py-24 sm:px-6">
           <SectionHead eyebrow="Getting started" title="From demo to first check-in in six steps"
-            body="After your demo, a guided setup takes you the rest of the way. It asks only what it needs, and you can stop at any step and pick up where you left off." />
+            body="Once you have seen MyGuest, setup is six guided steps. It asks only what it needs, and you can stop at any step and pick up where you left off." />
           <div className="mt-14 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {ONBOARDING.map((o, i) => {
               const Icon = o.icon
@@ -562,29 +531,6 @@ export default function Landing() {
                 </div>
               )
             })}
-          </div>
-        </div>
-      </section>
-
-      {/* ── Final CTA ──────────────────────────────────────────── */}
-      <section className="px-4 py-24 sm:px-6">
-        <div className="mx-auto max-w-5xl overflow-hidden rounded-3xl bg-gradient-to-br from-brand-sidebar via-brand-deep to-brand px-6 py-16 text-center text-white sm:px-16">
-          <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">
-            Ready to run a calmer front desk?
-          </h2>
-          <p className="mx-auto mt-4 max-w-xl text-lg text-white/80">
-            See {WORDMARK} running on a property like yours. Book a demo and
-            our team will walk you through it.
-          </p>
-          <div className="mt-9 flex flex-col justify-center gap-3 sm:flex-row">
-            <button type="button" onClick={openDemo}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-white px-6 py-3.5 font-semibold text-brand-deep hover:bg-brand-light">
-              Book a demo <ArrowRight size={18} />
-            </button>
-            <Link to={signIn.to}
-              className="inline-flex items-center justify-center rounded-xl border border-white/40 px-6 py-3.5 font-semibold text-white hover:bg-white/10">
-              {signIn.label}
-            </Link>
           </div>
         </div>
       </section>
