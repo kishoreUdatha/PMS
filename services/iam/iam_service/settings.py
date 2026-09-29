@@ -29,7 +29,7 @@ class IamSettings(BaseServiceSettings):
 
     #: What the product is called in an email. A tenant white-labelling this
     #: changes one setting rather than editing templates.
-    platform_name: str = "Chirala Bay PMS"
+    platform_name: str = "MyGuest"
     #: Where staff who cannot sign in should turn. Deliberately separate from
     #: the property's own contact details: those are the guest line, and
     #: sending a housekeeper with a broken password to the reservations desk

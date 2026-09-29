@@ -53,7 +53,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(
-    title="Chirala Bay PMS — Finance Service",
+    title="MyGuest — Finance Service",
     version="0.1.0",
     description="Folios, charges, payments, refunds, invoices, and night audit.",
     lifespan=lifespan,

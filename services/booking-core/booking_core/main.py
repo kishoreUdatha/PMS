@@ -100,7 +100,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(
-    title="Chirala Bay PMS — Booking Core",
+    title="MyGuest — Booking Core",
     version="0.1.0",
     description="Property inventory, reservations, holds, and room calendar.",
     lifespan=lifespan,

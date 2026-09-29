@@ -120,7 +120,7 @@ class GatewaySettings(BaseSettings):
 settings = GatewaySettings()
 
 app = FastAPI(
-    title="Chirala Bay PMS — API Gateway",
+    title="MyGuest — API Gateway",
     version="0.1.0",
     description="Edge router / BFF for the PMS frontend.",
 )

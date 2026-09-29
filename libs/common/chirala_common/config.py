@@ -75,7 +75,7 @@ class BaseServiceSettings(BaseSettings):
     smtp_username: str = ""
     smtp_password: str = ""
     smtp_sender: str = ""
-    smtp_sender_name: str = "Chirala Bay PMS"
+    smtp_sender_name: str = "MyGuest"
     smtp_starttls: bool = True
 
     #: The address a person reaches this deployment at, used to build links
