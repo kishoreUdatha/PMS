@@ -57,3 +57,6 @@ Chirala_Bay_Resort_PMS_120_Screens/
 # file named after a reserved Windows device, so it blocks `git add` outright.
 # Ignored rather than deleted -- it is junk, but it is not mine to remove.
 nul
+
+# Demo tenant owner credentials (scripts/seed_demo_property.py)
+scripts/demo_property_credentials.txt
