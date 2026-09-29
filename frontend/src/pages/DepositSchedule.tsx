@@ -3,6 +3,7 @@ import Select from '../components/Select'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import DateField from '../components/DateField'
+import PaymentLinksPanel from '../components/PaymentLinksPanel'
 import { fmtDate } from '../lib/dates'
 import {
   AlertTriangle, ArrowLeft, BellRing, Check, CheckCircle2, Info, Loader2,
@@ -504,6 +505,8 @@ export default function DepositSchedule() {
 
         {/* ------------------------------------------------------ side rail --- */}
         <aside className="space-y-4">
+          <PaymentLinksPanel reservationId={reservationId} propertyId={propertyId}
+            suggestedAmount={num(totals?.balance_due)} />
           <section className="rounded-xl border border-slate-200 bg-white p-4">
             <h3 className="mb-1 flex items-center gap-2 font-semibold text-ink">
               <BellRing className="h-4 w-4 text-brand" /> Reminder Status

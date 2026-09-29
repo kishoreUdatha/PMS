@@ -55,6 +55,17 @@ class RazorpayOrder:
     key_id: str
 
 
+class PaymentLinkError(RuntimeError):
+    """Razorpay refused to create or cancel a link. Carries its own words."""
+
+
+@dataclass
+class PaymentLink:
+    link_id: str
+    url: str
+    status: str
+
+
 def _paise(amount: Decimal) -> int:
     """Razorpay works in the smallest currency unit, always as an integer.
 
@@ -117,6 +128,49 @@ class RazorpayProvider:
             order_id=body["id"], amount_paise=body["amount"],
             currency=body["currency"], key_id=self.key_id,
         )
+
+    # --------------------------------------------------- payment links ----
+    def create_payment_link(
+        self, *, amount: Decimal, currency: str, description: str,
+        reference_id: str, expire_by: int, customer: dict,
+        notes: dict | None = None,
+    ) -> PaymentLink:
+        """A hosted page for one amount, to send to a guest who is not here.
+
+        Razorpay's own SMS and email are turned off: the guest hears from the
+        hotel, through the hotel's templates and the delivery log, not from a
+        second sender with different wording and no record on our side.
+        ``reference_id`` is unique per link at Razorpay, so a double-click
+        cannot open two links for one intent.
+        """
+        resp = httpx.post(
+            f"{_API}/payment_links",
+            headers=self._auth(),
+            json={
+                "amount": _paise(amount),
+                "currency": currency,
+                "accept_partial": False,
+                "description": description[:2048],
+                "reference_id": reference_id[:40],
+                "expire_by": expire_by,
+                "customer": {k: v for k, v in customer.items() if v},
+                "notify": {"sms": False, "email": False},
+                "reminder_enable": False,
+                "notes": notes or {},
+            },
+            timeout=self.timeout,
+        )
+        if resp.status_code >= 400:
+            raise PaymentLinkError(_detail(resp))
+        body = resp.json()
+        return PaymentLink(link_id=body["id"], url=body.get("short_url", ""),
+                           status=body.get("status", "created"))
+
+    def cancel_payment_link(self, link_id: str) -> None:
+        resp = httpx.post(f"{_API}/payment_links/{link_id}/cancel",
+                          headers=self._auth(), timeout=self.timeout)
+        if resp.status_code >= 400:
+            raise PaymentLinkError(_detail(resp))
 
     # ------------------------------------------------ server-initiated ----
     def capture(

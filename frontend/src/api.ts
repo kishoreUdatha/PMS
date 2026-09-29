@@ -7863,3 +7863,51 @@ export async function requestDemo(body: DemoRequestIn): Promise<{ detail: string
   const { data } = await api.post<{ detail: string }>('/iam/public/demo-requests', body)
   return data
 }
+
+// ------------------------------------------------------- payment links ----
+
+/** A Razorpay link sent to a guest who is not at the desk. */
+export interface PaymentLink {
+  id: string
+  reservation_id: string
+  amount: number
+  currency: string
+  status: 'created' | 'processing' | 'succeeded' | 'failed' | 'cancelled' | 'expired'
+  purpose: string | null
+  url: string | null
+  provider_link_id: string | null
+  expires_at: string | null
+  created_at: string
+  created_by: string | null
+  /** No real gateway is connected: this link cannot take money. */
+  mock: boolean
+  /** What happened to the SMS / WhatsApp, when one was attempted. */
+  message?: string | null
+}
+
+export async function listPaymentLinks(reservationId: string, propertyId: string): Promise<PaymentLink[]> {
+  const { data } = await api.get<PaymentLink[]>(
+    `/finance/reservations/${reservationId}/payment-links`, { params: { property_id: propertyId } })
+  return data
+}
+
+export async function createPaymentLink(propertyId: string, body: {
+  reservation_id: string; amount: number; purpose?: string | null
+  expires_in_hours?: number; send?: boolean
+}): Promise<PaymentLink> {
+  const { data } = await api.post<PaymentLink>('/finance/payment-links', body,
+    { params: { property_id: propertyId } })
+  return data
+}
+
+export async function resendPaymentLink(id: string, propertyId: string): Promise<PaymentLink> {
+  const { data } = await api.post<PaymentLink>(`/finance/payment-links/${id}/resend`, null,
+    { params: { property_id: propertyId } })
+  return data
+}
+
+export async function cancelPaymentLink(id: string, propertyId: string): Promise<PaymentLink> {
+  const { data } = await api.post<PaymentLink>(`/finance/payment-links/${id}/cancel`, null,
+    { params: { property_id: propertyId } })
+  return data
+}

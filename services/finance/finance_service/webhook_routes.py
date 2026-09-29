@@ -25,6 +25,7 @@ import hashlib
 import hmac
 import json
 import logging
+import uuid
 from decimal import Decimal
 
 import httpx
@@ -78,7 +79,20 @@ def payment_method(entity: dict) -> str:
 #: Events worth acting on. Anything else is recorded and ignored — a gateway
 #: sends a great deal that is none of the ledger's business, and silently
 #: dropping it without a trace makes "did you get our webhook" unanswerable.
-HANDLED = {"payment.captured", "refund.processed", "payment.failed"}
+HANDLED = {"payment.captured", "refund.processed", "payment.failed",
+           "payment_link.paid", "payment_link.expired",
+           "payment_link.cancelled"}
+
+#: A payment link's end state, as the intent records it.
+LINK_ENDINGS = {"payment_link.expired": "expired",
+                "payment_link.cancelled": "cancelled"}
+
+_INTENT_SQL = """
+    SELECT i.id, i.organization_id, i.property_id, i.reservation_id,
+           i.folio_id, i.expected_amount, i.currency, i.status, i.kind,
+           i.provider_order_id
+    FROM finance.payment_intents i
+"""
 
 
 def verify_signature(body: bytes, signature: str, secret: str) -> bool:
@@ -228,6 +242,33 @@ async def _receive(
         )
         return {"status": "ignored", "event_id": event_id}
 
+    if event_type in LINK_ENDINGS:
+        return _end_link(db, event_id, event, LINK_ENDINGS[event_type])
+
+    if event_type == "payment_link.paid":
+        payload = event.get("payload", {})
+        link = payload.get("payment_link", {}).get("entity", {})
+        entity = payload.get("payment", {}).get("entity", {})
+        intent = db.execute(
+            text(_INTENT_SQL + " WHERE i.provider_link_id = :l FOR UPDATE"),
+            {"l": link.get("id") or ""},
+        ).mappings().first()
+        if intent is None:
+            log.error("razorpay link paid for unknown link %s", link.get("id"))
+            _finish(db, event_id, "unmatched",
+                    detail=f"No payment link {link.get('id')}.")
+            return {"status": "unmatched", "event_id": event_id}
+        # The link's order is Razorpay's, made on its side. Recorded so that
+        # the payment.captured sent for the same money finds this intent and
+        # is seen as a duplicate rather than as money against nothing.
+        if link.get("order_id") and not intent["provider_order_id"]:
+            db.execute(
+                text("UPDATE finance.payment_intents SET provider_order_id = :o "
+                     "WHERE id = :i AND provider_order_id IS NULL"),
+                {"o": link["order_id"], "i": intent["id"]},
+            )
+        return _settle(db, event_id, intent, entity, expect_org)
+
     if event_type != "payment.captured":
         # refund.processed and payment.failed are recorded so a retry is
         # recognised; acting on them is separate work with its own decisions
@@ -248,17 +289,22 @@ async def _receive(
         return {"status": "malformed", "event_id": event_id}
 
     intent = db.execute(
-        text(
-            """
-            SELECT i.id, i.organization_id, i.property_id, i.reservation_id,
-                   i.folio_id, i.expected_amount, i.currency, i.status
-            FROM finance.payment_intents i
-            WHERE i.provider_order_id = :o
-            FOR UPDATE
-            """
-        ),
+        text(_INTENT_SQL + " WHERE i.provider_order_id = :o FOR UPDATE"),
         {"o": order_id},
     ).mappings().first()
+    if intent is None:
+        # A payment made through one of our links carries the intent in its
+        # notes. It may arrive before payment_link.paid, which is what would
+        # otherwise have told us the order.
+        # Parsed here, not cast in SQL: a malformed note must be no match,
+        # not an error that rolls back the event claim above.
+        ref = _uuid_or_none((entity.get("notes") or {}).get("myguest_intent"))
+        if ref is not None:
+            intent = db.execute(
+                text(_INTENT_SQL + " WHERE i.id = :i AND i.kind = 'link' "
+                     "FOR UPDATE"),
+                {"i": ref},
+            ).mappings().first()
     if intent is None:
         # Money received against nothing we opened. This is the one outcome
         # on this route that means a person has to look: a real order
@@ -270,6 +316,19 @@ async def _receive(
                 detail=f"No payment intent for order {order_id}.")
         return {"status": "unmatched", "event_id": event_id}
 
+    return _settle(db, event_id, intent, entity, expect_org)
+
+
+def _settle(db: Session, event_id: str, intent, entity: dict,
+            expect_org) -> dict:
+    """Credit the folio for one captured payment against one intent.
+
+    Shared by the booking engine's order payments and payment links: the
+    tenant check, the one-time settlement and the ledger posting are the same
+    rules whichever page the guest paid on.
+    """
+    order_id = entity.get("order_id") or intent.get("provider_order_id") or ""
+    link_payment = intent.get("kind") == "link"
     if expect_org is not None and intent["organization_id"] != expect_org:
         # The callback came in on one tenant's URL, signed with one tenant's
         # secret, naming an order that belongs to another. Either two tenants
@@ -329,7 +388,7 @@ async def _receive(
         # the front desk taking money, and the cashiering screen totals by
         # source -- left as the default, these would turn up in a shift's
         # drawer count that never handled them.
-        source="booking_engine",
+        source="payment_link" if link_payment else "booking_engine",
     )
     db.execute(
         text("UPDATE finance.payment_intents SET status = 'succeeded', "
@@ -337,9 +396,13 @@ async def _receive(
         {"id": intent["id"]},
     )
 
-    # The booking becomes real here and nowhere else.
-    confirmed, why = confirm_booking(intent["reservation_id"],
-                                     intent["organization_id"])
+    # The booking becomes real here and nowhere else. A link usually collects
+    # for a booking that is already confirmed, and asking again would only
+    # fail; only a held one is confirmed by its payment.
+    confirmed, why = True, ""
+    if not link_payment or _is_held(db, intent["reservation_id"]):
+        confirmed, why = confirm_booking(intent["reservation_id"],
+                                         intent["organization_id"])
     _finish(
         db, event_id,
         "settled" if confirmed else "paid_unconfirmed",
@@ -356,6 +419,35 @@ async def _receive(
     log.info("razorpay event %s settled order %s (%s)", event_id, order_id, paid)
     return {"status": "settled" if confirmed else "paid_unconfirmed",
             "event_id": event_id}
+
+
+def _uuid_or_none(value) -> uuid.UUID | None:
+    try:
+        return uuid.UUID(str(value)) if value else None
+    except ValueError:
+        return None
+
+
+def _is_held(db: Session, reservation_id) -> bool:
+    status = db.execute(
+        text("SELECT status FROM booking.reservations WHERE id = :r"),
+        {"r": reservation_id},
+    ).scalar()
+    return status == "held"
+
+
+def _end_link(db: Session, event_id: str, event: dict, ending: str) -> dict:
+    """A link that expired or was cancelled at Razorpay: record it, credit nothing."""
+    link = event.get("payload", {}).get("payment_link", {}).get("entity", {})
+    changed = db.execute(
+        text("UPDATE finance.payment_intents SET status = :s, updated_at = now() "
+             "WHERE provider_link_id = :l AND status IN ('created', 'processing')"),
+        {"s": ending, "l": link.get("id") or ""},
+    ).rowcount
+    _finish(db, event_id, "recorded",
+            detail=f"Link {link.get('id')} {ending}"
+                   + ("." if changed else " (already closed here)."))
+    return {"status": "recorded", "event_id": event_id}
 
 
 def _finish(db: Session, event_id: str, outcome: str, *,

@@ -231,7 +231,8 @@ _STAY = {
     "cancelled": "Cancelled", "no_show": "No show",
 }
 
-_CHANNEL = {"booking_engine": "Booking engine", "front_desk": "Front desk"}
+_CHANNEL = {"booking_engine": "Booking engine", "front_desk": "Front desk",
+            "payment_link": "Payment link"}
 
 
 def _department(source_type: str | None) -> str:
