@@ -23,14 +23,22 @@ the tenant side can see.
 """
 from __future__ import annotations
 
+import logging
+
 from chirala_common.db import system_context
+from chirala_common.delivery_log import record_delivery
+from chirala_common.mailer import MailNotConfigured, send as send_mail
 from chirala_common.routing import TransactionalRoute
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from .database import get_session
+from .database import SessionFactory, get_session
+from .mail import demo_alert_email, demo_confirmation_email
+from .settings import settings
+
+log = logging.getLogger("uvicorn.error").getChild("demo")
 
 public_router = APIRouter(
     prefix="/public", tags=["public"], route_class=TransactionalRoute
@@ -91,7 +99,7 @@ def get_public_session(db: Session = Depends(get_session)) -> Session:
 
 
 @public_router.post("/demo-requests", status_code=status.HTTP_202_ACCEPTED)
-def request_demo(body: DemoRequestIn,
+def request_demo(body: DemoRequestIn, background: BackgroundTasks,
                  db: Session = Depends(get_public_session)) -> dict:
     if body.website:
         return THANKS
@@ -129,4 +137,31 @@ def request_demo(body: DemoRequestIn,
          "country": body.country,
          "rooms": body.rooms, "msg": body.message},
     )
+    # After the commit, like every other mail here: a lead announced to sales
+    # and then rolled back would be a phone call about nothing.
+    background.add_task(_mail_lead, {**body.model_dump(), "email": email})
     return THANKS
+
+
+def _send(code: str, to: str, composed: tuple[str, str, str]) -> None:
+    subject, text_body, html_body = composed
+    try:
+        send_mail(settings.mail_config, to=to, subject=subject,
+                  text=text_body, html=html_body)
+        record_delivery(SessionFactory, template_code=code, recipient=to,
+                        subject=subject)
+    except MailNotConfigured:
+        record_delivery(SessionFactory, template_code=code, recipient=to,
+                        subject=subject, status="failed",
+                        detail="no mail server configured")
+    except Exception as exc:  # noqa: BLE001 - the lead is saved either way
+        log.warning("demo mail %s to %s failed: %s", code, to, exc)
+        record_delivery(SessionFactory, template_code=code, recipient=to,
+                        subject=subject, status="failed", detail=str(exc)[:300])
+
+
+def _mail_lead(lead: dict) -> None:
+    """Tell sales, and tell the prospect. Never raises: the lead is saved."""
+    if settings.sales_alert_email:
+        _send("demo_alert", settings.sales_alert_email, demo_alert_email(lead))
+    _send("demo_confirmation", lead["email"], demo_confirmation_email(lead))

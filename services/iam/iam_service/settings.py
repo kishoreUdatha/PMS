@@ -35,6 +35,9 @@ class IamSettings(BaseServiceSettings):
     #: sending a housekeeper with a broken password to the reservations desk
     #: helps nobody. Left out of the email entirely when unset.
     support_email: str = ""
+    #: Where a new demo request from the landing page is emailed. Empty means
+    #: nobody is emailed and leads wait in the console's Demo requests screen.
+    sales_alert_email: str = ""
     support_phone: str = ""
     website_url: str = ""
 
