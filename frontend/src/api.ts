@@ -8137,3 +8137,33 @@ export async function deleteSavedReport(propertyId: string, id: string) {
   return (await api.delete(`/finance/reports/builder/saved/${id}`,
     { params: { property_id: propertyId } })).data
 }
+
+// --------------------------------------------------------- card holds -----
+
+export interface CardHold {
+  id: string; reservation_id: string; amount: number
+  authorized_amount: number | null; captured_amount: number | null
+  currency: string; status: 'created' | 'authorized' | 'succeeded' | 'released' | 'cancelled' | 'expired' | 'failed'
+  purpose: string | null; created_at: string; updated_at: string
+  provider_order_id: string | null; authorized_payment_id: string | null
+}
+export interface HoldCheckout {
+  id: string; order_id: string; key_id: string; amount_paise: number; currency: string
+  description: string; prefill: { name: string; email: string; contact: string }
+}
+const hp = (propertyId: string) => ({ params: { property_id: propertyId } })
+export async function listCardHolds(reservationId: string, propertyId: string): Promise<CardHold[]> {
+  return (await api.get<CardHold[]>(`/finance/reservations/${reservationId}/card-holds`, hp(propertyId))).data
+}
+export async function createCardHold(propertyId: string, body: { reservation_id: string; amount: number; purpose?: string | null }): Promise<HoldCheckout> {
+  return (await api.post<HoldCheckout>('/finance/card-holds', body, hp(propertyId))).data
+}
+export async function confirmCardHold(propertyId: string, id: string, body: { payment_id: string; signature: string }): Promise<CardHold> {
+  return (await api.post<CardHold>(`/finance/card-holds/${id}/confirm`, body, hp(propertyId))).data
+}
+export async function captureCardHold(propertyId: string, id: string, amount: number): Promise<CardHold> {
+  return (await api.post<CardHold>(`/finance/card-holds/${id}/capture`, { amount }, hp(propertyId))).data
+}
+export async function releaseCardHold(propertyId: string, id: string): Promise<CardHold> {
+  return (await api.post<CardHold>(`/finance/card-holds/${id}/release`, null, hp(propertyId))).data
+}

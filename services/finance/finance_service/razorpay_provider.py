@@ -172,6 +172,54 @@ class RazorpayProvider:
         if resp.status_code >= 400:
             raise PaymentLinkError(_detail(resp))
 
+    # ------------------------------------------------------ card holds ----
+    def create_hold_order(self, *, amount: Decimal, currency: str, receipt: str,
+                          notes: dict | None = None,
+                          expiry_minutes: int = 7200) -> RazorpayOrder:
+        """An order whose payment is authorised, not taken.
+
+        ``capture: manual`` makes the card's money wait for our capture call.
+        Razorpay refunds an authorisation nobody captures once
+        ``manual_expiry_period`` has passed, which is what releasing a hold
+        relies on. Verified against Razorpay test mode before this was
+        written, rather than taken from the documentation.
+        """
+        resp = httpx.post(
+            f"{_API}/orders", headers=self._auth(), timeout=self.timeout,
+            json={"amount": _paise(amount), "currency": currency,
+                  "receipt": receipt[:40], "notes": notes or {},
+                  "payment": {"capture": "manual",
+                              "capture_options": {
+                                  "manual_expiry_period": expiry_minutes,
+                                  "refund_speed": "optimum"}}})
+        if resp.status_code >= 400:
+            raise PaymentLinkError(_detail(resp))
+        body = resp.json()
+        return RazorpayOrder(order_id=body["id"], amount_paise=body["amount"],
+                             currency=body["currency"], key_id=self.key_id)
+
+    def fetch_payment(self, payment_id: str) -> dict:
+        """The gateway's own record of a payment: its status, amount, order."""
+        resp = httpx.get(f"{_API}/payments/{payment_id}", headers=self._auth(),
+                         timeout=self.timeout)
+        if resp.status_code >= 400:
+            raise PaymentLinkError(_detail(resp))
+        return resp.json()
+
+    def checkout_signature_ok(self, order_id: str, payment_id: str,
+                              signature: str) -> bool:
+        """Razorpay Checkout signs order_id|payment_id with the key secret.
+
+        That signature is what makes the browser's "it worked" worth
+        believing: without the secret nobody can produce it.
+        """
+        import hashlib
+        import hmac as _hmac
+        expected = _hmac.new(self.key_secret.encode(),
+                             f"{order_id}|{payment_id}".encode(),
+                             hashlib.sha256).hexdigest()
+        return _hmac.compare_digest(expected, signature or "")
+
     # ------------------------------------------------ server-initiated ----
     def capture(
         self, *, amount: Decimal, currency: str, method: str, reference: str

@@ -24,6 +24,7 @@ from .checkout_routes import checkout_router
 from .payment_link_routes import payment_link_router
 from .pos_routes import pos_router
 from .report_builder_routes import builder_router
+from .card_hold_routes import hold_router
 from .credentials_routes import credentials_router
 from .webhook_routes import webhook_router
 from .scheduler import night_audit_loop
@@ -84,6 +85,7 @@ app.include_router(checkout_router)
 app.include_router(payment_link_router)
 app.include_router(pos_router)
 app.include_router(builder_router)
+app.include_router(hold_router)
 app.include_router(credentials_router)
 app.include_router(webhook_router)
 app.include_router(router)
