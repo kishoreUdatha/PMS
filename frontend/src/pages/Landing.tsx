@@ -342,16 +342,6 @@ export default function Landing() {
               guest registration and the night audit in one system, with every change written
               to an audit trail.
             </p>
-            <div className="mt-9 flex flex-col gap-3 sm:flex-row">
-              <button type="button" onClick={openDemo}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand px-6 py-3.5 text-base font-semibold text-white shadow-lg shadow-brand/20 hover:bg-brand-dark">
-                Book a demo <ArrowRight size={18} />
-              </button>
-              <Link to={signIn.to}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-6 py-3.5 text-base font-semibold text-ink hover:border-brand hover:text-brand">
-                {signIn.label}
-              </Link>
-            </div>
             <ul className="mt-9 grid gap-2.5 text-sm text-slate-500 sm:grid-cols-2">
               {['Guided step-by-step setup', 'Import your existing bookings',
                 'Your own payment gateway', 'Works in any browser'].map((t) => (
