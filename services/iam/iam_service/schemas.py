@@ -60,6 +60,8 @@ class PropertySettingsOut(BaseModel):
     address: str | None = None
     status: str
     version: int
+    guest_sms_enabled: bool = False
+    guest_whatsapp_enabled: bool = False
 
 
 class PropertySettingsUpdate(BaseModel):
@@ -71,6 +73,10 @@ class PropertySettingsUpdate(BaseModel):
     checkin_time: str | None = None
     checkout_time: str | None = None
     address: str | None = Field(default=None, max_length=400)
+    #: None leaves the switch as it is, so an older screen that does not know
+    #: about these fields cannot turn messaging off by omission.
+    guest_sms_enabled: bool | None = None
+    guest_whatsapp_enabled: bool | None = None
     reason: str | None = Field(default=None, max_length=400)
 
 

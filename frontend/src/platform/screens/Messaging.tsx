@@ -26,6 +26,8 @@ export default function Messaging() {
   const [editing, setEditing] = useState<MessageTemplate | null>(null)
   const [name, setName] = useState('')
   const [subject, setSubject] = useState('')
+  const [providerId, setProviderId] = useState('')
+  const [language, setLanguage] = useState('en')
   const [saving, setSaving] = useState(false)
 
   function load() {
@@ -36,15 +38,22 @@ export default function Messaging() {
   useEffect(load, [])
 
   function edit(t: MessageTemplate) {
-    setEditing(t); setName(t.name); setSubject(t.subject || ''); setErr('')
+    setEditing(t); setName(t.name); setSubject(t.subject || '')
+    setProviderId(t.provider_template_id || ''); setLanguage(t.language || 'en')
+    setErr('')
   }
 
-  async function save() {
+  const isPhone = (t: MessageTemplate | null) =>
+    !!t && (t.channel === 'sms' || t.channel === 'whatsapp')
+
+  async function save(status?: 'draft' | 'published') {
     if (!editing) return
     setSaving(true)
     try {
-      await updateTemplate(editing.id, {
-        name: name.trim(), subject: subject.trim() })
+      await updateTemplate(editing.id, isPhone(editing)
+        ? { name: name.trim(), provider_template_id: providerId.trim(),
+            language: language.trim() || 'en', status }
+        : { name: name.trim(), subject: subject.trim(), status })
       setEditing(null); load()
     } catch (e) { setErr(errorText(e, 'The template was not saved.')) }
     finally { setSaving(false) }
@@ -74,6 +83,24 @@ export default function Messaging() {
       subtitle="Platform templates, and every message sent with them.">
       <ErrorNote>{err}</ErrorNote>
 
+      <div className="mb-4 flex flex-wrap gap-2 text-pf-help">
+        {([
+          ['Email', d.mail_configured],
+          ['SMS (MSG91)', d.sms_configured],
+          ['WhatsApp (MSG91)', d.whatsapp_configured],
+        ] as const).map(([label, ok]) => (
+          <span key={label}
+            className={`rounded-full px-3 py-1 ${ok ? 'bg-pf-ok-bg text-pf-ok-text' : 'bg-pf-bg text-pf-muted'}`}>
+            {label}: {ok ? 'configured' : 'not configured'}
+          </span>
+        ))}
+        {d.messaging_test_mode && (
+          <span className="rounded-full bg-pf-warn-bg px-3 py-1 text-pf-warn-text">
+            Test mode: SMS and WhatsApp are logged, not sent
+          </span>
+        )}
+      </div>
+
       <Metrics items={[
         { label: 'Templates', value: d.templates.length,
           caption: 'An edit makes a new version' },
@@ -95,7 +122,7 @@ export default function Messaging() {
       <DataTable
         title="Templates"
         count={d.templates.length}
-        head={['Code', 'Name', 'Subject', 'Variables', 'Status', 'Sent', '']}
+        head={['Code', 'Channel', 'Name', 'Subject / provider id', 'Variables', 'Status', 'Sent', '']}
         footnote={`Sent counts cover the last ${d.window_days} days.`}
         empty="No template is registered.">
         {d.templates.map((t) => (
@@ -103,9 +130,16 @@ export default function Messaging() {
             <Td className="font-mono text-[12px] text-pf-navy">
               {t.code} <span className="text-pf-muted">v{t.version}</span>
             </Td>
+            <Td className="text-pf-muted">
+              {t.channel === 'sms' ? 'SMS' : t.channel === 'whatsapp' ? 'WhatsApp' : 'Email'}
+            </Td>
             <Td className="text-pf-navy">{t.name}</Td>
             <Td className="max-w-[320px] truncate text-pf-muted">
-              {t.subject || '—'}
+              {isPhone(t)
+                ? (t.provider_template_id
+                  ? <span className="font-mono text-[12px]">{t.provider_template_id}</span>
+                  : <span className="text-pf-warn-text">not registered yet</span>)
+                : (t.subject || '—')}
             </Td>
             <Td className="text-pf-muted">{t.variables.length}</Td>
             <Td><Pill value={t.status} /></Td>
@@ -120,17 +154,41 @@ export default function Messaging() {
       {editing && (
         <Card className="mt-5 max-w-3xl p-5">
           <h2 className="text-pf-card text-pf-navy">
-            {editing.code} · version {editing.version}
+            {editing.code} · {editing.channel} · version {editing.version}
           </h2>
           <div className="mt-4 grid gap-3">
             <Field label="Name">
               <input id="tpl-name" className={inputClass} value={name}
                 onChange={(e) => setName(e.target.value)} />
             </Field>
-            <Field label="Subject line">
-              <input id="tpl-subject" className={inputClass} value={subject}
-                onChange={(e) => setSubject(e.target.value)} />
-            </Field>
+            {isPhone(editing) ? (
+              <>
+                <Field label="Wording to register">
+                  <textarea readOnly rows={4} value={editing.body_text}
+                    className={`${inputClass} resize-none bg-pf-bg font-mono text-[12px]`} />
+                </Field>
+                <p className="-mt-1 text-pf-help text-pf-muted">
+                  {editing.channel === 'sms'
+                    ? 'Register this wording as a DLT template, create an MSG91 flow for it with variables named as below, and paste the flow id here.'
+                    : 'Submit this wording to Meta as a WhatsApp template through MSG91, with the variables below as {{1}}, {{2}} and so on, in that order. Paste the approved template name here.'}
+                </p>
+                <div className="grid gap-3 sm:grid-cols-[1fr_140px]">
+                  <Field label={editing.channel === 'sms' ? 'MSG91 flow id' : 'Approved template name'}>
+                    <input id="tpl-provider" className={inputClass} value={providerId}
+                      onChange={(e) => setProviderId(e.target.value)} />
+                  </Field>
+                  <Field label="Language">
+                    <input id="tpl-lang" className={inputClass} value={language}
+                      onChange={(e) => setLanguage(e.target.value)} placeholder="en" />
+                  </Field>
+                </div>
+              </>
+            ) : (
+              <Field label="Subject line">
+                <input id="tpl-subject" className={inputClass} value={subject}
+                  onChange={(e) => setSubject(e.target.value)} />
+              </Field>
+            )}
           </div>
           <div className="mt-4">
             <div className="mb-2 text-pf-label text-pf-muted">
@@ -151,10 +209,20 @@ export default function Messaging() {
             </p>
           </div>
           <div className="mt-4 flex items-center gap-2">
-            <Button tone="primary" onClick={save} disabled={saving}
+            <Button tone="primary" onClick={() => save()} disabled={saving}
               className="px-5 py-2.5">
               {saving ? 'Saving…' : 'Save'}
             </Button>
+            {isPhone(editing) && editing.status !== 'published' && (
+              <Button onClick={() => save('published')} disabled={saving || !providerId.trim()}>
+                Save and publish
+              </Button>
+            )}
+            {isPhone(editing) && editing.status === 'published' && (
+              <Button onClick={() => save('draft')} disabled={saving}>
+                Unpublish
+              </Button>
+            )}
             <Button onClick={() => setEditing(null)}>Cancel</Button>
           </div>
         </Card>
@@ -164,7 +232,7 @@ export default function Messaging() {
         <DataTable
           title="Delivery log"
           count={d.deliveries.length}
-          head={['When', 'Template', 'Recipient', 'Tenant', 'Result', 'Detail']}
+          head={['When', 'Template', 'Channel', 'Recipient', 'Tenant', 'Result', 'Detail']}
           footnote="Recorded on its own transaction, so a request that rolled back after the mail went out still shows it."
           empty="Nothing has been sent since the delivery log was added.">
           {d.deliveries.map((x) => (
@@ -177,6 +245,7 @@ export default function Messaging() {
               <Td className="font-mono text-[11px] text-pf-navy">
                 {x.template_code || '—'}
               </Td>
+              <Td className="text-pf-muted">{x.channel}</Td>
               <Td className="text-pf-muted">{x.recipient}</Td>
               <Td className="text-pf-muted">{x.tenant_name || '—'}</Td>
               <Td><Pill value={x.status} /></Td>

@@ -785,8 +785,8 @@ export default function GuestCheckIn() {
               label={<>Resort policies accepted {req}</>} />
             <Check checked={form.welcome_sent}
               onChange={(b) => set('welcome_sent', b)}
-              label="Welcome message sent"
-              note="Recorded only — there is no mail or SMS transport yet." />
+              label="Send welcome message"
+              note="Goes to the guest's mobile by SMS or WhatsApp, on the channels turned on in Property Settings." />
             <Check checked={form.key_issued}
               onChange={(b) => set('key_issued', b)}
               label="Room key issued"

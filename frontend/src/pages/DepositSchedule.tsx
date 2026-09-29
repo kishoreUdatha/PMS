@@ -27,8 +27,9 @@ import { usePaymentMethods } from '../lib/paymentMethods'
  * credit to the folio, so this screen can never claim a guest paid something
  * the folio disagrees with.
  *
- * Two panels say plainly what the system can and cannot do yet. A reminder is
- * *recorded*, not sent — nothing here mails anybody — and a waiver over the
+ * Two panels say plainly what the system does. "Send reminder" texts the guest
+ * by SMS or WhatsApp and is recorded as sent only if a message went out;
+ * "Mark sent" records one a person sent another way. A waiver over the
  * threshold is *requested*, leaving the balance untouched until someone who can
  * approve it does. Showing either as done would be the screen lying about the
  * state of the booking.
@@ -230,7 +231,8 @@ export default function DepositSchedule() {
   const remind = useMutation({
     mutationFn: ({ id, body }: { id: string; body: Parameters<typeof setDepositReminder>[2] }) =>
       setDepositReminder(id, propertyId, body),
-    onSuccess: done('Reminder updated.'), onError: fail,
+    onSuccess: (_d, v) => done(v.body.action === 'send'
+      ? 'Reminder sent to the guest.' : 'Reminder updated.')(), onError: fail,
   })
 
   // The trail for a reservation is the reservation row plus its instalments:
@@ -507,9 +509,9 @@ export default function DepositSchedule() {
               <BellRing className="h-4 w-4 text-brand" /> Reminder Status
             </h3>
             <p className="mb-3 text-xs text-slate-500">
-              Reminders are recorded here, not sent. This system has no mail or
-              SMS transport yet, so a reminder is either a date you have noted or
-              a note that someone sent one.
+              Send reminder texts the guest by SMS or WhatsApp, on the channels
+              turned on in Property Settings. Mark sent records a reminder you
+              sent some other way.
             </p>
             {rows.length === 0 && <p className="text-sm text-slate-400">No instalments yet.</p>}
             <ol className="space-y-2.5">
@@ -639,7 +641,7 @@ function Row({ row, canApprove, folioHref, onCollect, onEdit, onWaive, onCancel,
   onWaive: () => void
   onCancel: () => void
   onDecide: (d: 'approved' | 'rejected') => void
-  onRemind: (body: { action: 'schedule' | 'mark_sent' | 'clear'; due_on?: string }) => void
+  onRemind: (body: { action: 'schedule' | 'send' | 'mark_sent' | 'clear'; due_on?: string }) => void
 }) {
   const partial = row.status === 'partially_paid'
   return (
@@ -687,10 +689,16 @@ function Row({ row, canApprove, folioHref, onCollect, onEdit, onWaive, onCancel,
         <td className="whitespace-nowrap px-3 py-3 text-sm">
           <p className="text-slate-600">{row.reminder_label}</p>
           {row.status !== 'cancelled' && row.balance_due > 0 && (
-            <button onClick={() => onRemind({ action: 'mark_sent' })}
-              className="text-xs font-semibold text-brand hover:underline">
-              Mark sent
-            </button>
+            <span className="flex gap-3">
+              <button onClick={() => onRemind({ action: 'send' })}
+                className="text-xs font-semibold text-brand hover:underline">
+                Send reminder
+              </button>
+              <button onClick={() => onRemind({ action: 'mark_sent' })}
+                className="text-xs font-semibold text-slate-500 hover:underline">
+                Mark sent
+              </button>
+            </span>
           )}
         </td>
         <td className="whitespace-nowrap px-3 py-3 text-right text-sm">

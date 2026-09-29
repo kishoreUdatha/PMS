@@ -1056,6 +1056,8 @@ export interface PropertySettings {
   address?: string | null
   status: string
   version: number
+  guest_sms_enabled?: boolean
+  guest_whatsapp_enabled?: boolean
 }
 
 // A dev subject header stands in for the authenticated user until Keycloak is
@@ -1078,6 +1080,8 @@ export async function updatePropertySettings(
     checkin_time?: string | null
     checkout_time?: string | null
     address?: string | null
+    guest_sms_enabled?: boolean
+    guest_whatsapp_enabled?: boolean
     reason?: string | null
   },
 ): Promise<PropertySettings> {
@@ -4443,7 +4447,7 @@ export async function decideDepositWaiver(
 
 export async function setDepositReminder(
   installmentId: string, propertyId: string,
-  body: { action: 'schedule' | 'mark_sent' | 'clear'; due_on?: string },
+  body: { action: 'schedule' | 'send' | 'mark_sent' | 'clear'; due_on?: string },
 ): Promise<DepositInstallment> {
   const { data } = await api.post<DepositInstallment>(
     `/finance/deposit-installments/${installmentId}/reminder`, body,

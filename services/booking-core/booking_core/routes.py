@@ -28,6 +28,7 @@ from . import group_blocks, schemas
 from .database import SessionFactory, get_session
 from .dashboard import get_dashboard
 from .guest_mail import send_confirmation
+from .guest_texts import message_confirmation
 from .flow import (
     FlowError,
     RoomCollision,
@@ -743,7 +744,12 @@ def _email_guest_confirmation(reservation_id: uuid.UUID, organization_id) -> Non
         # A fresh session has no caller; it acts for the tenant that confirmed.
         bind_tenant_context(session, organization_id=organization_id, is_service=True)
         address = send_confirmation(session, reservation_id)
-        if address is None:
+        # The phone as well, on whichever channels the property has turned
+        # on. Independent of the email: a walk-in with a mobile number and no
+        # address still hears that they are booked.
+        texts = [o.as_dict() for o in message_confirmation(session, reservation_id)
+                 if o.status in ("sent", "suppressed")]
+        if address is None and not texts:
             return
         # Recorded so "did the guest ever get a confirmation?" has an answer
         # at the front desk. Only written when something actually went out --
@@ -762,7 +768,8 @@ def _email_guest_confirmation(reservation_id: uuid.UUID, organization_id) -> Non
                 organization_id=row["organization_id"],
                 property_id=row["property_id"],
                 actor_subject="system",
-                after={"to": address, "reservation": row["number"]},
+                after={"to": address, "texts": texts,
+                       "reservation": row["number"]},
                 reason="Booking confirmed.",
             )
         session.commit()

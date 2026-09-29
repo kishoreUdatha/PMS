@@ -18,13 +18,15 @@ Order matters and is not arbitrary:
 4. **``flow.check_in`` last**, which opens the stay and flips the room to
    occupied.
 
-Two things on the mockup are recorded rather than performed, and the screen says
+One thing on the mockup is recorded rather than performed, and the screen says
 so plainly:
 
 * **"Issue Key"** — there is no door-lock integration. The flag records that a
   key was handed over; nothing cuts one.
-* **"Welcome message sent"** — there is no mail or SMS transport. The flag
-  records that someone sent a welcome, not that the system did.
+* **"Send welcome message"** is real now: after the check-in commits, the
+  welcome goes to the guest's mobile by SMS or WhatsApp, on whichever channels
+  the property has turned on (see guest_texts.py). What went out is in the
+  delivery log and the audit trail.
 
 ID scans are the most sensitive thing here. Only the object-storage key is kept
 in the database, and reads go out as presigned URLs that expire.
@@ -38,6 +40,7 @@ from decimal import Decimal
 
 from chirala_common import payment_methods
 from chirala_common.audit import record_audit
+from chirala_common.db import bind_tenant_context
 from chirala_common.india import normalise_state
 from chirala_common.postal import problem as postal_problem
 from chirala_common.authz import Caller, assert_property_in_org, build_authz
@@ -50,12 +53,16 @@ from chirala_common.objectstore import (
     put_object,
 )
 from chirala_common.routing import TransactionalRoute
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import (
+    APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query,
+    UploadFile,
+)
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from .database import get_session
+from .database import SessionFactory, get_session
+from .guest_texts import message_welcome
 from .resdetail_routes import local_today
 from .folio_money import folio_money
 from .flow import FlowError, RoomCollision, assign_room, check_in
@@ -653,6 +660,7 @@ def complete_check_in(
     unit_id: uuid.UUID,
     property_id: uuid.UUID,
     body: CompleteIn,
+    background: BackgroundTasks,
     caller: Caller = Depends(require_permission("front_desk", "edit")),
     db: Session = Depends(get_session),
 ):
@@ -759,9 +767,12 @@ def complete_check_in(
             "so nothing was encoded."
         )
     if body.welcome_sent:
+        # After the commit, never inside it: a welcome for a check-in that
+        # then rolled back would greet a guest who has no room.
+        background.add_task(_send_welcome, unit_id, row["organization_id"])
         warnings.append(
-            "Welcome marked as sent. There is no mail or SMS transport yet, "
-            "so no message left the system."
+            "Welcome message queued for the guest's mobile, on the SMS and "
+            "WhatsApp channels turned on in property settings."
         )
 
     db.execute(
@@ -991,3 +1002,32 @@ def delete_guest_document(
         property_id=property_id, actor_subject=caller.subject,
         before={"document_id": str(doc_id)},
     )
+
+
+def _send_welcome(unit_id: uuid.UUID, organization_id) -> None:
+    """Runs after the response, on its own session, once the stay is open."""
+    with SessionFactory() as session:
+        bind_tenant_context(session, organization_id=organization_id,
+                            is_service=True)
+        outcomes = message_welcome(session, unit_id)
+        went = [o.as_dict() for o in outcomes
+                if o.status in ("sent", "suppressed")]
+        if not went:
+            return
+        row = session.execute(
+            text("SELECT r.organization_id, r.property_id, r.number "
+                 "FROM booking.reservation_units u "
+                 "JOIN booking.reservations r ON r.id = u.reservation_id "
+                 "WHERE u.id = :u"),
+            {"u": unit_id},
+        ).mappings().first()
+        if row is not None:
+            record_audit(
+                session, action="guest_welcome_sent",
+                entity_type="reservation_unit", entity_id=str(unit_id),
+                organization_id=row["organization_id"],
+                property_id=row["property_id"], actor_subject="system",
+                after={"texts": went, "reservation": row["number"]},
+                reason="Checked in.",
+            )
+        session.commit()

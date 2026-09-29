@@ -528,7 +528,8 @@ def messaging(
         db,
         """
         SELECT t.id, t.code, t.version, t.name, t.channel, t.subject,
-               t.status, t.variables, t.updated_at,
+               t.status, t.variables, t.updated_at, t.body_text,
+               t.provider_template_id, t.language,
                length(t.body_text) AS body_length,
                (t.body_html IS NOT NULL) AS has_html,
                (SELECT count(*) FROM platform.message_deliveries d
@@ -536,7 +537,7 @@ def messaging(
                    AND d.sent_at > now() - make_interval(days => :w)) AS sent
         FROM platform.message_templates t
         WHERE t.status <> 'retired'
-        ORDER BY t.code, t.version DESC
+        ORDER BY t.code, t.channel, t.version DESC
         """,
         {"w": window},
     )
@@ -564,7 +565,10 @@ def messaging(
     )
     return {"templates": templates, "deliveries": deliveries,
             "totals": totals, "window_days": window,
-            "mail_configured": settings.mail_config.configured}
+            "mail_configured": settings.mail_config.configured,
+            "sms_configured": settings.messaging_config.sms_ready,
+            "whatsapp_configured": settings.messaging_config.whatsapp_ready,
+            "messaging_test_mode": settings.messaging_config.test_mode}
 
 
 class TemplateIn(BaseModel):
@@ -572,6 +576,10 @@ class TemplateIn(BaseModel):
     subject: str | None = None
     body_text: str | None = None
     status: str | None = Field(default=None, pattern="^(draft|published)$")
+    #: SMS: the MSG91 flow id linked to the DLT template. WhatsApp: the
+    #: Meta-approved template name. Required before either can be published.
+    provider_template_id: str | None = Field(default=None, max_length=100)
+    language: str | None = Field(default=None, pattern="^[a-z]{2}(_[A-Z]{2})?$")
 
 
 @ops_router.put("/messaging/templates/{template_id}")
@@ -589,11 +597,25 @@ def update_template(
     ``{{refund_amount}}`` to the welcome mail would produce an email with a
     literal ``{{refund_amount}}`` in it and no error anywhere.
     """
-    row = _one(db, "SELECT id, code, version, name, subject, status, variables "
+    row = _one(db, "SELECT id, code, version, name, subject, status, variables, "
+                   "channel, provider_template_id "
                    "FROM platform.message_templates WHERE id = :i",
                {"i": template_id})
     if row is None:
         raise HTTPException(status_code=404, detail="Template not found")
+
+    # An SMS or WhatsApp template goes live only with the provider's id: the
+    # operator drops an unregistered SMS, and Meta refuses an unapproved
+    # template. Publishing without one would look live and send nothing.
+    provider_id = (body.provider_template_id.strip()
+                   if body.provider_template_id is not None
+                   else row["provider_template_id"])
+    if (row["channel"] in ("sms", "whatsapp") and body.status == "published"
+            and not provider_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Add the MSG91 template id (for WhatsApp, the approved "
+                   "template name) before publishing.")
 
     if body.body_text is not None:
         known = set(row["variables"] or [])
@@ -612,11 +634,16 @@ def update_template(
                 subject = COALESCE(:s, subject),
                 body_text = COALESCE(:b, body_text),
                 status = COALESCE(:st, status),
+                provider_template_id = COALESCE(:pid, provider_template_id),
+                language = COALESCE(:lang, language),
                 updated_at = now()
             WHERE id = :i
         """),
         {"n": body.name, "s": body.subject, "b": body.body_text,
-         "st": body.status, "i": template_id},
+         "st": body.status, "i": template_id,
+         "pid": (body.provider_template_id.strip() or None)
+                if body.provider_template_id is not None else None,
+         "lang": body.language},
     )
     record_audit(
         db, correlation_id=correlation_id(request),
@@ -626,7 +653,8 @@ def update_template(
                 "status": row["status"]},
         after={k: v for k, v in body.model_dump().items() if v is not None},
     )
-    return _one(db, "SELECT id, code, version, name, subject, status "
+    return _one(db, "SELECT id, code, version, name, subject, status, "
+                    "channel, provider_template_id, language "
                     "FROM platform.message_templates WHERE id = :i",
                 {"i": template_id})
 
