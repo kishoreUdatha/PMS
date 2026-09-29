@@ -1563,3 +1563,106 @@ def analytics(
                     "shown.",
         },
     }
+
+
+# ===================================================== demo requests ======
+#
+# Leads from the "Book a demo" form on the public landing page. The form
+# itself is demo_routes.py; this is the console's side, where staff work
+# through them. A lead belongs to no tenant, so there is no organisation to
+# check and no tenant data to read.
+
+DEMO_STATUSES = ("new", "contacted", "scheduled", "converted", "closed")
+
+
+@ops_router.get("/demo-requests")
+def list_demo_requests(
+    status: str | None = None,
+    db: Session = Depends(get_session),
+    admin: PlatformCaller = Depends(require_capability("demo.view")),
+):
+    requests = _rows(
+        db,
+        """
+        SELECT d.id, d.full_name, d.email, d.phone, d.property_name,
+               d.city, d.state, d.rooms, d.message, d.status, d.notes,
+               d.assigned_to, u.display_name AS assignee,
+               d.created_at, d.updated_at
+        FROM platform.demo_requests d
+        LEFT JOIN iam.users u ON u.id = d.assigned_to
+        WHERE (CAST(:st AS text) IS NULL OR d.status = CAST(:st AS text))
+        ORDER BY
+            CASE d.status WHEN 'new' THEN 0 WHEN 'contacted' THEN 1
+                          WHEN 'scheduled' THEN 2 ELSE 3 END,
+            d.created_at DESC
+        LIMIT 500
+        """,
+        {"st": status},
+    )
+    counts = {s: 0 for s in DEMO_STATUSES}
+    for r in _rows(db, "SELECT status, count(*) AS n "
+                       "FROM platform.demo_requests GROUP BY status"):
+        counts[r["status"]] = r["n"]
+    staff = _rows(
+        db,
+        """
+        SELECT u.id, u.display_name
+        FROM iam.platform_admins a
+        JOIN iam.users u ON u.id = a.user_id
+        WHERE a.status = 'active'
+        ORDER BY u.display_name
+        """,
+    )
+    return {"requests": requests, "counts": counts, "staff": staff}
+
+
+class DemoRequestUpdateIn(BaseModel):
+    status: str | None = Field(
+        default=None, pattern="^(new|contacted|scheduled|converted|closed)$")
+    assigned_to: uuid.UUID | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+@ops_router.put("/demo-requests/{request_id}")
+def update_demo_request(
+    request_id: uuid.UUID,
+    body: DemoRequestUpdateIn,
+    request: Request,
+    db: Session = Depends(get_session),
+    admin: PlatformCaller = Depends(require_capability("demo.manage")),
+):
+    d = _one(db, "SELECT id, status, assigned_to, notes "
+                 "FROM platform.demo_requests WHERE id = :i", {"i": request_id})
+    if d is None:
+        raise HTTPException(status_code=404, detail="Demo request not found")
+    if body.assigned_to is not None:
+        ok = _one(db, "SELECT 1 AS y FROM iam.platform_admins "
+                      "WHERE user_id = :u AND status = 'active'",
+                  {"u": body.assigned_to})
+        if not ok:
+            raise HTTPException(
+                status_code=400,
+                detail="A demo request can only be assigned to active "
+                       "platform staff.")
+    db.execute(
+        text("""
+            UPDATE platform.demo_requests SET
+                status = COALESCE(:st, status),
+                assigned_to = COALESCE(:assignee, assigned_to),
+                notes = COALESCE(:notes, notes),
+                updated_at = now()
+            WHERE id = :i
+        """),
+        {"st": body.status, "assignee": body.assigned_to,
+         "notes": body.notes, "i": request_id},
+    )
+    record_audit(
+        db, correlation_id=correlation_id(request),
+        action="platform.demo_request.updated", entity_type="demo_request",
+        entity_id=str(request_id), actor_subject=admin.subject,
+        before={"status": d["status"],
+                "assigned_to": str(d["assigned_to"]) if d["assigned_to"] else None},
+        after={k: str(v) for k, v in body.model_dump().items()
+               if v is not None and k != "notes"},
+    )
+    return {"detail": "Demo request updated."}

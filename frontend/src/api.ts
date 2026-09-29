@@ -7838,3 +7838,24 @@ export async function setBlockCommitment(
     { params: { property_id: propertyId } })
   return data
 }
+
+// ---------------------------------------------------------------- demo ----
+
+/** The "Book a demo" form on the public landing page. No session needed. */
+export interface DemoRequestIn {
+  full_name: string
+  email: string
+  phone: string
+  property_name: string
+  city?: string | null
+  state?: string | null
+  rooms?: number | null
+  message?: string | null
+  /** Honeypot. Never shown to a person; always sent empty by the real form. */
+  website?: string
+}
+
+export async function requestDemo(body: DemoRequestIn): Promise<{ detail: string }> {
+  const { data } = await api.post<{ detail: string }>('/iam/public/demo-requests', body)
+  return data
+}

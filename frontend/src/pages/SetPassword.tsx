@@ -36,11 +36,11 @@ export default function SetPassword() {
     setError(''); setBusy(true)
     try {
       adopt(await apiSetPassword(token, password))
-      // "/" is not always the dashboard: OnboardingGate sends anyone whose
+      // "/dashboard" is not always the dashboard: OnboardingGate sends anyone whose
       // property is still in setup to the wizard instead. Deciding it there
       // rather than here means the rule holds for a bookmark and a normal
       // sign-in too, not only for somebody arriving from a welcome link.
-      navigate('/', { replace: true })
+      navigate('/dashboard', { replace: true })
     } catch (err) {
       const e2 = err as { response?: { data?: { detail?: string } } }
       setError(e2.response?.data?.detail

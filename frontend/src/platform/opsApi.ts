@@ -464,3 +464,42 @@ export async function analytics(): Promise<AnalyticsPage> {
   const { data } = await api.get<AnalyticsPage>(`${P}/analytics`)
   return data
 }
+
+// ------------------------------------------------------ demo requests -----
+
+/** A lead from the "Book a demo" form on the public landing page. */
+export interface DemoRequest {
+  id: string
+  full_name: string
+  email: string
+  phone: string
+  property_name: string
+  city: string | null
+  state: string | null
+  rooms: number | null
+  message: string | null
+  status: 'new' | 'contacted' | 'scheduled' | 'converted' | 'closed'
+  notes: string | null
+  assigned_to: string | null
+  assignee: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface DemoRequests {
+  requests: DemoRequest[]
+  counts: Record<DemoRequest['status'], number>
+  staff: { id: string; display_name: string }[]
+}
+
+export async function listDemoRequests(status?: string): Promise<DemoRequests> {
+  const { data } = await api.get<DemoRequests>(`${P}/demo-requests`,
+    { params: status ? { status } : {} })
+  return data
+}
+
+export async function updateDemoRequest(id: string, body: {
+  status?: string; assigned_to?: string; notes?: string
+}): Promise<void> {
+  await api.put(`${P}/demo-requests/${id}`, body)
+}

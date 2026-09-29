@@ -60,6 +60,7 @@ import Approvals from './pages/Approvals'
 import AuditLog from './pages/AuditLog'
 import Billing from './pages/Billing'
 import Login from './pages/Login'
+import Landing from './pages/Landing'
 import SetPassword from './pages/SetPassword'
 import Placeholder from './pages/Placeholder'
 import LedgerReportScreen from './pages/LedgerReport'
@@ -92,6 +93,7 @@ import PlatformProviders from './platform/screens/Providers'
 import PlatformDomains from './platform/screens/Domains'
 import PlatformMessaging from './platform/screens/Messaging'
 import PlatformSupport from './platform/screens/Support'
+import PlatformDemoRequests from './platform/screens/DemoRequests'
 import PlatformSupportTicket from './platform/screens/SupportTicket'
 import PlatformRecovery from './platform/screens/Recovery'
 import PlatformSettingsScreen from './platform/screens/PlatformSettings'
@@ -116,6 +118,11 @@ export default function App() {
           askReason/askText/notify, which render through it. */}
       <OverlayHost />
     <Routes>
+      {/* The public front door, at the root for everyone, signed in or not.
+          The dashboard lives at /dashboard. /welcome was the landing page's
+          first address and is kept so links to it still work. */}
+      <Route path="/" element={<Landing />} />
+      <Route path="/welcome" element={<Navigate to="/" replace />} />
       <Route path="/login" element={<Login />} />
       <Route path="/set-password" element={<SetPassword />} />
 
@@ -153,6 +160,7 @@ export default function App() {
         <Route path="/platform/integrations" element={<PlatformProviders />} />
         <Route path="/platform/booking-engine" element={<PlatformDomains />} />
         <Route path="/platform/messaging" element={<PlatformMessaging />} />
+        <Route path="/platform/demo-requests" element={<PlatformDemoRequests />} />
         <Route path="/platform/support" element={<PlatformSupport />} />
         <Route path="/platform/support/:ticketId" element={<PlatformSupportTicket />} />
         <Route path="/platform/operations" element={<PlatformOperations />} />
@@ -192,7 +200,7 @@ export default function App() {
       >
         {/* The dashboard is for a property that exists. Until setup
             is finished the wizard is the page — see OnboardingGate. */}
-        <Route index element={
+        <Route path="dashboard" element={
           <OnboardingGate><Dashboard /></OnboardingGate>} />
         <Route path="reservations/new" element={<NewReservation />} />
         <Route path="reservations/group-blocks" element={<GroupBlocks />} />

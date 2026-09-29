@@ -72,7 +72,7 @@ export const navItems: NavItem[] = [
   // ----------------------------------------------------------------- daily
   // Everything down to Payments is opened by somebody doing their job right
   // now. None of it is nested, and none of it should become nested.
-  { label: 'Dashboard', path: '/', icon: Home },
+  { label: 'Dashboard', path: '/dashboard', icon: Home },
   { label: 'Stayview', path: '/reservations', icon: CalendarDays },
   { label: 'Reservations', path: '/reservations/list', icon: ClipboardList,
     badge: 'arrivals' },

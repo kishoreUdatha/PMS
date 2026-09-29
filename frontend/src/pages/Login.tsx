@@ -46,7 +46,7 @@ export default function Login() {
       }
       if (mode === 'subject') await login(subject.trim())
       else await signIn(propertyCode.trim(), email.trim(), password)
-      navigate(location.state?.from ?? '/', { replace: true })
+      navigate(location.state?.from ?? '/dashboard', { replace: true })
     } catch (err) {
       const e2 = err as { response?: { status?: number; data?: { detail?: string } } }
       setError(e2.response?.data?.detail

@@ -388,7 +388,7 @@ export function WizardFrame({ step, title, blurb, children, footer, stepNo }: {
             <span className="flex items-center gap-1.5 text-sm text-slate-500">
               <HelpCircle size={15} /> Need help?
             </span>
-            <Link to="/"
+            <Link to="/dashboard"
               className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
               <Save size={15} /> Save &amp; exit
             </Link>
@@ -723,7 +723,7 @@ export function OnboardingGoLive() {
                           is not enough on its own: a wider button ("Review")
                           pushes the status left, so the rows only line up if
                           both right-hand columns are stable. */}
-                      <Link to={STEP_LINK[s.key] ?? '/'}
+                      <Link to={STEP_LINK[s.key] ?? '/dashboard'}
                         className="flex w-24 shrink-0 items-center justify-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
                         {/* "Edit" on a finished row, because that is what it
                             offers. "Review" is kept for the import, which is a
@@ -977,12 +977,12 @@ export function OnboardingEntry() {
  *
  *  Nothing used to gate the application on onboarding: ProtectedRoute checks
  *  that you are signed in and on the right tier, and that is all. So an owner
- *  one step into a nine-step wizard could reach "/" and be shown a dashboard
+ *  one step into a nine-step wizard could reach "/dashboard" and be shown a dashboard
  *  with no rooms, no rates and no bookings -- which looks like a broken
  *  product rather than an unfinished setup, and gives no hint that there is
  *  work outstanding or where to do it.
  *
- *  Sitting on the index route rather than inside Dashboard so the rule holds
+ *  Sitting on the /dashboard route rather than inside Dashboard so the rule holds
  *  however somebody arrives: signing in, a first sign-in from a welcome link,
  *  a bookmark, or typing the address. Every other screen stays reachable --
  *  rooms and rates are setup work as much as daily work, and locking the
