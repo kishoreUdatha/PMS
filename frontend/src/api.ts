@@ -7852,7 +7852,7 @@ export interface DemoRequestIn {
   phone: string
   property_name: string
   city?: string | null
-  state?: string | null
+  country?: string | null
   rooms?: number | null
   message?: string | null
   /** Honeypot. Never shown to a person; always sent empty by the real form. */

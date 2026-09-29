@@ -14,7 +14,7 @@ import { useAuth } from '../auth/AuthContext'
 import { requestDemo } from '../api'
 import { Field } from '../components/FormBits'
 import { errorText, inputCls } from '../lib/forms'
-import { INDIAN_STATES } from '../lib/options'
+import { COUNTRIES } from '../lib/options'
 
 /**
  * The public front door: what the product does, for someone who has no
@@ -99,9 +99,9 @@ const MODULES: Module[] = [
       { icon: Receipt, title: 'Folios & split billing',
         body: 'Several folios per stay, routing between guest and company, discounts and adjustments with the bill attached.' },
       { icon: CreditCard, title: 'Online & desk payments',
-        body: 'Card, UPI, cash and bank transfer. Online payments run through your own payment gateway account.' },
-      { icon: FileText, title: 'GST invoices & credit notes',
-        body: 'GST-compliant invoices with GSTIN validation, place of supply and your own numbering series. Corrections go out as credit notes.' },
+        body: 'Card, cash, bank transfer and local methods such as UPI. Online payments run through your own payment gateway account.' },
+      { icon: FileText, title: 'Tax invoices & credit notes',
+        body: 'Invoices with the full tax breakdown and your own numbering series, including GST with tax-ID checks for India. Corrections go out as credit notes.' },
       { icon: Moon, title: 'Night audit',
         body: 'Close the business day, post room charges and no-shows, and keep a full history of every audit.' },
       { icon: Landmark, title: 'All-in-one cashiering',
@@ -133,7 +133,7 @@ const MODULES: Module[] = [
     id: 'control',
     label: 'Security & control',
     icon: ShieldCheck,
-    headline: 'Every rupee and every change, accounted for',
+    headline: 'Every payment and every change, accounted for',
     summary:
       'Roles decide who can do what, sensitive actions wait for an approver, '
       + 'and one property can never see another property\'s data.',
@@ -156,7 +156,7 @@ const MODULES: Module[] = [
 const MENU = [
   { id: 'products', label: 'Products' },
   { id: 'features', label: 'Features' },
-  { id: 'compliance', label: 'India compliance' },
+  { id: 'compliance', label: 'Compliance' },
   { id: 'onboarding', label: 'Getting started' },
   { id: 'faq', label: 'FAQ' },
 ]
@@ -168,27 +168,27 @@ const PRODUCTS = [
     body: 'Rates and availability synced with the OTAs.' },
   { icon: Globe, title: 'Booking engine',
     body: 'Commission-free direct bookings on your own domain.' },
-  { icon: Receipt, title: 'Billing & GST',
-    body: 'Folios, payments, GST invoices and cashiering.' },
+  { icon: Receipt, title: 'Billing & tax',
+    body: 'Folios, payments, tax invoices and cashiering.' },
 ]
 
 const COMPLIANCE = [
-  { icon: FileText, title: 'GST, done properly',
-    body: 'CGST and SGST, or IGST, chosen by place of supply, with the GSTIN checked before the invoice is issued.' },
-  { icon: Plane, title: 'Form C for foreign guests',
-    body: 'Collects the passport and visa details at check-in and keeps the register the Bureau of Immigration asks for.' },
-  { icon: MapPin, title: 'Built for every state',
-    body: 'Addresses, states and districts across India, not just one region. A property in Kerala works the same as one in Rajasthan.' },
-  { icon: Wallet, title: 'Rupees and UPI first',
-    body: 'Amounts in ₹ throughout, with UPI, cards and bank transfer through your own payment gateway.' },
+  { icon: FileText, title: 'Taxes set per property',
+    body: 'Tax rates and groups configured for each property, printed in full on every invoice, with your own numbering series.' },
+  { icon: Plane, title: 'Foreign guest registration',
+    body: 'Passport and visa details captured at check-in and kept as a register, ready for the authorities. India\'s Form C is built in.' },
+  { icon: Globe, title: 'Any currency, any time zone',
+    body: 'Each property keeps its own currency and time zone, so a group can run hotels in more than one country from one account.' },
+  { icon: MapPin, title: 'Local where it matters',
+    body: 'Ready for India today: GST with tax-ID checks, every state and union territory, and UPI through your own gateway.' },
 ]
 
 const JOURNEY = [
   { step: 'Enquiry', body: 'Capture the lead' },
   { step: 'Reservation', body: 'Rate, room, deposit' },
-  { step: 'Check-in', body: 'ID, Form C, keys' },
+  { step: 'Check-in', body: 'ID, registration, keys' },
   { step: 'Stay', body: 'Charges, services' },
-  { step: 'Check-out', body: 'Folio, GST invoice' },
+  { step: 'Check-out', body: 'Folio, tax invoice' },
   { step: 'Night audit', body: 'Close the day' },
 ]
 
@@ -310,8 +310,8 @@ export default function Landing() {
               <span className="text-brand">from one screen.</span>
             </h1>
             <p className="mt-6 max-w-xl text-lg leading-relaxed text-slate-500">
-              Reservations, front desk, housekeeping, channel manager, GST billing,
-              Form C and the night audit in one system, with every change written
+              Reservations, front desk, housekeeping, channel manager, tax invoicing,
+              guest registration and the night audit in one system, with every change written
               to an audit trail.
             </p>
             <div className="mt-9 flex flex-col gap-3 sm:flex-row">
@@ -419,14 +419,15 @@ export default function Landing() {
       <section id="compliance" className="scroll-mt-16 bg-ink text-white">
         <div className="mx-auto grid max-w-7xl gap-12 px-4 py-24 sm:px-6 lg:grid-cols-[1fr_1.4fr]">
           <div>
-            <p className="text-sm font-semibold uppercase tracking-wider text-brand-accent">India compliance</p>
+            <p className="text-sm font-semibold uppercase tracking-wider text-brand-accent">Compliance</p>
             <h2 className="mt-3 text-3xl font-bold tracking-tight sm:text-4xl">
               The paperwork, handled while you work
             </h2>
             <p className="mt-5 text-lg leading-relaxed text-[#b9c6da]">
-              GST and Form C are part of the checkout and check-in flow, not a
-              separate chore at the end of the month. The details are collected
-              as you go, and the records are ready when someone asks for them.
+              Tax invoices and guest registration are part of check-out and
+              check-in, not a separate chore at the end of the month. The details
+              are collected as you go, and the records are ready when someone
+              asks for them.
             </p>
             <button type="button" onClick={openDemo}
               className="mt-8 inline-flex items-center gap-2 rounded-xl bg-brand-accent px-5 py-3 font-semibold text-ink hover:bg-white">
@@ -648,7 +649,7 @@ function HeroMock() {
         </span>
         <div>
           <p className="text-xs font-semibold text-ink">Guest checked in</p>
-          <p className="text-[11px] text-slate-400">ID captured · Form C filed</p>
+          <p className="text-[11px] text-slate-400">ID captured · guest registered</p>
         </div>
       </div>
       <div className="absolute -right-3 -top-5 hidden items-center gap-3 rounded-xl border border-slate-100 bg-white px-4 py-3 shadow-xl sm:flex">
@@ -672,7 +673,7 @@ function HeroMock() {
 function DemoDialog({ onClose }: { onClose: () => void }) {
   const [f, setF] = useState({
     full_name: '', property_name: '', phone: '', email: '',
-    city: '', state: '', rooms: '', message: '', website: '',
+    city: '', country: '', rooms: '', message: '', website: '',
   })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -697,7 +698,7 @@ function DemoDialog({ onClose }: { onClose: () => void }) {
         phone: f.phone.trim(),
         email: f.email.trim(),
         city: f.city.trim() || null,
-        state: f.state || null,
+        country: f.country || null,
         rooms: f.rooms ? Number(f.rooms) : null,
         message: f.message.trim() || null,
         website: f.website,
@@ -752,7 +753,7 @@ function DemoDialog({ onClose }: { onClose: () => void }) {
               <Field label="Mobile number" required>
                 <input className={inputCls} value={f.phone} onChange={set('phone')}
                   required type="tel" inputMode="tel" minLength={7} maxLength={20}
-                  placeholder="+91 98765 43210" autoComplete="tel" />
+                  placeholder="With country code, e.g. +44 20 7946 0000" autoComplete="tel" />
               </Field>
               <Field label="Email" required>
                 <input className={inputCls} value={f.email} onChange={set('email')}
@@ -762,10 +763,10 @@ function DemoDialog({ onClose }: { onClose: () => void }) {
                 <input className={inputCls} value={f.city} onChange={set('city')}
                   maxLength={80} autoComplete="address-level2" />
               </Field>
-              <Field label="State">
-                <select className={inputCls} value={f.state} onChange={set('state')}>
-                  <option value="">Select state</option>
-                  {INDIAN_STATES.map((st) => <option key={st} value={st}>{st}</option>)}
+              <Field label="Country">
+                <select className={inputCls} value={f.country} onChange={set('country')}>
+                  <option value="">Select country</option>
+                  {COUNTRIES.map((c) => <option key={c} value={c}>{c}</option>)}
                 </select>
               </Field>
               <Field label="Number of rooms">

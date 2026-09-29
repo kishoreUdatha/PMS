@@ -52,12 +52,14 @@ class DemoRequestIn(BaseModel):
     property_name: str = Field(min_length=2, max_length=160)
     city: str | None = Field(default=None, max_length=80)
     state: str | None = Field(default=None, max_length=80)
+    country: str | None = Field(default=None, max_length=80)
     rooms: int | None = Field(default=None, ge=1, le=5000)
     message: str | None = Field(default=None, max_length=1000)
     #: The honeypot. Hidden from people. See the module docstring.
     website: str | None = None
 
-    @field_validator("full_name", "property_name", "city", "state", "message")
+    @field_validator("full_name", "property_name", "city", "state", "country",
+                     "message")
     @classmethod
     def _strip(cls, v: str | None) -> str | None:
         v = v.strip() if v else v
@@ -118,11 +120,13 @@ def request_demo(body: DemoRequestIn,
         text("""
             INSERT INTO platform.demo_requests
                 (full_name, email, phone, property_name, city, state,
-                 rooms, message)
-            VALUES (:name, :em, :phone, :prop, :city, :state, :rooms, :msg)
+                 country, rooms, message)
+            VALUES (:name, :em, :phone, :prop, :city, :state, :country,
+                    :rooms, :msg)
         """),
         {"name": body.full_name, "em": email, "phone": body.phone,
          "prop": body.property_name, "city": body.city, "state": body.state,
+         "country": body.country,
          "rooms": body.rooms, "msg": body.message},
     )
     return THANKS

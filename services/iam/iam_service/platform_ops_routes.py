@@ -1613,7 +1613,8 @@ def list_demo_requests(
         db,
         """
         SELECT d.id, d.full_name, d.email, d.phone, d.property_name,
-               d.city, d.state, d.rooms, d.message, d.status, d.notes,
+               d.city, d.state, d.country, d.rooms, d.message, d.status,
+               d.notes,
                d.assigned_to, u.display_name AS assignee,
                d.created_at, d.updated_at
         FROM platform.demo_requests d

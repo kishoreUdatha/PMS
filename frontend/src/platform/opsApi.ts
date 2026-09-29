@@ -484,6 +484,7 @@ export interface DemoRequest {
   property_name: string
   city: string | null
   state: string | null
+  country: string | null
   rooms: number | null
   message: string | null
   status: 'new' | 'contacted' | 'scheduled' | 'converted' | 'closed'

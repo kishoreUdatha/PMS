@@ -106,7 +106,7 @@ export default function DemoRequestsScreen() {
                 <div className="text-pf-help text-pf-muted">{r.phone} · {r.email}</div>
               </Td>
               <Td className="text-pf-muted">
-                {[r.city, r.state].filter(Boolean).join(', ') || '—'}
+                {[r.city, r.state, r.country].filter(Boolean).join(', ') || '—'}
               </Td>
               <Td className="text-pf-muted">{r.rooms ?? '—'}</Td>
               <Td><Pill value={STATUSES.find((s) => s.value === r.status)?.label ?? r.status} /></Td>
