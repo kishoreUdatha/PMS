@@ -127,7 +127,7 @@ class GatewaySettings(BaseSettings):
 settings = GatewaySettings()
 
 app = FastAPI(
-    title="Chirala Bay PMS — API Gateway",
+    title="MyGuest — API Gateway",
     version="0.1.0",
     description="Edge router / BFF for the PMS frontend.",
 )
@@ -200,6 +200,7 @@ _ROUTES = {
 #: the PMS frontend instead would ship the whole staff application -- a hundred
 #: screens and the auth layer -- to somebody who wants to book a room.
 _BOOKING_PAGE = Path(__file__).parent / "static" / "book.html"
+_WIDGET = Path(__file__).parent / "static" / "widget.js"
 
 
 @app.get("/health", tags=["meta"])
@@ -227,6 +228,19 @@ def booking_page(property_code: str) -> FileResponse:
                         headers={"Cache-Control": "no-store"})
 
 
+@app.get("/widget.js", include_in_schema=False)
+def booking_widget() -> FileResponse:
+    """The booking widget a hotel embeds on its own website.
+
+    Cached for an hour and served to any origin, because being loaded from
+    somebody else's site is the whole point. It carries no data and makes
+    no calls: it only builds a link to /book/{code}.
+    """
+    return FileResponse(_WIDGET, media_type="application/javascript",
+                        headers={"Cache-Control": "public, max-age=3600",
+                                 "Access-Control-Allow-Origin": "*"})
+
+
 # -------------------- BFF orchestration flows --------------------
 class EnsureFolioIn(BaseModel):
     organization_id: str
@@ -250,6 +264,9 @@ class SettleFlowIn(BaseModel):
     business_date: str
     method: str | None = None
     advance_amount: Decimal | None = None
+    #: The transaction reference for methods that need one (UPI, card...).
+    #: Finance refuses those without it, and this flow used to send none.
+    reference: str | None = None
 
 
 @app.post("/flows/reservations/{reservation_id}/settle", tags=["flows"])
@@ -271,6 +288,7 @@ async def flow_settle(reservation_id: str, body: SettleFlowIn, authorization: st
                 business_date=body.business_date,
                 method=body.method,
                 advance_amount=str(body.advance_amount) if body.advance_amount else None,
+                reference=body.reference,
                 organization_id=_stated_org(x_service_token, x_service_org),
             )
         except OrchestrationError as exc:

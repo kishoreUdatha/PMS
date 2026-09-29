@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import BrandMark from '../components/BrandMark'
 import { AlertTriangle, Check, KeyRound, Loader2 } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext'
 import { setPassword as apiSetPassword } from '../api'
@@ -37,11 +38,11 @@ export default function SetPassword() {
     setError(''); setBusy(true)
     try {
       adopt(await apiSetPassword(token, password))
-      // "/" is not always the dashboard: OnboardingGate sends anyone whose
+      // "/dashboard" is not always the dashboard: OnboardingGate sends anyone whose
       // property is still in setup to the wizard instead. Deciding it there
       // rather than here means the rule holds for a bookmark and a normal
       // sign-in too, not only for somebody arriving from a welcome link.
-      navigate('/', { replace: true })
+      navigate('/dashboard', { replace: true })
     } catch (err) {
       setError(errorText(err, 'That password could not be set. Ask for a new link.'))
     } finally {
@@ -53,8 +54,7 @@ export default function SetPassword() {
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-teal-800 to-teal-950 p-4">
       <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-xl">
         <div className="mb-6 text-center">
-          <div className="text-2xl font-bold tracking-wide text-brand-dark">CHIRALA BAY</div>
-          <div className="text-[10px] tracking-[0.3em] text-brand-accent">R E S O R T</div>
+          <BrandMark home />
         </div>
 
         {token === '' ? (

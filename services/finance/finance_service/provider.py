@@ -79,6 +79,27 @@ class MockPaymentProvider:
                       int(amount * 100), currency, "")
 
 
+    def create_payment_link(self, *, amount: Decimal, currency: str,
+                            description: str, reference_id: str,
+                            expire_by: int, customer: dict,
+                            notes: dict | None = None):
+        """A stand-in link, so the flow runs with no gateway account.
+
+        No URL, on purpose. A link that looked real would be sent to a guest
+        who would then try to pay something that cannot take money.
+        """
+        from .razorpay_provider import PaymentLink
+
+        if amount <= 0:
+            from .razorpay_provider import PaymentLinkError
+            raise PaymentLinkError("amount must be positive")
+        return PaymentLink(link_id=f"mock_plink_{uuid.uuid4().hex[:14]}",
+                           url="", status="created")
+
+    def cancel_payment_link(self, link_id: str) -> None:
+        return None
+
+
 def _select() -> PaymentProvider:
     """The provider this deployment is configured for.
 

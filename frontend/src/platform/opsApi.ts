@@ -152,6 +152,10 @@ export interface MessageTemplate {
   status: string
   variables: string[]
   updated_at: string
+  body_text: string
+  /** SMS: the MSG91 flow id. WhatsApp: the approved template name. */
+  provider_template_id: string | null
+  language: string
   body_length: number
   has_html: boolean
   sent: number
@@ -178,6 +182,9 @@ export interface MessagingPage {
   }
   window_days: number
   mail_configured: boolean
+  sms_configured: boolean
+  whatsapp_configured: boolean
+  messaging_test_mode: boolean
 }
 
 export async function messaging(days = 14): Promise<MessagingPage> {
@@ -189,6 +196,7 @@ export async function messaging(days = 14): Promise<MessagingPage> {
 export async function updateTemplate(id: string, body: {
   name?: string; subject?: string; body_text?: string
   status?: 'draft' | 'published'
+  provider_template_id?: string; language?: string
 }): Promise<MessageTemplate> {
   const { data } = await api.put(`${P}/messaging/templates/${id}`, body)
   return data
@@ -463,4 +471,44 @@ export interface AnalyticsPage {
 export async function analytics(): Promise<AnalyticsPage> {
   const { data } = await api.get<AnalyticsPage>(`${P}/analytics`)
   return data
+}
+
+// ------------------------------------------------------ demo requests -----
+
+/** A lead from the "Book a demo" form on the public landing page. */
+export interface DemoRequest {
+  id: string
+  full_name: string
+  email: string
+  phone: string
+  property_name: string
+  city: string | null
+  state: string | null
+  country: string | null
+  rooms: number | null
+  message: string | null
+  status: 'new' | 'contacted' | 'scheduled' | 'converted' | 'closed'
+  notes: string | null
+  assigned_to: string | null
+  assignee: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface DemoRequests {
+  requests: DemoRequest[]
+  counts: Record<DemoRequest['status'], number>
+  staff: { id: string; display_name: string }[]
+}
+
+export async function listDemoRequests(status?: string): Promise<DemoRequests> {
+  const { data } = await api.get<DemoRequests>(`${P}/demo-requests`,
+    { params: status ? { status } : {} })
+  return data
+}
+
+export async function updateDemoRequest(id: string, body: {
+  status?: string; assigned_to?: string; notes?: string
+}): Promise<void> {
+  await api.put(`${P}/demo-requests/${id}`, body)
 }

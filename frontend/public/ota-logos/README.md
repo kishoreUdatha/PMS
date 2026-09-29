@@ -31,6 +31,23 @@ a raster logo is soft at one of those sizes. A transparent-background PNG at
 The mark is rendered on white with 4px of padding, so use the full-colour
 version rather than the reversed/white one.
 
+## What is here now
+
+| Channel | File | Source |
+| --- | --- | --- |
+| Booking.com | `booking-com.png` | brand's own touch icon |
+| Agoda | `agoda.png` | brand's own touch icon |
+| Expedia | `expedia.png` | brand's own touch icon |
+| Cleartrip | `cleartrip.png` | brand's own touch icon |
+| Yatra | `yatra.png` | brand's own touch icon |
+| Airbnb | `airbnb.svg` | Simple Icons mark, brand colour |
+| Trip.com | `trip-com.svg` | Simple Icons mark, brand colour |
+| Google Hotel Ads | `google-hotels.svg` | Simple Icons "G", brand colour |
+| MakeMyTrip, Goibibo | none yet | brand-colour tile |
+
+`PartnerMark.tsx` marks which brands load `.svg`. The earlier `airbnb.png`
+and `makemytrip.png` were removed: neither was the brand's logo.
+
 ## Where to get them
 
 **Not from a web search.** These are trademarks, and the licence to use one

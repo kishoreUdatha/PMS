@@ -428,3 +428,78 @@ The {platform} team
   <p style="color:#94a3b8;font-size:13px">Regards,<br>The {platform} team</p>
 </div>"""
     return subject, text, html
+
+
+# --------------------------------------------------------- demo requests --
+#
+# Everything in a demo request was typed by a stranger on the public landing
+# page, so every value is HTML-escaped before it goes near markup. Unescaped,
+# a "message" of <a href=...>Click to verify</a> would render as a link in the
+# sales inbox, sent from our own address.
+
+def _lead_rows(lead: dict) -> list[tuple[str, str]]:
+    place = ", ".join(v for v in (lead.get("city"), lead.get("country")) if v)
+    rows = [("Property", lead["property_name"]), ("Name", lead["full_name"]),
+            ("Phone", lead["phone"]), ("Email", lead["email"])]
+    if place:
+        rows.append(("Location", place))
+    if lead.get("rooms"):
+        rows.append(("Rooms", str(lead["rooms"])))
+    return rows
+
+
+def demo_alert_email(lead: dict) -> tuple[str, str, str]:
+    """To the sales team: a new lead, with everything needed to call back."""
+    import html as _html
+
+    platform = settings.platform_name
+    rows = _lead_rows(lead)
+    subject = f"New demo request: {lead['property_name']}"
+    message = lead.get("message") or ""
+    console = settings.app_base_url.rstrip("/") + "/platform/demo-requests"
+
+    text = f"""A new demo request came in from the {platform} landing page.
+
+{_text_table(rows)}
+{f"{chr(10)}Message:{chr(10)}{message}{chr(10)}" if message else ""}
+Work it in the console: {console}
+"""
+    safe_rows = [(_html.escape(k), _html.escape(v)) for k, v in rows]
+    html = f"""<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;
+  color:#1e293b;max-width:560px;line-height:1.6">
+  <p>A new demo request came in from the {_html.escape(platform)} landing page.</p>
+  {_html_table(safe_rows)}
+  {f'<p style="white-space:pre-wrap;color:#334155"><strong>Message</strong><br>{_html.escape(message)}</p>' if message else ""}
+  <p><a href="{_html.escape(console)}" style="display:inline-block;background:#0f766e;
+     color:#fff;padding:12px 22px;border-radius:10px;text-decoration:none;
+     font-weight:600">Open demo requests</a></p>
+</div>"""
+    return subject, text, html
+
+
+def demo_confirmation_email(lead: dict) -> tuple[str, str, str]:
+    """To the prospect: we have it, and what happens next. Nothing more."""
+    import html as _html
+
+    platform = settings.platform_name
+    first = _first_name(lead["full_name"])
+    subject = f"Your {platform} demo request"
+    text = f"""Hello {first},
+
+Thank you for asking to see {platform}. We have your request for
+{lead['property_name']}, and our team will be in touch shortly to set up
+a time that suits you.
+{_support_text()}
+Regards,
+The {platform} team
+"""
+    html = f"""<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;
+  color:#1e293b;max-width:560px;line-height:1.6">
+  <p>Hello {_html.escape(first)},</p>
+  <p>Thank you for asking to see {_html.escape(platform)}. We have your request
+     for <strong>{_html.escape(lead['property_name'])}</strong>, and our team
+     will be in touch shortly to set up a time that suits you.</p>
+  {_support_html()}
+  <p style="color:#94a3b8;font-size:13px">Regards,<br>The {_html.escape(platform)} team</p>
+</div>"""
+    return subject, text, html

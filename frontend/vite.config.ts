@@ -38,6 +38,9 @@ export default defineConfig(({ mode }) => {
         // application. Proxying it keeps the two environments honest rather
         // than teaching anybody a dev-only address.
         '/book': env.VITE_GATEWAY_URL || 'http://localhost:8000',
+        // The website widget hotels embed. Same reason as /book: in production
+        // the gateway serves it; in dev Vite would answer with index.html.
+        '/widget.js': env.VITE_GATEWAY_URL || 'http://localhost:8000',
         // Media is deliberately NOT proxied here. The object store's URLs
         // are SigV4-presigned, and SigV4 signs the Host; routing them through
         // this dev proxy produced a 403 because the header did not arrive at

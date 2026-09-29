@@ -2,12 +2,13 @@ import { lazy, Suspense } from 'react'
 import { Navigate, Outlet, Route, Routes } from 'react-router-dom'
 import { OverlayHost } from './components/AskDialog'
 import AppLayout from './components/AppLayout'
+import Landing from './pages/Landing'
 import ProtectedRoute from './auth/ProtectedRoute'
 import PlatformRoute from './platform/PlatformRoute'
 import PlatformLayout from './platform/PlatformLayout'
 import PageSpinner from './components/PageSpinner'
 
-// Every screen is its own chunk, fetched when first visited. The shell
+// Every screen but the landing page is its own chunk, fetched when first visited. The shell
 // (layouts, guards, the overlay host) stays in the entry bundle so the frame
 // paints at once; AppLayout and PlatformLayout hold their own Suspense so
 // only the content area waits while a screen loads.
@@ -74,10 +75,13 @@ const Approvals = lazy(() => import('./pages/Approvals'))
 const AuditLog = lazy(() => import('./pages/AuditLog'))
 const Billing = lazy(() => import('./pages/Billing'))
 const Login = lazy(() => import('./pages/Login'))
+const GuestPortal = lazy(() => import('./pages/GuestPortal'))
+const GuestRequests = lazy(() => import('./pages/GuestRequests'))
+const Pos = lazy(() => import('./pages/Pos'))
 const SetPassword = lazy(() => import('./pages/SetPassword'))
-const Placeholder = lazy(() => import('./pages/Placeholder'))
 const LedgerReportScreen = lazy(() => import('./pages/LedgerReport'))
 const ReportsCatalog = lazy(() => import('./pages/ReportsCatalog'))
+const ReportBuilder = lazy(() => import('./pages/ReportBuilder'))
 const BackOfficeReport = lazy(() => import('./pages/BackOfficeReport'))
 const WorkOrders = lazy(() => import('./pages/WorkOrders'))
 const ExpenseVouchers = lazy(() => import('./pages/ExpenseVouchers'))
@@ -107,6 +111,7 @@ const PlatformProviders = lazy(() => import('./platform/screens/Providers'))
 const PlatformDomains = lazy(() => import('./platform/screens/Domains'))
 const PlatformMessaging = lazy(() => import('./platform/screens/Messaging'))
 const PlatformSupport = lazy(() => import('./platform/screens/Support'))
+const PlatformDemoRequests = lazy(() => import('./platform/screens/DemoRequests'))
 const PlatformSupportTicket = lazy(() => import('./platform/screens/SupportTicket'))
 const PlatformRecovery = lazy(() => import('./platform/screens/Recovery'))
 const PlatformSettingsScreen = lazy(() => import('./platform/screens/PlatformSettings'))
@@ -132,6 +137,14 @@ export default function App() {
       <OverlayHost />
     <Suspense fallback={<PageSpinner full />}>
     <Routes>
+      {/* The public front door, at the root for everyone, signed in or not.
+          The dashboard lives at /dashboard. /welcome was the landing page's
+          first address and is kept so links to it still work. */}
+      <Route path="/" element={<Landing />} />
+      <Route path="/welcome" element={<Navigate to="/" replace />} />
+      {/* A guest's own booking, from the private link texted to them. No
+          login: the link is the credential. See portal_routes.py. */}
+      <Route path="/stay/:code/:token" element={<GuestPortal />} />
       <Route path="/login" element={<Login />} />
       <Route path="/set-password" element={<SetPassword />} />
 
@@ -169,6 +182,7 @@ export default function App() {
         <Route path="/platform/integrations" element={<PlatformProviders />} />
         <Route path="/platform/booking-engine" element={<PlatformDomains />} />
         <Route path="/platform/messaging" element={<PlatformMessaging />} />
+        <Route path="/platform/demo-requests" element={<PlatformDemoRequests />} />
         <Route path="/platform/support" element={<PlatformSupport />} />
         <Route path="/platform/support/:ticketId" element={<PlatformSupportTicket />} />
         <Route path="/platform/operations" element={<PlatformOperations />} />
@@ -208,7 +222,7 @@ export default function App() {
       >
         {/* The dashboard is for a property that exists. Until setup
             is finished the wizard is the page — see OnboardingGate. */}
-        <Route index element={
+        <Route path="dashboard" element={
           <OnboardingGate><Dashboard /></OnboardingGate>} />
         <Route path="reservations/new" element={<NewReservation />} />
         <Route path="reservations/group-blocks" element={<GroupBlocks />} />
@@ -263,6 +277,7 @@ export default function App() {
         <Route path="search" element={<AppSearch />} />
         <Route path="guests" element={<Guests />} />
         <Route path="guests/companies" element={<CommercialAccounts />} />
+        <Route path="guests/requests" element={<GuestRequests />} />
         <Route path="guests/:guestId" element={<GuestProfile />} />
         <Route path="reservations/sources" element={<BookingAttributes />} />
         <Route path="channels" element={<ChannelPartners />} />
@@ -271,7 +286,7 @@ export default function App() {
           element={<EditChannelPartner />} />
         <Route path="housekeeping" element={<Housekeeping />} />
         <Route path="work-orders" element={<WorkOrders />} />
-        <Route path="pos" element={<Placeholder title="Restaurant & POS" />} />
+        <Route path="pos" element={<Pos />} />
         <Route path="services" element={<GuestOrders />} />
         <Route path="services/menu" element={<ServiceMenu />} />
         <Route path="payments" element={<Cashiering />} />
@@ -296,6 +311,7 @@ export default function App() {
             its own screen and the rest render through one report screen. */}
         <Route path="reports" element={<ReportsCatalog />} />
         <Route path="reports/ledger" element={<LedgerReportScreen />} />
+        <Route path="reports/builder" element={<ReportBuilder />} />
         <Route path="reports/:slug" element={<BackOfficeReport />} />
         <Route path="staff" element={<UserManagement />} />
         <Route path="admin/users" element={<UserManagement />} />

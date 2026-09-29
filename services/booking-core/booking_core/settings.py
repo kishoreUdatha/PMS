@@ -134,5 +134,15 @@ class BookingSettings(BaseServiceSettings):
     #: symmetrical on purpose.
     finance_url: str = "http://localhost:8003"
 
+    # --- the booking page's chat assistant (chat_routes.py) -------------
+    #: Unset, the assistant is off and the booking page shows no chat.
+    anthropic_api_key: str = ""
+    chat_model: str = "claude-opus-5-5"
+    #: Messages one visitor may send in ten minutes.
+    chat_messages_per_visitor: int = 20
+    #: Messages one property's page may answer in a day. A ceiling on what a
+    #: script hammering one page can cost, not an expected volume.
+    chat_messages_per_property_day: int = 1000
+
 
 settings = BookingSettings()

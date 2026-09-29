@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from .approvals_routes import approvals_router
 from .audit_routes import audit_router
 from .auth_routes import auth_router
+from .demo_routes import public_router
 from .roles_routes import roles_router
 from .routes import router
 from .onboarding_routes import onboarding_router
@@ -50,7 +51,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     lifespan=lifespan,
-    title="Chirala Bay PMS — IAM Service",
+    title="MyGuest — IAM Service",
     version="0.1.0",
     description="Organizations, properties, users, memberships, roles, permissions.",
 )
@@ -68,6 +69,7 @@ install_observability(app, service="iam", engine=engine,
 
 
 app.include_router(auth_router)
+app.include_router(public_router)
 app.include_router(roles_router)
 app.include_router(approvals_router)
 app.include_router(audit_router)

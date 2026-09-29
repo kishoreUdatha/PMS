@@ -1,5 +1,5 @@
 import {
-  BarChart3, Building2, CalendarDays, ClipboardList, CreditCard, Globe, Home, ShieldCheck, Tag, Users, Users2, UtensilsCrossed, Wallet,
+  BarChart3, Building2, CalendarDays, ChefHat, ClipboardList, ConciergeBell, CreditCard, Globe, Home, ShieldCheck, Tag, Users, Users2, UtensilsCrossed, Wallet,
 } from 'lucide-react'
 import { Broom } from './components/icons'
 
@@ -62,17 +62,15 @@ export interface NavItem {
 //   faults are not tracked here on this deployment.
 // * Enquiries (/reservations/enquiries) — built, and still reachable from the
 //   tab strip on the Reservations header, which is where it is used from.
-// * Restaurant & POS (/pos) — still a placeholder. A menu entry leading to a
-//   dashed "to be implemented" box promises a feature that does not exist;
-//   it returns when the screen does. Guest Services (/services) was one of
-//   these and is now built, so it is listed above; its price list lives at
+// * Restaurant & POS (/pos) was a placeholder and is now built (pages/Pos),
+//   so it is listed above. Guest Services (/services) was one of these too; its price list lives at
 //   /services/menu, reached from the screen itself rather than the sidebar,
 //   because it is set up once and then left alone.
 export const navItems: NavItem[] = [
   // ----------------------------------------------------------------- daily
   // Everything down to Payments is opened by somebody doing their job right
   // now. None of it is nested, and none of it should become nested.
-  { label: 'Dashboard', path: '/', icon: Home },
+  { label: 'Dashboard', path: '/dashboard', icon: Home },
   { label: 'Stayview', path: '/reservations', icon: CalendarDays },
   { label: 'Reservations', path: '/reservations/list', icon: ClipboardList,
     badge: 'arrivals' },
@@ -96,6 +94,12 @@ export const navItems: NavItem[] = [
   // because that is the counter it is used from, by the same person, while
   // the guest is on the phone.
   { label: 'Guest Services', path: '/services', icon: UtensilsCrossed },
+  // Tables, checks, kitchen tickets and bills. Its menu is Guest Services'
+  // menu, so it sits right beside it.
+  { label: 'Restaurant & POS', path: '/pos', icon: ChefHat },
+  // What guests asked for from their portal link. Worked through the day,
+  // so one click, beside the other guest-facing counters.
+  { label: 'Guest Requests', path: '/guests/requests', icon: ConciergeBell },
   // Cashiering. Out here with the daily work rather than inside Finance: it
   // is a desk screen, used while a guest is standing there.
   //

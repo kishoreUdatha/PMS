@@ -32,7 +32,7 @@ export default function PlatformRoute({ children }: { children: ReactNode }) {
     )
   }
   if (!session.is_platform) {
-    return <Navigate to="/" replace />
+    return <Navigate to="/dashboard" replace />
   }
   return <>{children}</>
 }

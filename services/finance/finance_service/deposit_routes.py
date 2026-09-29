@@ -13,9 +13,10 @@ money is recorded, and this reads it.
 
 Two things the mockup shows are deliberately not pretended here:
 
-* **Reminders.** There is no mail or SMS transport in this system yet. A
-  reminder can be scheduled, and can be marked as sent by whoever sent it, and
-  the screen says which of those it is. Nothing claims an email went out.
+* **Reminders.** "Send now" texts the guest by SMS or WhatsApp, on the
+  channels the property has turned on, and records the reminder as sent only
+  if something went out. A reminder can still be scheduled, or marked as sent
+  by a person who sent it some other way, and the screen says which it is.
 * **Waiver approval.** Screen 042 has an approval queue but no way to raise a
   request into it. A waiver above the threshold is recorded as *requested* and
   stays unapplied until someone with ``payments:approve`` decides it. The
@@ -35,6 +36,7 @@ from datetime import date
 from decimal import Decimal
 
 from chirala_common.audit import record_audit
+from chirala_common.guest_messages import notify_guest, summary
 from chirala_common.authz import (
     assert_org_matches_caller,
     _GRANT_SQL,
@@ -48,7 +50,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from .database import get_session
+from .database import SessionFactory, get_session
 from .ledger import Allocation, LedgerError, post_payment
 from .night_audit import local_today
 from .routes import _trading_day
@@ -185,7 +187,7 @@ class RefundIn(BaseModel):
 
 
 class ReminderIn(BaseModel):
-    action: str  # schedule | mark_sent | clear
+    action: str  # schedule | send | mark_sent | clear
     due_on: date | None = None
 
 
@@ -1104,16 +1106,19 @@ def set_reminder(
     caller: Caller = Depends(require_permission("payments", "edit")),
     db: Session = Depends(get_session),
 ):
-    """Record a reminder's state.
+    """Send a reminder, or record a reminder's state.
 
-    Nothing is sent from here — this system has no mail or SMS transport yet.
-    "Schedule" notes the date a reminder is due; "mark sent" records that
-    someone sent it. The screen labels each accordingly rather than implying a
-    message went out on its own.
+    "Send" texts the guest now and is recorded as sent only if a message went
+    out (or was logged in test mode). "Schedule" notes the date a reminder is
+    due; "mark sent" records that a person sent one some other way.
     """
     assert_property_in_org(db, caller, property_id)
     row = _load(db, installment_id, property_id)
-    if body.action == "schedule":
+    sent_by = None
+    if body.action == "send":
+        sent_by = _text_reminder(db, row, property_id)
+        sql = "SET reminder_state = 'sent', reminder_sent_at = now()"
+    elif body.action == "schedule":
         if body.due_on is None:
             raise HTTPException(status_code=422, detail="Pick a reminder date.")
         sql = ("SET reminder_state = 'scheduled', reminder_due_on = :d, "
@@ -1141,6 +1146,51 @@ def set_reminder(
         organization_id=row["organization_id"], property_id=property_id,
         actor_subject=caller.subject,
         after={"action": body.action,
-               "due_on": str(body.due_on) if body.due_on else None},
+               "due_on": str(body.due_on) if body.due_on else None,
+               "sent": sent_by},
     )
     return _refreshed(db, installment_id, property_id)
+
+
+def _text_reminder(db: Session, row, property_id: uuid.UUID) -> str:
+    """Text the guest about this instalment, or refuse with the reason."""
+    info = db.execute(
+        text("""
+            SELECT r.number, g.full_name AS guest_name, g.phone,
+                   p.name AS property_name
+            FROM booking.reservations r
+            LEFT JOIN engagement.guests g ON g.id = r.primary_guest_id
+            JOIN iam.properties p ON p.id = r.property_id
+            WHERE r.id = :r AND r.property_id = :p
+        """),
+        {"r": row["reservation_id"], "p": property_id},
+    ).mappings().first()
+    if info is None:
+        raise HTTPException(status_code=404, detail="Reservation not found")
+    balance = _q(row["amount"]) - _q(row["paid_amount"]) - _effective_waiver(row)
+    if balance <= 0:
+        raise HTTPException(status_code=422,
+                            detail="Nothing is due on this instalment.")
+    outcomes = notify_guest(
+        db, SessionFactory, settings.messaging_config,
+        code="guest_deposit_reminder",
+        organization_id=row["organization_id"], property_id=property_id,
+        phone=info["phone"],
+        values={
+            "guest_name": info["guest_name"] or "Guest",
+            "amount": f"Rs {balance:,.2f}",
+            # Read after "is due": "on 12 Oct 2026", "at check-in", "now".
+            "due_date": (f"on {row['due_date'].strftime('%d %b %Y')}"
+                         if row["due_date"]
+                         else "at check-in" if row["due_rule"] == "at_checkin"
+                         else "now"),
+            "reservation_number": info["number"],
+            "property_name": info["property_name"],
+        },
+    )
+    went = [o for o in outcomes if o.status in ("sent", "suppressed")]
+    if not went:
+        raise HTTPException(
+            status_code=422,
+            detail=f"No reminder went out: {summary(outcomes)}.")
+    return summary(went)

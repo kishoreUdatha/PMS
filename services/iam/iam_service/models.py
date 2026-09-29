@@ -71,6 +71,12 @@ class Property(Base, UUIDPrimaryKeyMixin, TimestampMixin, VersionMixin):
     status: Mapped[str] = mapped_column(
         String(30), nullable=False, default="active"
     )
+    #: Whether guests of this property get SMS / WhatsApp messages. Off by
+    #: default: each one costs money. See chirala_common.guest_messages.
+    guest_sms_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False)
+    guest_whatsapp_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False)
 
 
 class PropertyModule(Base, TimestampMixin):

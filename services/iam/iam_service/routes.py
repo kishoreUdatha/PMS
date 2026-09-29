@@ -1054,6 +1054,8 @@ def update_property_settings(
         "checkin_time": prop.checkin_time,
         "checkout_time": prop.checkout_time,
         "address": prop.address,
+        "guest_sms_enabled": prop.guest_sms_enabled,
+        "guest_whatsapp_enabled": prop.guest_whatsapp_enabled,
     }
 
     prop.name = body.name
@@ -1062,6 +1064,10 @@ def update_property_settings(
     prop.checkin_time = body.checkin_time
     prop.checkout_time = body.checkout_time
     prop.address = body.address
+    if body.guest_sms_enabled is not None:
+        prop.guest_sms_enabled = body.guest_sms_enabled
+    if body.guest_whatsapp_enabled is not None:
+        prop.guest_whatsapp_enabled = body.guest_whatsapp_enabled
     prop.version = prop.version + 1
 
     after = {
@@ -1071,6 +1077,8 @@ def update_property_settings(
         "checkin_time": prop.checkin_time,
         "checkout_time": prop.checkout_time,
         "address": prop.address,
+        "guest_sms_enabled": prop.guest_sms_enabled,
+        "guest_whatsapp_enabled": prop.guest_whatsapp_enabled,
     }
 
     db.flush()

@@ -5,7 +5,7 @@ import PageSpinner from '../components/PageSpinner'
 import {
   Activity, Building2, CalendarClock, ChevronDown, CreditCard, Globe,
   Handshake, Hotel, LayoutGrid, LifeBuoy, LogOut, Mail, PanelLeftClose,
-  PanelLeftOpen, Search, Settings,
+  PanelLeftOpen, PhoneCall, Search, Settings,
   ShieldCheck, Users, Waves,
 } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext'
@@ -75,6 +75,7 @@ const NAV: Item[] = [
   },
   { to: '/platform/booking-engine', label: 'Booking engine', icon: Globe },
   { to: '/platform/messaging', label: 'Messaging', icon: Mail },
+  { to: '/platform/demo-requests', label: 'Demo requests', icon: PhoneCall },
   { to: '/platform/support', label: 'Support', icon: LifeBuoy },
   {
     to: '/platform/audit', label: 'Audit & security', icon: ShieldCheck,

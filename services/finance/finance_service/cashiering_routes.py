@@ -66,18 +66,20 @@ cashiering_router = APIRouter(
 METHODS = payment_methods.METHODS
 METHOD_LABELS = payment_methods.LABELS
 SOURCES = ("front_desk", "deposit", "checkout", "pos", "night_audit",
-           "booking_engine")
+           "booking_engine", "payment_link")
 SOURCE_LABELS = {
     "front_desk": "Front Desk", "deposit": "Deposit", "checkout": "Checkout",
     "pos": "Restaurant & POS", "night_audit": "Night Audit",
     # Its own source so it can be *excluded* from a drawer count. Money a
     # guest paid a gateway online never passed through anyone's hands here.
     "booking_engine": "Booking Engine",
+    # Paid by the guest on a link sent to their phone. Same reason.
+    "payment_link": "Payment Link",
 }
 #: Sources with no person behind them. The cashier column is empty for these
 #: and that is the truth, not missing data -- worth saying which, because a
 #: dash in that column otherwise reads as a record somebody failed to fill in.
-UNATTENDED_SOURCES = ("booking_engine",)
+UNATTENDED_SOURCES = ("booking_engine", "payment_link")
 NEEDS_REFERENCE = payment_methods.NEEDS_REFERENCE
 
 # What the allocation breakdown calls each kind of charge. Charge codes are the

@@ -60,6 +60,8 @@ export default function PropertySettings() {
         checkin_time: form.checkin_time ?? null,
         checkout_time: form.checkout_time ?? null,
         address: form.address ?? null,
+        guest_sms_enabled: !!form.guest_sms_enabled,
+        guest_whatsapp_enabled: !!form.guest_whatsapp_enabled,
         reason: reason || null,
       })
       setForm(updated)
@@ -132,6 +134,27 @@ export default function PropertySettings() {
             </Field>
             <Field label="Check-in Time"><TimeField value={form.checkin_time ?? ''} onChange={(v) => setForm({ ...form, checkin_time: v })} label="Check-in time" className="w-full" /></Field>
             <Field label="Check-out Time"><TimeField value={form.checkout_time ?? ''} onChange={(v) => setForm({ ...form, checkout_time: v })} label="Check-out time" className="w-full" /></Field>
+          </div>
+
+          {/* Each message costs money, so both start off and a hotel turns
+              them on knowingly. See chirala_common.guest_messages. */}
+          <div className="mt-6 rounded-xl border border-slate-100 bg-slate-50 p-4">
+            <p className="text-sm font-semibold text-ink">Guest messages</p>
+            <p className="mt-1 text-xs text-slate-500">
+              Booking confirmations, check-in welcomes, deposit reminders and
+              payment links go to the guest's mobile on the channels turned on
+              here. Each message is charged by the provider.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-6">
+              {([['guest_sms_enabled', 'SMS'], ['guest_whatsapp_enabled', 'WhatsApp']] as const).map(([key, label]) => (
+                <label key={key} className="flex items-center gap-2 text-sm text-slate-700">
+                  <input type="checkbox" checked={!!form[key]}
+                    onChange={(e) => setForm({ ...form, [key]: e.target.checked })}
+                    className="h-4 w-4 rounded border-slate-300 accent-brand" />
+                  Send by {label}
+                </label>
+              ))}
+            </div>
           </div>
 
           <Field label="Reason for change (recorded in audit)">

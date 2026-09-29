@@ -29,12 +29,15 @@ class IamSettings(BaseServiceSettings):
 
     #: What the product is called in an email. A tenant white-labelling this
     #: changes one setting rather than editing templates.
-    platform_name: str = "Chirala Bay PMS"
+    platform_name: str = "MyGuest"
     #: Where staff who cannot sign in should turn. Deliberately separate from
     #: the property's own contact details: those are the guest line, and
     #: sending a housekeeper with a broken password to the reservations desk
     #: helps nobody. Left out of the email entirely when unset.
     support_email: str = ""
+    #: Where a new demo request from the landing page is emailed. Empty means
+    #: nobody is emailed and leads wait in the console's Demo requests screen.
+    sales_alert_email: str = ""
     support_phone: str = ""
     website_url: str = ""
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .mailer import MailConfig
+from .messenger import MessagingConfig
 
 
 class BaseServiceSettings(BaseSettings):
@@ -114,13 +115,31 @@ class BaseServiceSettings(BaseSettings):
     smtp_username: str = ""
     smtp_password: str = ""
     smtp_sender: str = ""
-    smtp_sender_name: str = "Chirala Bay PMS"
+    smtp_sender_name: str = "MyGuest"
     smtp_starttls: bool = True
+
+    # --- guest SMS and WhatsApp (MSG91) --------------------------------
+    # Shared for the same reason as SMTP: booking-core sends a confirmation,
+    # finance a deposit reminder, and they must go out from one account.
+    # See chirala_common.messenger for why every message is a template.
+    msg91_auth_key: str = ""
+    #: The WhatsApp Business number, digits with country code (91XXXXXXXXXX).
+    msg91_whatsapp_number: str = ""
+    #: Walk the whole flow and log each message instead of sending it.
+    messaging_test_mode: bool = False
 
     #: The address a person reaches this deployment at, used to build links
     #: inside mail. Empty means "no link", which every sender must handle: a
     #: link to localhost in somebody's inbox is worse than no link at all.
     app_base_url: str = ""
+
+    @property
+    def messaging_config(self) -> MessagingConfig:
+        return MessagingConfig(
+            auth_key=self.msg91_auth_key,
+            whatsapp_number=self.msg91_whatsapp_number,
+            test_mode=self.messaging_test_mode,
+        )
 
     @property
     def mail_config(self) -> MailConfig:

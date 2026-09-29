@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from .channel_routes import channel_router
 from .database import engine
 from .public_routes import public_router
+from .chat_routes import chat_router
 from .reaper import (
     channel_feed_loop, channel_provision_loop, channel_push_loop,
     hold_reaper_loop,
@@ -27,6 +28,7 @@ from .calendar_routes import calendar_router
 from .rate_plan_calendar_routes import plan_calendar_router
 from .change_routes import change_router
 from .checkin_routes import checkin_router
+from .portal_routes import portal_public_router, portal_router
 from .formc_routes import formc_router
 from .checkout_routes import checkout_router
 from .account_routes import account_router
@@ -115,7 +117,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(
-    title="Chirala Bay PMS — Booking Core",
+    title="MyGuest — Booking Core",
     version="0.1.0",
     description="Property inventory, reservations, holds, and room calendar.",
     lifespan=lifespan,
@@ -141,6 +143,8 @@ install_observability(app, service="booking-core", engine=engine,
 # Rooms/room-types/amenities routes come first: their paths are more specific
 # than the legacy /room-types collection in `router`.
 app.include_router(public_router)
+app.include_router(chat_router)
+app.include_router(portal_public_router)
 app.include_router(channel_router)
 app.include_router(ota_mapping_router)
 app.include_router(blocks_router)
@@ -148,6 +152,7 @@ app.include_router(calendar_router)
 app.include_router(plan_calendar_router)
 app.include_router(change_router)
 app.include_router(checkin_router)
+app.include_router(portal_router)
 app.include_router(formc_router)
 app.include_router(checkout_router)
 app.include_router(account_router)

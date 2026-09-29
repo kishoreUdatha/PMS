@@ -490,7 +490,9 @@ def create_hold(
         )
 
     reservation_id = uuid.uuid4()
-    number = f"CBR{uuid.uuid4().hex[:8].upper()}"
+    # "RES", not the "CBR" (Chirala Bay Resort) this used to hard-code for
+    # every tenant. Existing numbers keep whatever they were issued with.
+    number = f"RES{uuid.uuid4().hex[:8].upper()}"
     session.execute(
         text(
             """

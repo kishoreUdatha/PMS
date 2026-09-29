@@ -962,3 +962,25 @@ def booking_status(
         total=Decimal(str(row["total"])),
         currency=prop["currency"] or "INR",
     )
+
+
+@public_router.get("/{property_code}/display-rates")
+def display_rates(property_code: str, db: Session = Depends(get_session)) -> dict:
+    """Approximate exchange rates for the booking page's currency picker.
+
+    Set by the platform team in the console (platform setting
+    ``booking_engine.display_rates``), not fetched from a feed. They are for
+    reading only: a guest always pays in the property's own currency, and
+    the page says so beside every converted figure. With no rates set, the
+    picker stays hidden. ``property_code`` is accepted only so the path
+    matches the rest of the booking engine. The rates are the platform's,
+    not the property's.
+    """
+    raw = db.execute(
+        text("SELECT value FROM platform.settings WHERE key = 'booking_engine.display_rates'")
+    ).scalar()
+    if not isinstance(raw, dict):
+        return {"base": None, "as_of": None, "rates": {}}
+    rates = {str(k).upper(): float(v) for k, v in (raw.get("rates") or {}).items()
+             if isinstance(v, (int, float)) and v > 0 and len(str(k)) == 3}
+    return {"base": raw.get("base"), "as_of": raw.get("as_of"), "rates": rates}

@@ -103,6 +103,35 @@
   .center { text-align: center; padding: 22px 0; }
   .big { font-size: 40px; line-height: 1; margin-bottom: 10px; }
   code { background: #f1f5f9; padding: 2px 6px; border-radius: 5px; font-size: 13px; }
+  /* Chat assistant: drawn only when the server says it is switched on. */
+  .chat-fab {
+    position: fixed; right: 16px; bottom: 16px; z-index: 40;
+    border: 0; border-radius: 999px; padding: 12px 18px; cursor: pointer;
+    background: var(--brand); color: var(--brand-ink); font: inherit; font-weight: 600;
+    box-shadow: 0 6px 20px rgba(15, 23, 42, .18);
+  }
+  .chat-box {
+    position: fixed; right: 16px; bottom: 16px; z-index: 41;
+    width: min(380px, calc(100vw - 32px)); height: min(520px, calc(100vh - 32px));
+    display: flex; flex-direction: column; background: var(--card);
+    border: 1px solid var(--line); border-radius: 16px; overflow: hidden;
+    box-shadow: 0 12px 40px rgba(15, 23, 42, .22);
+  }
+  .chat-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 14px; background: var(--brand); color: var(--brand-ink); font-weight: 600;
+  }
+  .chat-head button { border: 0; background: none; color: inherit; font-size: 20px; cursor: pointer; line-height: 1; }
+  .chat-log { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .chat-msg { max-width: 85%; padding: 8px 12px; border-radius: 12px; white-space: pre-wrap; font-size: 14px; }
+  .chat-msg.me { align-self: flex-end; background: var(--brand); color: var(--brand-ink); }
+  .chat-msg.bot { align-self: flex-start; background: var(--bg); border: 1px solid var(--line); }
+  .chat-msg.bad { align-self: flex-start; background: var(--bad-bg); color: var(--bad); }
+  .chat-form { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--line); }
+  .chat-form input { flex: 1; min-width: 0; font: inherit; padding: 9px 10px; border: 1px solid var(--line); border-radius: 10px; }
+  .chat-form button { border: 0; border-radius: 10px; padding: 0 14px; background: var(--brand); color: var(--brand-ink); font: inherit; font-weight: 600; cursor: pointer; }
+  .chat-form button:disabled { opacity: .5; cursor: default; }
+  .chat-note { margin: 0; padding: 0 12px 8px; font-size: 11px; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -110,7 +139,7 @@
 
   <header class="prop">
     <img id="propLogo" alt="" hidden>
-    <h1 id="propName">Book your stay</h1>
+    <h1 id="propName" data-i18n="bookYourStay">Book your stay</h1>
     <p id="propTagline" class="tagline" hidden></p>
     <p id="propWhere"></p>
   </header>
@@ -119,60 +148,69 @@
 
   <!-- 1. dates ------------------------------------------------------- -->
   <section id="stepSearch" class="card">
-    <h2>When are you staying?</h2>
+    <h2 data-i18n="whenStaying">When are you staying?</h2>
     <div class="row-4">
-      <div><label for="arrival">Check in</label><input type="date" id="arrival"></div>
-      <div><label for="departure">Check out</label><input type="date" id="departure"></div>
-      <div><label for="adults">Adults</label>
+      <div><label for="arrival" data-i18n="checkIn">Check in</label><input type="date" id="arrival"></div>
+      <div><label for="departure" data-i18n="checkOut">Check out</label><input type="date" id="departure"></div>
+      <div><label for="adults" data-i18n="adults">Adults</label>
         <select id="adults"></select></div>
-      <div><label for="children">Children</label>
+      <div><label for="children" data-i18n="children">Children</label>
         <select id="children"></select></div>
     </div>
     <p id="searchErr" class="note bad hide" style="margin:14px 0 0"></p>
-    <button id="searchBtn" class="full" style="margin-top:16px">Search rooms</button>
+    <button id="searchBtn" class="full" style="margin-top:16px" data-i18n="searchRooms">Search rooms</button>
   </section>
 
   <!-- 2. rooms ------------------------------------------------------- -->
   <section id="stepRooms" class="card hide">
-    <h2 id="roomsHead">Available rooms</h2>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+      <h2 id="roomsHead" style="margin:0" data-i18n="availableRooms">Available rooms</h2>
+      <!-- Shown only when the platform has set display rates. Prices are
+           converted for reading; the guest always pays in the hotel's own
+           currency, and the page says so beside every converted figure. -->
+      <label id="curWrap" class="hide" style="display:flex;align-items:center;gap:6px;margin:0;font-weight:500">
+        <span data-i18n="showPricesIn">Show prices in</span>
+        <select id="displayCur" style="width:auto;padding:6px 10px"></select>
+      </label>
+    </div>
     <div id="roomList"></div>
-    <button class="ghost" data-back="search">&larr; Change dates</button>
+    <button class="ghost" data-back="search" data-i18n="changeDates">&larr; Change dates</button>
   </section>
 
   <!-- 3. guest ------------------------------------------------------- -->
   <section id="stepGuest" class="card hide">
-    <h2>Your details</h2>
+    <h2 data-i18n="yourDetails">Your details</h2>
     <div id="pickSummary" class="note info"></div>
     <div style="margin-bottom:12px">
-      <label for="gName">Full name</label>
-      <input id="gName" autocomplete="name" placeholder="As on your ID">
+      <label for="gName" data-i18n="fullName">Full name</label>
+      <input id="gName" autocomplete="name" data-i18n-ph="asOnId" placeholder="As on your ID">
     </div>
     <div class="row" style="margin-bottom:12px">
-      <div><label for="gEmail">Email</label>
+      <div><label for="gEmail" data-i18n="email">Email</label>
         <input id="gEmail" type="email" autocomplete="email" placeholder="you@example.com"></div>
-      <div><label for="gPhone">Phone</label>
-        <input id="gPhone" type="tel" autocomplete="tel" placeholder="10-digit mobile"></div>
+      <div><label for="gPhone" data-i18n="phone">Phone</label>
+        <input id="gPhone" type="tel" autocomplete="tel" data-i18n-ph="phoneHint" placeholder="Mobile, with country code"></div>
     </div>
     <div style="margin-bottom:12px">
-      <label for="gReq">Special requests <span style="font-weight:400;color:#94a3b8">(optional)</span></label>
-      <input id="gReq" maxlength="1000" placeholder="Late arrival, high floor…">
+      <label for="gReq"><span data-i18n="specialRequests">Special requests</span> <span style="font-weight:400;color:#94a3b8" data-i18n="optional">(optional)</span></label>
+      <input id="gReq" maxlength="1000" data-i18n-ph="requestsHint" placeholder="Late arrival, high floor…">
     </div>
     <p id="guestErr" class="note bad hide"></p>
-    <button id="holdBtn" class="full">Hold this room</button>
-    <p class="muted" style="margin:10px 0 0">
+    <button id="holdBtn" class="full" data-i18n="holdRoom">Hold this room</button>
+    <p class="muted" style="margin:10px 0 0" data-i18n="holdExplain">
       We hold the room while you pay. Nothing is charged until you confirm.
     </p>
-    <button class="ghost" data-back="rooms">&larr; Choose another room</button>
+    <button class="ghost" data-back="rooms" data-i18n="chooseAnother">&larr; Choose another room</button>
   </section>
 
   <!-- 4. pay --------------------------------------------------------- -->
   <section id="stepPay" class="card hide">
-    <h2>Confirm and pay</h2>
+    <h2 data-i18n="confirmPay">Confirm and pay</h2>
     <div id="holdTimer" class="note warn"></div>
     <div id="payLines"></div>
     <p id="payErr" class="note bad hide"></p>
-    <button id="payBtn" class="full">Pay now</button>
-    <p class="muted" style="margin:10px 0 0">
+    <button id="payBtn" class="full" data-i18n="payNow">Pay now</button>
+    <p class="muted" style="margin:10px 0 0" data-i18n="razorpayNote">
       Payment is handled by Razorpay. We never see your card details.
     </p>
   </section>
@@ -181,18 +219,99 @@
   <section id="stepDone" class="card hide">
     <div class="center">
       <div class="big" id="doneIcon">⏳</div>
-      <h2 id="doneHead" style="margin-bottom:6px">Confirming your booking…</h2>
+      <h2 id="doneHead" style="margin-bottom:6px" data-i18n="confirming">Confirming your booking…</h2>
       <p id="doneBody" class="muted" style="max-width:420px;margin:0 auto"></p>
       <div id="doneRef" class="note good hide" style="margin-top:18px"></div>
     </div>
   </section>
 
   <p class="muted center" style="opacity:.75">
-    Powered by Chirala Bay PMS
+    Powered by MyGuest
   </p>
 </div>
 
+<button id="chatFab" class="chat-fab hide" type="button" data-i18n="chatAsk">Ask a question</button>
+<section id="chatBox" class="chat-box hide" role="dialog" aria-labelledby="chatTitle">
+  <div class="chat-head">
+    <span id="chatTitle" data-i18n="chatTitle">Questions about your stay</span>
+    <button id="chatClose" type="button" aria-label="Close">×</button>
+  </div>
+  <div id="chatLog" class="chat-log" aria-live="polite"></div>
+  <p class="chat-note" data-i18n="chatNote">Automated answers from the hotel's details. For prices, use the search.</p>
+  <form id="chatForm" class="chat-form">
+    <input id="chatInput" maxlength="800" autocomplete="off" data-i18n-ph="chatPlaceholder" placeholder="Type your question">
+    <button id="chatSend" type="submit" data-i18n="chatSend">Send</button>
+  </form>
+</section>
+
 <script>
+// ---------------------------------------------------------------------------
+// Every word a guest reads, in one table per language.
+//
+// English is the only language shipped. Adding one is adding a table here
+// with the same keys: the page picks it from ?lang=xx, or from the browser's
+// language, and falls back to English for anything a table does not have, so
+// a half-finished translation shows English rather than a raw key.
+// ---------------------------------------------------------------------------
+const STRINGS = {
+  en: {
+    bookYourStay: 'Book your stay', whenStaying: 'When are you staying?',
+    checkIn: 'Check in', checkOut: 'Check out', adults: 'Adults', children: 'Children',
+    searchRooms: 'Search rooms', searching: 'Searching…', availableRooms: 'Available rooms',
+    showPricesIn: 'Show prices in', changeDates: '← Change dates',
+    yourDetails: 'Your details', fullName: 'Full name', asOnId: 'As on your ID',
+    email: 'Email', phone: 'Phone', phoneHint: 'Mobile, with country code',
+    specialRequests: 'Special requests', optional: '(optional)',
+    requestsHint: 'Late arrival, high floor…', holdRoom: 'Hold this room', holding: 'Holding…',
+    holdExplain: 'We hold the room while you pay. Nothing is charged until you confirm.',
+    chooseAnother: '← Choose another room', confirmPay: 'Confirm and pay', payNow: 'Pay now',
+    tryAgain: 'Try again', openingPayment: 'Opening payment…',
+    razorpayNote: 'Payment is handled by Razorpay. We never see your card details.',
+    confirming: 'Confirming your booking…', select: 'Select',
+    night: 'night', nights: 'nights', perNight: '/ night', sleeps: 'Sleeps {n}',
+    to: 'to', total: 'Total', checkInFrom: 'Check-in from {t}',
+    approx: '≈ {amount}', payIn: 'You pay in {cur}. Converted prices are approximate.',
+    errNetwork: 'We could not reach the booking system. Please check your connection and try again.',
+    errGeneric: 'Something went wrong. Please try again.', errShape: 'That did not look right.',
+    errNights: 'Check-out must be at least one night after check-in.',
+    errNone: 'Nothing is available for those dates. Please try a different stay.',
+    errName: 'Please enter your full name.',
+    errEmail: 'Please enter a valid email address — your confirmation goes there.',
+    errPhone: 'Please enter a phone number the property can reach you on.',
+    holdExpired: 'This hold has expired and the room has been released. Please search again.',
+    heldFor: 'Your room is held for {time} more.',
+    noGatewayHead: 'Online payment unavailable',
+    noGatewayBody: 'This property has not switched on online payments yet, so no payment was taken and this booking is not confirmed. The property has your details and can take payment directly. Your reference is {ref}.',
+    checkoutLoadFail: 'The payment window could not be loaded. Please disable any ad blocker and try again.',
+    paymentNotDone: 'Payment was not completed. Your room is still held — you can try again.',
+    paymentFailed: 'That payment did not go through. Your room is still held.',
+    confirmedHead: 'Booking confirmed', confirmedBody: 'We have emailed the details to {email}.',
+    paidConfirming: 'Your payment went through. Confirming the room now…',
+    paidHead: 'Payment received',
+    paidBody: 'Your payment went through, but we are still confirming the room. The property has your booking and will email you shortly. Please do not pay again.',
+    yourReference: 'Your reference:', invalidLink: 'This booking link is not valid.',
+    chatAsk: 'Ask a question', chatTitle: 'Questions about your stay', chatSend: 'Send',
+    chatPlaceholder: 'Type your question',
+    chatNote: "Automated answers from the hotel's details. For prices, use the search.",
+    chatHello: 'Hi! Ask me about check-in times, rooms, facilities or the cancellation policy.',
+    chatThinking: '…',
+  },
+};
+const params = new URLSearchParams(location.search);
+const LANG = [params.get('lang'), (navigator.language || 'en').slice(0, 2)]
+  .find((l) => l && STRINGS[l]) || 'en';
+document.documentElement.lang = LANG;
+function t(key, vars) {
+  let s = (STRINGS[LANG] && STRINGS[LANG][key]) || STRINGS.en[key] || key;
+  for (const [k, v] of Object.entries(vars || {})) s = s.replace('{' + k + '}', v);
+  return s;
+}
+function applyStrings() {
+  document.querySelectorAll('[data-i18n]').forEach((el) => { el.textContent = t(el.dataset.i18n); });
+  document.querySelectorAll('[data-i18n-ph]').forEach((el) => { el.placeholder = t(el.dataset.i18nPh); });
+}
+const LOCALE = navigator.language || 'en-IN';
+
 // ---------------------------------------------------------------------------
 // The property is taken from the path, never from a query parameter -- the same
 // rule the API itself keeps. /book/559167 is the whole of the addressing.
@@ -204,13 +323,24 @@ const state = {
   prop: null, nights: 0, room: null,
   reservationId: null, paymentToken: null, expiresAt: null,
   order: null, timer: null, polls: 0,
+  rates: null, displayCur: null, lastRooms: null,
 };
 
 const $ = (id) => document.getElementById(id);
-const money = (n, cur) => new Intl.NumberFormat('en-IN',
+const money = (n, cur) => new Intl.NumberFormat(LOCALE,
   { style: 'currency', currency: cur || 'INR', maximumFractionDigits: 0 })
   .format(Number(n));
 const isoDate = (d) => d.toISOString().slice(0, 10);
+const plural = (n) => `${n} ${t(n === 1 ? 'night' : 'nights')}`;
+
+/** A price in the guest's chosen currency, for reading only.
+ *  Rates are relative to one base (rates[X] = X per 1 base), so any property
+ *  currency converts to any display currency through it. */
+function approx(amount, cur) {
+  const r = state.rates, to = state.displayCur;
+  if (!r || !to || to === cur || !r[cur] || !r[to]) return '';
+  return t('approx', { amount: money(Number(amount) / r[cur] * r[to], to) });
+}
 
 function show(step) {
   for (const s of ['Search', 'Rooms', 'Guest', 'Pay', 'Done']) {
@@ -227,7 +357,7 @@ function err(el, message) {
 
 function busy(btn, on, label) {
   btn.disabled = on;
-  btn.innerHTML = on ? '<span class="spin"></span>' + label : label;
+  btn.innerHTML = on ? '<span class="spin"></span>' + esc(label) : esc(label);
 }
 
 /** Every call goes through here so one place turns a failure into a sentence. */
@@ -236,8 +366,7 @@ async function call(path, options) {
   try {
     resp = await fetch(path, options);
   } catch {
-    throw new Error('We could not reach the booking system. Please check your '
-      + 'connection and try again.');
+    throw new Error(t('errNetwork'));
   }
   const body = await resp.json().catch(() => null);
   if (!resp.ok) {
@@ -245,20 +374,22 @@ async function call(path, options) {
     // string; a guest should never see either shape, only the sentence.
     const d = body && body.detail;
     throw new Error(typeof d === 'string' ? d
-      : Array.isArray(d) && d.length ? (d[0].msg || 'That did not look right.')
-        : 'Something went wrong. Please try again.');
+      : Array.isArray(d) && d.length ? (d[0].msg || t('errShape'))
+        : t('errGeneric'));
   }
   return body;
 }
 
 // --- 1. dates --------------------------------------------------------------
 
+const validDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
+
 function initDates() {
-  const t = new Date();
-  const plus = (n) => { const d = new Date(t); d.setDate(d.getDate() + n); return d; };
+  const tday = new Date();
+  const plus = (n) => { const d = new Date(tday); d.setDate(d.getDate() + n); return d; };
   $('arrival').value = isoDate(plus(1));
   $('departure').value = isoDate(plus(3));
-  $('arrival').min = isoDate(t);
+  $('arrival').min = isoDate(tday);
   $('departure').min = isoDate(plus(1));
   for (let i = 1; i <= 10; i++) {
     $('adults').insertAdjacentHTML('beforeend', `<option value="${i}">${i}</option>`);
@@ -268,6 +399,13 @@ function initDates() {
   }
   $('adults').value = '2';
   $('children').value = '0';
+  // A search handed over by the hotel's website widget. Only well-formed
+  // values are taken; anything else leaves the defaults.
+  if (validDate(params.get('arrival'))) $('arrival').value = params.get('arrival');
+  if (validDate(params.get('departure'))) $('departure').value = params.get('departure');
+  const a = +params.get('adults'), c = +params.get('children');
+  if (a >= 1 && a <= 10) $('adults').value = String(a);
+  if (c >= 0 && c <= 10 && params.has('children')) $('children').value = String(c);
   $('arrival').addEventListener('change', () => {
     // Keep checkout after check-in without silently overriding a real choice.
     if ($('departure').value <= $('arrival').value) {
@@ -283,9 +421,9 @@ async function search() {
   err('searchErr', '');
   const arrival = $('arrival').value, departure = $('departure').value;
   if (!arrival || !departure || departure <= arrival) {
-    return err('searchErr', 'Check-out must be at least one night after check-in.');
+    return err('searchErr', t('errNights'));
   }
-  busy($('searchBtn'), true, 'Searching…');
+  busy($('searchBtn'), true, t('searching'));
   try {
     const q = new URLSearchParams({
       arrival, departure,
@@ -295,12 +433,13 @@ async function search() {
     state.prop = data.property;
     state.nights = data.nights;
     paintProperty(data.property);
+    paintCurrencies(data.property.currency);
     paintRooms(data);
     show('rooms');
   } catch (e) {
     err('searchErr', e.message);
   } finally {
-    busy($('searchBtn'), false, 'Search rooms');
+    busy($('searchBtn'), false, t('searchRooms'));
   }
 }
 
@@ -308,9 +447,22 @@ function paintProperty(p) {
   $('propName').textContent = p.name;
   const where = [p.city, p.country].filter(Boolean).join(', ');
   $('propWhere').textContent = where
-    + (p.checkin_time ? ` · Check-in from ${p.checkin_time}` : '');
-  document.title = 'Book your stay · ' + p.name;
+    + (p.checkin_time ? ` · ${t('checkInFrom', { t: p.checkin_time })}` : '');
+  document.title = t('bookYourStay') + ' · ' + p.name;
   paintBranding(p.branding || {});
+}
+
+/** The currency picker: the property's own currency plus whatever the
+ *  platform has rates for. Hidden when there are no rates to convert with. */
+function paintCurrencies(own) {
+  const r = state.rates;
+  const codes = r ? Object.keys(r).filter((c) => c !== own).sort() : [];
+  $('curWrap').classList.toggle('hide', !codes.length);
+  if (!codes.length) return;
+  const sel = $('displayCur');
+  sel.innerHTML = [own, ...codes].map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  sel.value = state.displayCur && [own, ...codes].includes(state.displayCur) ? state.displayCur : own;
+  state.displayCur = sel.value;
 }
 
 /** Make the page look like the hotel rather than like the platform.
@@ -364,18 +516,20 @@ function shade(hex, factor) {
 }
 
 function paintRooms(data) {
+  state.lastRooms = data;
   const nights = data.nights;
+  const cur = data.property.currency;
   $('roomsHead').textContent =
-    `${nights} night${nights > 1 ? 's' : ''} · ${fmtDate(data.arrival)} to ${fmtDate(data.departure)}`;
+    `${plural(nights)} · ${fmtDate(data.arrival)} ${t('to')} ${fmtDate(data.departure)}`;
   const list = $('roomList');
   // Only what can actually be sold. A room type with nothing left is not an
   // offer, and showing it greyed out just invites a click that fails.
   const sellable = (data.room_types || []).filter((r) => r.available > 0);
   if (!sellable.length) {
-    list.innerHTML = '<p class="note info">Nothing is available for those '
-      + 'dates. Please try a different stay.</p>';
+    list.innerHTML = `<p class="note info">${esc(t('errNone'))}</p>`;
     return;
   }
+  const converted = state.displayCur && state.displayCur !== cur;
   list.innerHTML = sellable.map((r, i) => `
     <div class="room">
       ${r.photos && r.photos.length
@@ -384,16 +538,18 @@ function paintRooms(data) {
       <div class="grow">
         <h3>${esc(r.name)}</h3>
         <p class="amen">${esc([
-          r.bed_setup, r.max_occupancy ? `Sleeps ${r.max_occupancy}` : '',
+          r.bed_setup, r.max_occupancy ? t('sleeps', { n: r.max_occupancy }) : '',
           ...(r.amenities || []).slice(0, 3),
         ].filter(Boolean).join(' · '))}</p>
-        <button data-pick="${i}">Select</button>
+        <button data-pick="${i}">${esc(t('select'))}</button>
       </div>
       <div class="price">
-        <b>${money(r.total, data.property.currency)}</b>
-        <span>${money(r.nightly_from, data.property.currency)} / night</span>
+        <b>${money(r.total, cur)}</b>
+        <span>${money(r.nightly_from, cur)} ${esc(t('perNight'))}</span>
+        ${converted ? `<span style="display:block">${esc(approx(r.total, cur))}</span>` : ''}
       </div>
-    </div>`).join('');
+    </div>`).join('')
+    + (converted ? `<p class="muted" style="margin:10px 0 0">${esc(t('payIn', { cur }))}</p>` : '');
   list.querySelectorAll('[data-pick]').forEach((b) => {
     b.addEventListener('click', () => pick(sellable[+b.dataset.pick]));
   });
@@ -401,16 +557,18 @@ function paintRooms(data) {
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
   (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const fmtDate = (s) => new Date(s + 'T00:00:00').toLocaleDateString('en-IN',
+const fmtDate = (s) => new Date(s + 'T00:00:00').toLocaleDateString(LOCALE,
   { day: 'numeric', month: 'short' });
 
 // --- 3. guest --------------------------------------------------------------
 
 function pick(room) {
   state.room = room;
+  const cur = state.prop.currency;
+  const conv = approx(room.total, cur);
   $('pickSummary').innerHTML =
-    `<b>${esc(room.name)}</b> · ${state.nights} night${state.nights > 1 ? 's' : ''}`
-    + ` · ${money(room.total, state.prop.currency)}`;
+    `<b>${esc(room.name)}</b> · ${esc(plural(state.nights))}`
+    + ` · ${money(room.total, cur)}${conv ? ` <span class="muted">(${esc(conv)})</span>` : ''}`;
   err('guestErr', '');
   show('guest');
 }
@@ -420,15 +578,15 @@ async function hold() {
   const name = $('gName').value.trim();
   const email = $('gEmail').value.trim();
   const phone = $('gPhone').value.trim();
-  if (name.length < 2) return err('guestErr', 'Please enter your full name.');
+  if (name.length < 2) return err('guestErr', t('errName'));
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
-    return err('guestErr', 'Please enter a valid email address — your confirmation goes there.');
+    return err('guestErr', t('errEmail'));
   }
   if (phone.replace(/\D/g, '').length < 5) {
-    return err('guestErr', 'Please enter a phone number the property can reach you on.');
+    return err('guestErr', t('errPhone'));
   }
 
-  busy($('holdBtn'), true, 'Holding…');
+  busy($('holdBtn'), true, t('holding'));
   try {
     const held = await call(`${API}/book`, {
       method: 'POST',
@@ -455,7 +613,7 @@ async function hold() {
   } catch (e) {
     err('guestErr', e.message);
   } finally {
-    busy($('holdBtn'), false, 'Hold this room');
+    busy($('holdBtn'), false, t('holdRoom'));
   }
 }
 
@@ -463,11 +621,13 @@ async function hold() {
 
 function paintPay(held) {
   const cur = held.currency;
+  const conv = approx(held.total, cur);
   $('payLines').innerHTML = `
     <div class="totals"><span>${esc(held.room_type)}</span><span>${esc(held.reservation_number)}</span></div>
     <div class="totals"><span>${fmtDate(held.arrival)} → ${fmtDate(held.departure)}</span>
-      <span>${held.nights} night${held.nights > 1 ? 's' : ''}</span></div>
-    <div class="totals grand"><span>Total</span><span>${money(held.total, cur)}</span></div>`;
+      <span>${esc(plural(held.nights))}</span></div>
+    <div class="totals grand"><span>${esc(t('total'))}</span><span>${money(held.total, cur)}</span></div>
+    ${conv ? `<p class="muted" style="margin:4px 0 0;text-align:right">${esc(conv)} · ${esc(t('payIn', { cur }))}</p>` : ''}`;
 }
 
 function startCountdown() {
@@ -476,14 +636,12 @@ function startCountdown() {
     const left = Math.max(0, state.expiresAt - Date.now());
     if (left === 0) {
       clearInterval(state.timer);
-      $('holdTimer').textContent =
-        'This hold has expired and the room has been released. Please search again.';
+      $('holdTimer').textContent = t('holdExpired');
       $('payBtn').disabled = true;
       return;
     }
     const m = Math.floor(left / 60000), s = Math.floor(left % 60000 / 1000);
-    $('holdTimer').textContent =
-      `Your room is held for ${m}:${String(s).padStart(2, '0')} more.`;
+    $('holdTimer').textContent = t('heldFor', { time: `${m}:${String(s).padStart(2, '0')}` });
   };
   tick();
   state.timer = setInterval(tick, 1000);
@@ -491,7 +649,7 @@ function startCountdown() {
 
 async function pay() {
   err('payErr', '');
-  busy($('payBtn'), true, 'Opening payment…');
+  busy($('payBtn'), true, t('openingPayment'));
   try {
     const order = await call(`${API}/pay`, {
       method: 'POST',
@@ -512,11 +670,7 @@ async function pay() {
       // using rzp_test_ keys IS in Razorpay's test mode while reaching this
       // branch would mean something quite different: no gateway switched on
       // at all.
-      finish('warn', 'Online payment unavailable',
-        'This property has not switched on online payments yet, so no payment '
-        + 'was taken and this booking is not confirmed. The property has your '
-        + 'details and can take payment directly. Your reference is '
-        + order.reservation_number + '.');
+      finish('warn', t('noGatewayHead'), t('noGatewayBody', { ref: order.reservation_number }));
       return;
     }
 
@@ -524,7 +678,7 @@ async function pay() {
     openCheckout(order);
   } catch (e) {
     err('payErr', e.message);
-    busy($('payBtn'), false, 'Pay now');
+    busy($('payBtn'), false, t('payNow'));
   }
 }
 
@@ -534,9 +688,7 @@ function loadRazorpay() {
     const s = document.createElement('script');
     s.src = 'https://checkout.razorpay.com/v1/checkout.js';
     s.onload = resolve;
-    s.onerror = () => reject(new Error(
-      'The payment window could not be loaded. Please disable any ad blocker '
-      + 'and try again.'));
+    s.onerror = () => reject(new Error(t('checkoutLoadFail')));
     document.head.appendChild(s);
   });
 }
@@ -548,7 +700,7 @@ function openCheckout(order) {
     amount: Math.round(Number(order.amount) * 100),
     currency: order.currency,
     name: state.prop.name,
-    description: `${state.room.name} · ${state.nights} night(s)`,
+    description: `${state.room.name} · ${plural(state.nights)}`,
     prefill: {
       name: $('gName').value.trim(),
       email: $('gEmail').value.trim(),
@@ -568,19 +720,17 @@ function openCheckout(order) {
     },
     modal: {
       ondismiss: () => {
-        busy($('payBtn'), false, 'Pay now');
-        err('payErr', 'Payment was not completed. Your room is still held — '
-          + 'you can try again.');
+        busy($('payBtn'), false, t('payNow'));
+        err('payErr', t('paymentNotDone'));
       },
     },
   });
   rzp.on('payment.failed', (e) => {
-    busy($('payBtn'), false, 'Try again');
-    err('payErr', (e && e.error && e.error.description)
-      || 'That payment did not go through. Your room is still held.');
+    busy($('payBtn'), false, t('tryAgain'));
+    err('payErr', (e && e.error && e.error.description) || t('paymentFailed'));
   });
   rzp.open();
-  busy($('payBtn'), false, 'Pay now');
+  busy($('payBtn'), false, t('payNow'));
 }
 
 // --- 5. confirming ---------------------------------------------------------
@@ -602,13 +752,12 @@ async function pollStatus() {
       const s = await call(
         `${API}/booking/${encodeURIComponent(state.reservationId)}?${q}`);
       if (s.status === 'confirmed') {
-        return finish('good', 'Booking confirmed',
-          `We have emailed the details to ${$('gEmail').value.trim()}.`,
+        return finish('good', t('confirmedHead'),
+          t('confirmedBody', { email: $('gEmail').value.trim() }),
           s.reservation_number);
       }
       if (s.paid) {
-        $('doneBody').textContent =
-          'Your payment went through. Confirming the room now…';
+        $('doneBody').textContent = t('paidConfirming');
       }
     } catch {
       // A failed poll is not a failed booking. Keep waiting; the fallback
@@ -616,10 +765,7 @@ async function pollStatus() {
     }
     await new Promise((r) => setTimeout(r, wait));
   }
-  finish('warn', 'Payment received',
-    'Your payment went through, but we are still confirming the room. The '
-    + 'property has your booking and will email you shortly. Please do not pay '
-    + 'again.', state.order && state.order.reservation_number);
+  finish('warn', t('paidHead'), t('paidBody'), state.order && state.order.reservation_number);
 }
 
 function finish(kind, head, body, ref) {
@@ -630,14 +776,15 @@ function finish(kind, head, body, ref) {
   const box = $('doneRef');
   box.className = 'note ' + (kind === 'good' ? 'good' : 'warn');
   box.classList.toggle('hide', !ref);
-  if (ref) box.innerHTML = 'Your reference: <b>' + esc(ref) + '</b>';
+  if (ref) box.innerHTML = esc(t('yourReference')) + ' <b>' + esc(ref) + '</b>';
 }
 
 // --- boot ------------------------------------------------------------------
 
 async function boot() {
+  applyStrings();
   if (!CODE || !/^[A-Za-z0-9-]{3,40}$/.test(CODE)) {
-    $('fatal').textContent = 'This booking link is not valid.';
+    $('fatal').textContent = t('invalidLink');
     $('fatal').classList.remove('hide');
     $('stepSearch').classList.add('hide');
     return;
@@ -654,10 +801,19 @@ async function boot() {
   // show a booking form because a logo could not be fetched would be the
   // wrong trade by a distance.
   call(API).then(paintProperty).catch(() => {});
+  // Display rates for the currency picker. Optional in the same way: without
+  // them the picker simply stays hidden.
+  call(`${API}/display-rates`).then((r) => {
+    if (r && r.rates && Object.keys(r.rates).length) state.rates = r.rates;
+  }).catch(() => {});
 
   $('searchBtn').addEventListener('click', search);
   $('holdBtn').addEventListener('click', hold);
   $('payBtn').addEventListener('click', pay);
+  $('displayCur').addEventListener('change', () => {
+    state.displayCur = $('displayCur').value;
+    if (state.lastRooms) paintRooms(state.lastRooms);
+  });
   document.querySelectorAll('[data-back]').forEach((b) =>
     b.addEventListener('click', () => show(b.dataset.back)));
 
@@ -668,9 +824,74 @@ async function boot() {
       e.preventDefault(); e.returnValue = '';
     }
   });
+
+  // Arrived from the hotel's website widget with dates chosen: search at once.
+  if (validDate(params.get('arrival')) && validDate(params.get('departure'))) search();
+}
+
+// --- chat assistant -----------------------------------------------------------
+// Answers come from the server as plain text and are only ever set with
+// textContent: whatever the model writes is never parsed as HTML.
+const chat = { turns: [], busy: false };
+
+function chatLine(text, cls) {
+  const div = document.createElement('div');
+  div.className = 'chat-msg ' + cls;
+  div.textContent = text;
+  $('chatLog').appendChild(div);
+  $('chatLog').scrollTop = $('chatLog').scrollHeight;
+  return div;
+}
+
+function chatOpen(open) {
+  $('chatBox').classList.toggle('hide', !open);
+  $('chatFab').classList.toggle('hide', open);
+  if (open) {
+    if (!$('chatLog').children.length) chatLine(t('chatHello'), 'bot');
+    $('chatInput').focus();
+  }
+}
+
+async function chatSend(e) {
+  e.preventDefault();
+  const text = $('chatInput').value.trim();
+  if (!text || chat.busy) return;
+  chat.busy = true; $('chatSend').disabled = true;
+  $('chatInput').value = '';
+  chatLine(text, 'me');
+  chat.turns.push({ role: 'user', content: text });
+  const pending = chatLine(t('chatThinking'), 'bot');
+  try {
+    // Only the most recent turns go up, and always starting with the guest.
+    let recent = chat.turns.slice(-11);
+    if (recent[0].role !== 'user') recent = recent.slice(1);
+    const r = await call(`${API}/chat`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: recent }),
+    });
+    pending.textContent = r.reply;
+    chat.turns.push({ role: 'assistant', content: r.reply });
+  } catch (ex) {
+    pending.remove();
+    chat.turns.pop();  // keep the turns alternating for the next try
+    chatLine(ex.message, 'bad');
+  } finally {
+    chat.busy = false; $('chatSend').disabled = false; $('chatInput').focus();
+  }
+}
+
+function initChat() {
+  call(`${API}/chat`).then((r) => {
+    if (!r || !r.enabled) return;
+    $('chatFab').classList.remove('hide');
+    $('chatFab').addEventListener('click', () => chatOpen(true));
+    $('chatClose').addEventListener('click', () => chatOpen(false));
+    $('chatForm').addEventListener('submit', chatSend);
+  }).catch(() => {});
 }
 
 boot();
+if (CODE) initChat();
 </script>
 </body>
 </html>

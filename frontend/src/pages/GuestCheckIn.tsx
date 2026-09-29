@@ -12,7 +12,7 @@ import {
   listArrivals, getCheckInView, completeCheckIn, saveCheckInGuest,
   uploadGuestDocument,
   deleteGuestDocument, ID_TYPES,
-  getFormC, saveFormC, openRegistrationCard,
+  getFormC, saveFormC, openRegistrationCard, getWebCheckin,
   type GuestDoc,
 } from '../api'
 import { Departures } from './GuestCheckOut'
@@ -321,6 +321,40 @@ export default function GuestCheckIn() {
 
   const set = (k: string, val: unknown) => setForm((f) => ({ ...f, [k]: val }))
 
+  // What the guest typed on their portal link, if they checked in online.
+  // Offered, never applied on its own: the ID number in it is only the
+  // guest's word until someone at this desk has looked at the document.
+  const web = useQuery({
+    queryKey: ['webCheckin', v?.reservation_id, propertyId],
+    queryFn: () => getWebCheckin(v!.reservation_id, propertyId),
+    enabled: !!v?.reservation_id && propertyId !== '',
+    refetchOnWindowFocus: false,
+  })
+  const [webApplied, setWebApplied] = useState(false)
+  function fillFromWeb() {
+    const d = web.data?.details ?? {}
+    const str = (k: string) => (typeof d[k] === 'string' ? (d[k] as string) : '')
+    setForm((f) => {
+      const next = { ...f }
+      for (const k of ['full_name', 'email', 'phone', 'nationality', 'address_line',
+        'city', 'state', 'postal_code', 'country', 'id_type', 'id_number'] as const) {
+        if (str(k)) next[k] = str(k)
+      }
+      return next
+    })
+    setFormC((fc) => {
+      const next = { ...fc }
+      for (const k of ['passport_number', 'passport_issue_place', 'passport_issue_date',
+        'passport_expiry_date', 'visa_number', 'visa_type', 'visa_issue_place',
+        'visa_issue_date', 'visa_expiry_date', 'arrived_in_india_on',
+        'arrived_in_india_at', 'next_destination'] as const) {
+        if (str(k)) next[k] = str(k)
+      }
+      return next
+    })
+    setWebApplied(true)
+  }
+
   function fail(e: unknown) {
     setError(errorText(e, 'That did not work. Please try again.'))
   }
@@ -466,6 +500,29 @@ export default function GuestCheckIn() {
           <CheckCircle2 size={16} /> This guest is already checked in
           {v.assigned_room && <> — room {v.assigned_room}</>}.
         </p>
+      )}
+      {web.data && web.data.status === 'submitted' && !v.already_checked_in && (
+        <div className="flex flex-wrap items-start gap-3 rounded-xl border border-sky-100 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+          <CheckCircle2 size={16} className="mt-0.5 shrink-0" />
+          <div className="min-w-0 flex-1">
+            <p className="font-medium">
+              Checked in online on {fmtDate(web.data.submitted_at.slice(0, 10))}.
+            </p>
+            <p className="text-sky-800">
+              {webApplied
+                ? 'Details filled in below. Check the ID against the document before completing.'
+                : 'The guest sent their details from the portal link. Their ID has not been checked yet.'}
+              {typeof web.data.details.arrival_time === 'string' && ` Arriving around ${web.data.details.arrival_time}.`}
+              {typeof web.data.details.special_requests === 'string' && ` Note: “${web.data.details.special_requests}”`}
+            </p>
+          </div>
+          {!webApplied && (
+            <button onClick={fillFromWeb}
+              className="rounded-lg bg-sky-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-800">
+              Fill the form from it
+            </button>
+          )}
+        </div>
       )}
       {error && (
         <p className="flex items-start gap-2 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -782,8 +839,8 @@ export default function GuestCheckIn() {
               label={<>Resort policies accepted {req}</>} />
             <Check checked={form.welcome_sent}
               onChange={(b) => set('welcome_sent', b)}
-              label="Welcome message sent"
-              note="Recorded only — there is no mail or SMS transport yet." />
+              label="Send welcome message"
+              note="Goes to the guest's mobile by SMS or WhatsApp, on the channels turned on in Property Settings." />
             <Check checked={form.key_issued}
               onChange={(b) => set('key_issued', b)}
               label="Room key issued"

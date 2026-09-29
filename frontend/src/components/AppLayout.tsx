@@ -13,6 +13,8 @@ export default function AppLayout() {
       <div className="scroll-slim flex flex-1 flex-col overflow-y-auto [scrollbar-gutter:stable]">
         <TopBar />
         <main className="flex-1 py-6 pl-4 pr-1.5">
+          {/* Screens load on demand (see App.tsx); the shell stays put while
+              the next one arrives. */}
           <Suspense fallback={<PageSpinner />}>
             <Outlet />
           </Suspense>

@@ -1093,6 +1093,8 @@ export interface PropertySettings {
   address?: string | null
   status: string
   version: number
+  guest_sms_enabled?: boolean
+  guest_whatsapp_enabled?: boolean
 }
 
 // A dev subject header stands in for the authenticated user until Keycloak is
@@ -1115,6 +1117,8 @@ export async function updatePropertySettings(
     checkin_time?: string | null
     checkout_time?: string | null
     address?: string | null
+    guest_sms_enabled?: boolean
+    guest_whatsapp_enabled?: boolean
     reason?: string | null
   },
 ): Promise<PropertySettings> {
@@ -1937,6 +1941,7 @@ export async function settleReservation(
     business_date: string
     method?: string
     advance_amount?: number
+    reference?: string
   },
 ): Promise<SettleResult> {
   const { data } = await api.post<SettleResult>(
@@ -4532,7 +4537,7 @@ export async function decideDepositWaiver(
 
 export async function setDepositReminder(
   installmentId: string, propertyId: string,
-  body: { action: 'schedule' | 'mark_sent' | 'clear'; due_on?: string },
+  body: { action: 'schedule' | 'send' | 'mark_sent' | 'clear'; due_on?: string },
 ): Promise<DepositInstallment> {
   const { data } = await api.post<DepositInstallment>(
     `/finance/deposit-installments/${installmentId}/reminder`, body,
@@ -8035,4 +8040,328 @@ export async function setBlockCommitment(
     `/booking/group-blocks/${blockId}/commitment`, { commitment },
     { params: { property_id: propertyId } })
   return data
+}
+
+// ---------------------------------------------------------------- demo ----
+
+/** The "Book a demo" form on the public landing page. No session needed. */
+export interface DemoRequestIn {
+  full_name: string
+  email: string
+  phone: string
+  property_name: string
+  city?: string | null
+  country?: string | null
+  rooms?: number | null
+  message?: string | null
+  /** Honeypot. Never shown to a person; always sent empty by the real form. */
+  website?: string
+}
+
+/** A plan as the landing page shows it: no price, by decision. */
+export interface PublicPlan {
+  code: string
+  name: string
+  summary: string
+  limits: { properties?: number | null; rooms?: number | null; active_users?: number | null }
+  modules: string[]
+}
+
+export async function publicPlans(): Promise<PublicPlan[]> {
+  const { data } = await api.get<PublicPlan[]>('/iam/public/plans')
+  return data
+}
+
+export async function requestDemo(body: DemoRequestIn): Promise<{ detail: string }> {
+  const { data } = await api.post<{ detail: string }>('/iam/public/demo-requests', body)
+  return data
+}
+
+// ------------------------------------------------------- payment links ----
+
+/** A Razorpay link sent to a guest who is not at the desk. */
+export interface PaymentLink {
+  id: string
+  reservation_id: string
+  amount: number
+  currency: string
+  status: 'created' | 'processing' | 'succeeded' | 'failed' | 'cancelled' | 'expired'
+  purpose: string | null
+  url: string | null
+  provider_link_id: string | null
+  expires_at: string | null
+  created_at: string
+  created_by: string | null
+  /** No real gateway is connected: this link cannot take money. */
+  mock: boolean
+  /** What happened to the SMS / WhatsApp, when one was attempted. */
+  message?: string | null
+}
+
+export async function listPaymentLinks(reservationId: string, propertyId: string): Promise<PaymentLink[]> {
+  const { data } = await api.get<PaymentLink[]>(
+    `/finance/reservations/${reservationId}/payment-links`, { params: { property_id: propertyId } })
+  return data
+}
+
+export async function createPaymentLink(propertyId: string, body: {
+  reservation_id: string; amount: number; purpose?: string | null
+  expires_in_hours?: number; send?: boolean
+}): Promise<PaymentLink> {
+  const { data } = await api.post<PaymentLink>('/finance/payment-links', body,
+    { params: { property_id: propertyId } })
+  return data
+}
+
+export async function resendPaymentLink(id: string, propertyId: string): Promise<PaymentLink> {
+  const { data } = await api.post<PaymentLink>(`/finance/payment-links/${id}/resend`, null,
+    { params: { property_id: propertyId } })
+  return data
+}
+
+export async function cancelPaymentLink(id: string, propertyId: string): Promise<PaymentLink> {
+  const { data } = await api.post<PaymentLink>(`/finance/payment-links/${id}/cancel`, null,
+    { params: { property_id: propertyId } })
+  return data
+}
+
+// -------------------------------------------------------- guest portal ----
+
+export async function createPortalLink(reservationId: string, propertyId: string, send = true):
+  Promise<{ url: string; expires_at: string; message: string | null }> {
+  const { data } = await api.post(`/booking/reservations/${reservationId}/portal-link`,
+    { send }, { params: { property_id: propertyId } })
+  return data
+}
+
+export interface WebCheckin {
+  status: 'submitted' | 'applied'
+  submitted_at: string
+  applied_at: string | null
+  details: Record<string, string | boolean>
+}
+
+export async function getWebCheckin(reservationId: string, propertyId: string): Promise<WebCheckin | null> {
+  const { data } = await api.get<WebCheckin | null>(
+    `/booking/reservations/${reservationId}/web-checkin`, { params: { property_id: propertyId } })
+  return data
+}
+
+export interface GuestRequest {
+  id: string
+  reservation_id: string
+  reservation_number: string | null
+  guest_name: string | null
+  room: string | null
+  kind: string
+  message: string
+  status: 'open' | 'in_progress' | 'done' | 'declined'
+  staff_note: string | null
+  created_at: string
+  updated_at: string
+}
+
+export async function listGuestRequests(propertyId: string, status?: string): Promise<GuestRequest[]> {
+  const { data } = await api.get<GuestRequest[]>('/booking/guest-requests',
+    { params: { property_id: propertyId, ...(status ? { status } : {}) } })
+  return data
+}
+
+export async function updateGuestRequest(id: string, propertyId: string,
+  body: { status?: string; staff_note?: string }): Promise<GuestRequest> {
+  const { data } = await api.put<GuestRequest>(`/booking/guest-requests/${id}`, body,
+    { params: { property_id: propertyId } })
+  return data
+}
+
+/** The guest's own view, from their private link. No session. */
+export interface GuestStay {
+  property_name: string
+  property_phone: string | null
+  property_email: string | null
+  property_address: string | null
+  checkin_time: string | null
+  checkout_time: string | null
+  reservation_number: string
+  status: string
+  arrival: string | null
+  departure: string | null
+  guest_name: string | null
+  rooms: { room_type: string; adults: number | null; children: number | null; room: string | null }[]
+  prefill: Record<string, string>
+  web_checkin: 'none' | 'submitted' | 'applied'
+  documents: string[]
+  requests: { kind: string; message: string; status: string; staff_note: string | null; created_at: string }[]
+  payment: { amount: number; currency: string; url: string | null; expires_at: string | null; purpose: string | null } | null
+  paid: boolean
+}
+
+const stayBase = (code: string, token: string) =>
+  `/booking/public/${encodeURIComponent(code)}/stay/${encodeURIComponent(token)}`
+
+export async function openStay(code: string, token: string): Promise<GuestStay> {
+  const { data } = await api.get<GuestStay>(stayBase(code, token))
+  return data
+}
+
+export async function submitWebCheckin(code: string, token: string,
+  body: Record<string, string | boolean | null>): Promise<{ detail: string }> {
+  const { data } = await api.post(`${stayBase(code, token)}/checkin`, body)
+  return data
+}
+
+export async function uploadStayDocument(code: string, token: string, kind: string,
+  file: File): Promise<{ detail: string }> {
+  const form = new FormData()
+  form.append('kind', kind)
+  form.append('file', file)
+  const { data } = await api.post(`${stayBase(code, token)}/documents`, form)
+  return data
+}
+
+export async function createStayRequest(code: string, token: string,
+  body: { kind: string; message: string }): Promise<{ detail: string }> {
+  const { data } = await api.post(`${stayBase(code, token)}/requests`, body)
+  return data
+}
+
+// ------------------------------------------------------------ POS ---------
+
+export interface PosTable { id: string; outlet_id: string; label: string; seats: number; is_active: boolean }
+export interface PosOutlet { id: string; name: string; kind: string; is_active: boolean; sort_order: number; tables: PosTable[] }
+export interface PosLine {
+  id: string; item_id: string; item_name: string; category: string
+  quantity: number; unit_price: string; amount: string; note: string | null
+  status: 'active' | 'void'; void_reason: string | null; created_at: string
+  kot_number: number | null
+}
+export interface PosCheck {
+  id: string; number: string; status: 'open' | 'settled' | 'room' | 'void'
+  outlet_id: string; outlet_name: string; table_id: string | null; table_label: string | null
+  covers: number | null; guest_label: string | null
+  subtotal: string; total: string | null; tax?: string | null; method: string | null
+  currency: string; opened_at: string; closed_at: string | null
+  folio_id: string | null
+  lines: PosLine[]; unsent: number
+  kot?: { number: number; lines: PosLine[] }
+}
+export interface PosCheckRow {
+  id: string; number: string; status: string; outlet_id: string; outlet_name: string
+  table_id: string | null; table_label: string | null; covers: number | null
+  guest_label: string | null; subtotal: string; total: string | null
+  method: string | null; opened_at: string; closed_at: string | null; items: number
+}
+
+const P = (propertyId: string) => ({ params: { property_id: propertyId } })
+
+export async function listPosOutlets(propertyId: string): Promise<PosOutlet[]> {
+  return (await api.get<PosOutlet[]>('/finance/pos/outlets', P(propertyId))).data
+}
+export async function createPosOutlet(propertyId: string, body: { name: string; kind: string; tables: number }) {
+  return (await api.post('/finance/pos/outlets', body, P(propertyId))).data
+}
+export async function addPosTable(propertyId: string, outletId: string, body: { label: string; seats: number }) {
+  return (await api.post(`/finance/pos/outlets/${outletId}/tables`, body, P(propertyId))).data
+}
+export async function listPosChecks(propertyId: string, status = 'open'): Promise<PosCheckRow[]> {
+  return (await api.get<PosCheckRow[]>('/finance/pos/checks',
+    { params: { property_id: propertyId, status } })).data
+}
+export async function getPosCheck(propertyId: string, id: string): Promise<PosCheck> {
+  return (await api.get<PosCheck>(`/finance/pos/checks/${id}`, P(propertyId))).data
+}
+export async function openPosCheck(propertyId: string, body: {
+  outlet_id: string; table_id?: string | null; covers?: number | null; guest_label?: string | null
+}): Promise<PosCheck> {
+  return (await api.post<PosCheck>('/finance/pos/checks', body, P(propertyId))).data
+}
+export async function addPosLines(propertyId: string, id: string,
+  lines: { item_id: string; quantity: number; note?: string | null }[]): Promise<PosCheck> {
+  return (await api.post<PosCheck>(`/finance/pos/checks/${id}/lines`, { lines }, P(propertyId))).data
+}
+export async function voidPosLine(propertyId: string, id: string, lineId: string, reason?: string): Promise<PosCheck> {
+  return (await api.post<PosCheck>(`/finance/pos/checks/${id}/lines/${lineId}/void`,
+    { reason: reason || null }, P(propertyId))).data
+}
+export async function sendPosKot(propertyId: string, id: string): Promise<PosCheck> {
+  return (await api.post<PosCheck>(`/finance/pos/checks/${id}/kot`, null, P(propertyId))).data
+}
+export async function settlePosCheck(propertyId: string, id: string, body: {
+  mode: 'pay' | 'room'; method?: string; reference?: string | null; folio_id?: string
+}): Promise<PosCheck> {
+  return (await api.post<PosCheck>(`/finance/pos/checks/${id}/settle`, body, P(propertyId))).data
+}
+export async function voidPosCheck(propertyId: string, id: string, reason?: string): Promise<PosCheck> {
+  return (await api.post<PosCheck>(`/finance/pos/checks/${id}/void`, { reason: reason || null }, P(propertyId))).data
+}
+
+// ------------------------------------------------------ report builder ----
+
+export interface BuilderColumn { key: string; label: string; kind: 'text' | 'date' | 'number' | 'money'; choices: boolean; ops: string[] }
+export interface BuilderDataset { key: string; label: string; description: string; date_column: string; default_columns: string[]; columns: BuilderColumn[] }
+export interface BuilderFilter { column: string; op: string; value: string }
+export interface BuilderDefinition {
+  dataset: string; columns: string[]; date_from?: string | null; date_to?: string | null
+  filters: BuilderFilter[]; group_by?: string | null; sort?: string | null; descending?: boolean
+}
+export interface BuilderResult {
+  columns: { key: string; label: string; kind: string }[]
+  rows: Record<string, string | number | null>[]
+  totals: Record<string, number | string>
+  truncated: boolean; row_limit: number; date_from: string; date_to: string
+}
+export interface SavedReport { id: string; name: string; dataset: string; definition: BuilderDefinition; updated_at: string }
+
+export async function builderDatasets(): Promise<BuilderDataset[]> {
+  return (await api.get<BuilderDataset[]>('/finance/reports/builder/datasets')).data
+}
+export async function builderValues(propertyId: string, dataset: string, column: string): Promise<string[]> {
+  return (await api.get<string[]>(`/finance/reports/builder/${dataset}/values`,
+    { params: { property_id: propertyId, column } })).data
+}
+export async function runBuilder(propertyId: string, def: BuilderDefinition): Promise<BuilderResult> {
+  return (await api.post<BuilderResult>('/finance/reports/builder/run', def,
+    { params: { property_id: propertyId } })).data
+}
+export async function listSavedReports(propertyId: string): Promise<SavedReport[]> {
+  return (await api.get<SavedReport[]>('/finance/reports/builder/saved',
+    { params: { property_id: propertyId } })).data
+}
+export async function saveReport(propertyId: string, name: string, definition: BuilderDefinition) {
+  return (await api.post('/finance/reports/builder/saved', { name, definition },
+    { params: { property_id: propertyId } })).data
+}
+export async function deleteSavedReport(propertyId: string, id: string) {
+  return (await api.delete(`/finance/reports/builder/saved/${id}`,
+    { params: { property_id: propertyId } })).data
+}
+
+// --------------------------------------------------------- card holds -----
+
+export interface CardHold {
+  id: string; reservation_id: string; amount: number
+  authorized_amount: number | null; captured_amount: number | null
+  currency: string; status: 'created' | 'authorized' | 'succeeded' | 'released' | 'cancelled' | 'expired' | 'failed'
+  purpose: string | null; created_at: string; updated_at: string
+  provider_order_id: string | null; authorized_payment_id: string | null
+}
+export interface HoldCheckout {
+  id: string; order_id: string; key_id: string; amount_paise: number; currency: string
+  description: string; prefill: { name: string; email: string; contact: string }
+}
+const hp = (propertyId: string) => ({ params: { property_id: propertyId } })
+export async function listCardHolds(reservationId: string, propertyId: string): Promise<CardHold[]> {
+  return (await api.get<CardHold[]>(`/finance/reservations/${reservationId}/card-holds`, hp(propertyId))).data
+}
+export async function createCardHold(propertyId: string, body: { reservation_id: string; amount: number; purpose?: string | null }): Promise<HoldCheckout> {
+  return (await api.post<HoldCheckout>('/finance/card-holds', body, hp(propertyId))).data
+}
+export async function confirmCardHold(propertyId: string, id: string, body: { payment_id: string; signature: string }): Promise<CardHold> {
+  return (await api.post<CardHold>(`/finance/card-holds/${id}/confirm`, body, hp(propertyId))).data
+}
+export async function captureCardHold(propertyId: string, id: string, amount: number): Promise<CardHold> {
+  return (await api.post<CardHold>(`/finance/card-holds/${id}/capture`, { amount }, hp(propertyId))).data
+}
+export async function releaseCardHold(propertyId: string, id: string): Promise<CardHold> {
+  return (await api.post<CardHold>(`/finance/card-holds/${id}/release`, null, hp(propertyId))).data
 }
