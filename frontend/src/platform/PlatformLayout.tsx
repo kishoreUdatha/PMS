@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import ScreenBoundary from './ScreenBoundary'
 import {
@@ -320,7 +320,9 @@ export default function PlatformLayout() {
               screen after the first crash renders the error page instead of
               itself -- which looks exactly like the whole console breaking. */}
           <ScreenBoundary key={pathname} where={pathname}>
-            <Outlet />
+            <Suspense fallback={null}>
+              <Outlet />
+            </Suspense>
           </ScreenBoundary>
         </main>
       </div>

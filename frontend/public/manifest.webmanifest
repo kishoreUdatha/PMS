@@ -1,0 +1,21 @@
+{
+  "name": "MyGuest",
+  "short_name": "MyGuest",
+  "description": "Hotel management: front desk, reservations, housekeeping, channel manager and billing.",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#fcfdfe",
+  "theme_color": "#007A85",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Stayview", "url": "/reservations", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Housekeeping", "url": "/housekeeping", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Restaurant & POS", "url": "/pos", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

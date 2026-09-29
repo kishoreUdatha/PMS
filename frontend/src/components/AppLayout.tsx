@@ -1,4 +1,6 @@
+import { Suspense } from 'react'
 import { Outlet } from 'react-router-dom'
+import { Loader2 } from 'lucide-react'
 import Sidebar from './Sidebar'
 import TopBar from './TopBar'
 
@@ -11,7 +13,11 @@ export default function AppLayout() {
       <div className="scroll-slim flex flex-1 flex-col overflow-y-auto [scrollbar-gutter:stable]">
         <TopBar />
         <main className="flex-1 py-6 pl-4 pr-1.5">
-          <Outlet />
+          {/* Screens load on demand (see App.tsx); the shell stays put while
+              the next one arrives. */}
+          <Suspense fallback={<Loader2 className="animate-spin text-slate-300" />}>
+            <Outlet />
+          </Suspense>
         </main>
       </div>
     </div>
