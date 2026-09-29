@@ -324,7 +324,7 @@ export default function LedgerReportScreen() {
             <input value={draft.confirmation_no ?? ''}
               onChange={(e) => set('confirmation_no')(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') run() }}
-              placeholder="e.g. CBR6916AB46"
+              placeholder="e.g. RES6916AB46"
               className={`mt-1 w-full ${FILTER_BOX} text-sm text-slate-700 outline-none focus:border-brand`} />
           </label>
           <label className="text-xs text-slate-500">

@@ -490,7 +490,9 @@ def create_hold(
         )
 
     reservation_id = uuid.uuid4()
-    number = f"CBR{uuid.uuid4().hex[:8].upper()}"
+    # "RES", not the "CBR" (Chirala Bay Resort) this used to hard-code for
+    # every tenant. Existing numbers keep whatever they were issued with.
+    number = f"RES{uuid.uuid4().hex[:8].upper()}"
     session.execute(
         text(
             """
@@ -501,7 +503,13 @@ def create_hold(
                  company_name, travel_agent, reference, special_requests,
                  business_source_id, bill_to, commercial_account_id,
                  group_block_id, cancellation_policy_id)
-            VALUES (:id, :org, :prop, :number, 'held', 'INR', :guest,
+            VALUES (:id, :org, :prop, :number, 'held',
+                    -- The property's own currency. This was the literal
+                    -- 'INR', so a property in Dubai or Colombo sold every
+                    -- room in rupees.
+                    coalesce((SELECT currency FROM iam.properties WHERE id = :prop),
+                             'INR'),
+                    :guest,
                     :source, :segment, :purpose, :company, :agent, :ref,
                     :requests, :bizsrc, :billto, :acct, :block,
                     (SELECT id FROM property.cancellation_policies

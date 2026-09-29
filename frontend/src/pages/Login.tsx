@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
+import BrandMark from '../components/BrandMark'
 import { AlertTriangle, Loader2, LogIn, Mail } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext'
 import { forgotPassword } from '../api'
@@ -62,9 +63,7 @@ export default function Login() {
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-teal-800 to-teal-950 p-4">
       <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-xl">
         <div className="mb-6 text-center">
-          <div className="text-2xl font-bold tracking-wide text-brand-dark">CHIRALA BAY</div>
-          <div className="text-[10px] tracking-[0.3em] text-brand-accent">R E S O R T</div>
-          <div className="mt-1 text-xs text-slate-400">Property Management System</div>
+          <BrandMark home caption="Hotel management system" />
         </div>
 
         <h1 className="text-xl font-semibold text-ink">

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { PLATFORM_NAME } from '../lib/brand'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -130,7 +131,7 @@ function Rail({ state, active }: { state: OnboardingState; active: string }) {
         </svg>
         <span>
         <p className="text-base font-bold leading-tight tracking-tight text-brand-dark">
-          CHIRALA BAY <span className="text-brand">PMS</span>
+          {PLATFORM_NAME}
         </p>
         <p className="text-[10px] tracking-[0.16em] text-slate-400">
           HOSPITALITY MADE SIMPLE

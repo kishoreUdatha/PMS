@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
+import BrandMark from '../components/BrandMark'
 import { AlertTriangle, Loader2, ShieldCheck } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext'
 import { MfaRequired } from '../api'
@@ -61,12 +62,7 @@ export default function PlatformLogin() {
     <div className="scroll-slim flex h-full items-center justify-center overflow-y-auto bg-gradient-to-br from-teal-800 to-teal-950 p-4 font-platform">
       <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-xl">
         <div className="mb-6 text-center">
-          <div className="text-2xl font-bold tracking-wide text-pf-deep">
-            CHIRALA BAY
-          </div>
-          <div className="text-[10px] tracking-[0.3em] text-pf-deep-accent">
-            R E S O R T
-          </div>
+          <BrandMark />
           <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-pf-soft px-2.5 py-0.5 text-[11px] font-medium text-pf-deep">
             <ShieldCheck size={12} /> Platform Console
           </div>
