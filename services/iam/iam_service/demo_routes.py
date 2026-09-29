@@ -176,7 +176,7 @@ def _mail_lead(lead: dict) -> None:
 # nobody meant to make.
 
 #: Modules shown to prospects, and what a hotel calls them. A module missing
-#: here (ai_center, or pos until the POS ships) is left off the page, because
+#: here (ai_center) is left off the page, because
 #: listing something a demo cannot show is a promise the product cannot keep.
 PUBLIC_MODULES = {
     "front_desk": "Front desk & check-in",
@@ -187,6 +187,7 @@ PUBLIC_MODULES = {
     "rates": "Rate plans & yield rules",
     "distribution": "Channel manager (OTAs)",
     "booking_engine": "Direct booking engine",
+    "pos": "Restaurant & bar POS",
     "administration": "Roles, approvals & audit log",
 }
 LIMITS = ("properties", "rooms", "active_users")

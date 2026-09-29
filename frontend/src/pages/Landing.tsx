@@ -126,6 +126,8 @@ const MODULES: Module[] = [
         body: 'Log a fault, block the room, track the repair and put the room back on sale when it is fixed.' },
       { icon: History, title: 'Room status history',
         body: 'Who changed which room, when, and why, kept for every room in the property.' },
+      { icon: ConciergeBell, title: 'Restaurant & bar POS',
+        body: "Tables, open checks and kitchen tickets (KOT). Bills are paid at the table or posted to the guest's room." },
       { icon: BarChart3, title: 'Reports',
         body: 'Occupancy, revenue, ledger and back-office reports, with CSV export.' },
     ],

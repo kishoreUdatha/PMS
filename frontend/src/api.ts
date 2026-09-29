@@ -8025,3 +8025,73 @@ export async function createStayRequest(code: string, token: string,
   const { data } = await api.post(`${stayBase(code, token)}/requests`, body)
   return data
 }
+
+// ------------------------------------------------------------ POS ---------
+
+export interface PosTable { id: string; outlet_id: string; label: string; seats: number; is_active: boolean }
+export interface PosOutlet { id: string; name: string; kind: string; is_active: boolean; sort_order: number; tables: PosTable[] }
+export interface PosLine {
+  id: string; item_id: string; item_name: string; category: string
+  quantity: number; unit_price: string; amount: string; note: string | null
+  status: 'active' | 'void'; void_reason: string | null; created_at: string
+  kot_number: number | null
+}
+export interface PosCheck {
+  id: string; number: string; status: 'open' | 'settled' | 'room' | 'void'
+  outlet_id: string; outlet_name: string; table_id: string | null; table_label: string | null
+  covers: number | null; guest_label: string | null
+  subtotal: string; total: string | null; tax?: string | null; method: string | null
+  currency: string; opened_at: string; closed_at: string | null
+  folio_id: string | null
+  lines: PosLine[]; unsent: number
+  kot?: { number: number; lines: PosLine[] }
+}
+export interface PosCheckRow {
+  id: string; number: string; status: string; outlet_id: string; outlet_name: string
+  table_id: string | null; table_label: string | null; covers: number | null
+  guest_label: string | null; subtotal: string; total: string | null
+  method: string | null; opened_at: string; closed_at: string | null; items: number
+}
+
+const P = (propertyId: string) => ({ params: { property_id: propertyId } })
+
+export async function listPosOutlets(propertyId: string): Promise<PosOutlet[]> {
+  return (await api.get<PosOutlet[]>('/finance/pos/outlets', P(propertyId))).data
+}
+export async function createPosOutlet(propertyId: string, body: { name: string; kind: string; tables: number }) {
+  return (await api.post('/finance/pos/outlets', body, P(propertyId))).data
+}
+export async function addPosTable(propertyId: string, outletId: string, body: { label: string; seats: number }) {
+  return (await api.post(`/finance/pos/outlets/${outletId}/tables`, body, P(propertyId))).data
+}
+export async function listPosChecks(propertyId: string, status = 'open'): Promise<PosCheckRow[]> {
+  return (await api.get<PosCheckRow[]>('/finance/pos/checks',
+    { params: { property_id: propertyId, status } })).data
+}
+export async function getPosCheck(propertyId: string, id: string): Promise<PosCheck> {
+  return (await api.get<PosCheck>(`/finance/pos/checks/${id}`, P(propertyId))).data
+}
+export async function openPosCheck(propertyId: string, body: {
+  outlet_id: string; table_id?: string | null; covers?: number | null; guest_label?: string | null
+}): Promise<PosCheck> {
+  return (await api.post<PosCheck>('/finance/pos/checks', body, P(propertyId))).data
+}
+export async function addPosLines(propertyId: string, id: string,
+  lines: { item_id: string; quantity: number; note?: string | null }[]): Promise<PosCheck> {
+  return (await api.post<PosCheck>(`/finance/pos/checks/${id}/lines`, { lines }, P(propertyId))).data
+}
+export async function voidPosLine(propertyId: string, id: string, lineId: string, reason?: string): Promise<PosCheck> {
+  return (await api.post<PosCheck>(`/finance/pos/checks/${id}/lines/${lineId}/void`,
+    { reason: reason || null }, P(propertyId))).data
+}
+export async function sendPosKot(propertyId: string, id: string): Promise<PosCheck> {
+  return (await api.post<PosCheck>(`/finance/pos/checks/${id}/kot`, null, P(propertyId))).data
+}
+export async function settlePosCheck(propertyId: string, id: string, body: {
+  mode: 'pay' | 'room'; method?: string; reference?: string | null; folio_id?: string
+}): Promise<PosCheck> {
+  return (await api.post<PosCheck>(`/finance/pos/checks/${id}/settle`, body, P(propertyId))).data
+}
+export async function voidPosCheck(propertyId: string, id: string, reason?: string): Promise<PosCheck> {
+  return (await api.post<PosCheck>(`/finance/pos/checks/${id}/void`, { reason: reason || null }, P(propertyId))).data
+}
