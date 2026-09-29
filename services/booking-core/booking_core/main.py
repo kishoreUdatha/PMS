@@ -10,6 +10,7 @@ from fastapi import FastAPI
 
 from .channel_routes import channel_router
 from .public_routes import public_router
+from .chat_routes import chat_router
 from .reaper import (
     channel_provision_loop, channel_push_loop,
     hold_reaper_loop,
@@ -116,6 +117,7 @@ def health() -> dict[str, str]:
 # Rooms/room-types/amenities routes come first: their paths are more specific
 # than the legacy /room-types collection in `router`.
 app.include_router(public_router)
+app.include_router(chat_router)
 app.include_router(portal_public_router)
 app.include_router(channel_router)
 app.include_router(blocks_router)

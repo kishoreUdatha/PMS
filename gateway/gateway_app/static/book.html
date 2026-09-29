@@ -103,6 +103,35 @@
   .center { text-align: center; padding: 22px 0; }
   .big { font-size: 40px; line-height: 1; margin-bottom: 10px; }
   code { background: #f1f5f9; padding: 2px 6px; border-radius: 5px; font-size: 13px; }
+  /* Chat assistant: drawn only when the server says it is switched on. */
+  .chat-fab {
+    position: fixed; right: 16px; bottom: 16px; z-index: 40;
+    border: 0; border-radius: 999px; padding: 12px 18px; cursor: pointer;
+    background: var(--brand); color: var(--brand-ink); font: inherit; font-weight: 600;
+    box-shadow: 0 6px 20px rgba(15, 23, 42, .18);
+  }
+  .chat-box {
+    position: fixed; right: 16px; bottom: 16px; z-index: 41;
+    width: min(380px, calc(100vw - 32px)); height: min(520px, calc(100vh - 32px));
+    display: flex; flex-direction: column; background: var(--card);
+    border: 1px solid var(--line); border-radius: 16px; overflow: hidden;
+    box-shadow: 0 12px 40px rgba(15, 23, 42, .22);
+  }
+  .chat-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 14px; background: var(--brand); color: var(--brand-ink); font-weight: 600;
+  }
+  .chat-head button { border: 0; background: none; color: inherit; font-size: 20px; cursor: pointer; line-height: 1; }
+  .chat-log { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .chat-msg { max-width: 85%; padding: 8px 12px; border-radius: 12px; white-space: pre-wrap; font-size: 14px; }
+  .chat-msg.me { align-self: flex-end; background: var(--brand); color: var(--brand-ink); }
+  .chat-msg.bot { align-self: flex-start; background: var(--bg); border: 1px solid var(--line); }
+  .chat-msg.bad { align-self: flex-start; background: var(--bad-bg); color: var(--bad); }
+  .chat-form { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--line); }
+  .chat-form input { flex: 1; min-width: 0; font: inherit; padding: 9px 10px; border: 1px solid var(--line); border-radius: 10px; }
+  .chat-form button { border: 0; border-radius: 10px; padding: 0 14px; background: var(--brand); color: var(--brand-ink); font: inherit; font-weight: 600; cursor: pointer; }
+  .chat-form button:disabled { opacity: .5; cursor: default; }
+  .chat-note { margin: 0; padding: 0 12px 8px; font-size: 11px; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -201,6 +230,20 @@
   </p>
 </div>
 
+<button id="chatFab" class="chat-fab hide" type="button" data-i18n="chatAsk">Ask a question</button>
+<section id="chatBox" class="chat-box hide" role="dialog" aria-labelledby="chatTitle">
+  <div class="chat-head">
+    <span id="chatTitle" data-i18n="chatTitle">Questions about your stay</span>
+    <button id="chatClose" type="button" aria-label="Close">×</button>
+  </div>
+  <div id="chatLog" class="chat-log" aria-live="polite"></div>
+  <p class="chat-note" data-i18n="chatNote">Automated answers from the hotel's details. For prices, use the search.</p>
+  <form id="chatForm" class="chat-form">
+    <input id="chatInput" maxlength="800" autocomplete="off" data-i18n-ph="chatPlaceholder" placeholder="Type your question">
+    <button id="chatSend" type="submit" data-i18n="chatSend">Send</button>
+  </form>
+</section>
+
 <script>
 // ---------------------------------------------------------------------------
 // Every word a guest reads, in one table per language.
@@ -247,6 +290,11 @@ const STRINGS = {
     paidHead: 'Payment received',
     paidBody: 'Your payment went through, but we are still confirming the room. The property has your booking and will email you shortly. Please do not pay again.',
     yourReference: 'Your reference:', invalidLink: 'This booking link is not valid.',
+    chatAsk: 'Ask a question', chatTitle: 'Questions about your stay', chatSend: 'Send',
+    chatPlaceholder: 'Type your question',
+    chatNote: "Automated answers from the hotel's details. For prices, use the search.",
+    chatHello: 'Hi! Ask me about check-in times, rooms, facilities or the cancellation policy.',
+    chatThinking: '…',
   },
 };
 const params = new URLSearchParams(location.search);
@@ -781,7 +829,69 @@ async function boot() {
   if (validDate(params.get('arrival')) && validDate(params.get('departure'))) search();
 }
 
+// --- chat assistant -----------------------------------------------------------
+// Answers come from the server as plain text and are only ever set with
+// textContent: whatever the model writes is never parsed as HTML.
+const chat = { turns: [], busy: false };
+
+function chatLine(text, cls) {
+  const div = document.createElement('div');
+  div.className = 'chat-msg ' + cls;
+  div.textContent = text;
+  $('chatLog').appendChild(div);
+  $('chatLog').scrollTop = $('chatLog').scrollHeight;
+  return div;
+}
+
+function chatOpen(open) {
+  $('chatBox').classList.toggle('hide', !open);
+  $('chatFab').classList.toggle('hide', open);
+  if (open) {
+    if (!$('chatLog').children.length) chatLine(t('chatHello'), 'bot');
+    $('chatInput').focus();
+  }
+}
+
+async function chatSend(e) {
+  e.preventDefault();
+  const text = $('chatInput').value.trim();
+  if (!text || chat.busy) return;
+  chat.busy = true; $('chatSend').disabled = true;
+  $('chatInput').value = '';
+  chatLine(text, 'me');
+  chat.turns.push({ role: 'user', content: text });
+  const pending = chatLine(t('chatThinking'), 'bot');
+  try {
+    // Only the most recent turns go up, and always starting with the guest.
+    let recent = chat.turns.slice(-11);
+    if (recent[0].role !== 'user') recent = recent.slice(1);
+    const r = await call(`${API}/chat`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: recent }),
+    });
+    pending.textContent = r.reply;
+    chat.turns.push({ role: 'assistant', content: r.reply });
+  } catch (ex) {
+    pending.remove();
+    chat.turns.pop();  // keep the turns alternating for the next try
+    chatLine(ex.message, 'bad');
+  } finally {
+    chat.busy = false; $('chatSend').disabled = false; $('chatInput').focus();
+  }
+}
+
+function initChat() {
+  call(`${API}/chat`).then((r) => {
+    if (!r || !r.enabled) return;
+    $('chatFab').classList.remove('hide');
+    $('chatFab').addEventListener('click', () => chatOpen(true));
+    $('chatClose').addEventListener('click', () => chatOpen(false));
+    $('chatForm').addEventListener('submit', chatSend);
+  }).catch(() => {});
+}
+
 boot();
+if (CODE) initChat();
 </script>
 </body>
 </html>
