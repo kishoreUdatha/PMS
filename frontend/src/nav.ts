@@ -1,5 +1,5 @@
 import {
-  BarChart3, Building2, CalendarDays, ClipboardList, CreditCard, Globe, Home, ShieldCheck, Tag, Users, Users2, UtensilsCrossed, Wallet,
+  BarChart3, Building2, CalendarDays, ClipboardList, ConciergeBell, CreditCard, Globe, Home, ShieldCheck, Tag, Users, Users2, UtensilsCrossed, Wallet,
 } from 'lucide-react'
 import { Broom } from './components/icons'
 
@@ -96,6 +96,9 @@ export const navItems: NavItem[] = [
   // because that is the counter it is used from, by the same person, while
   // the guest is on the phone.
   { label: 'Guest Services', path: '/services', icon: UtensilsCrossed },
+  // What guests asked for from their portal link. Worked through the day,
+  // so one click, beside the other guest-facing counters.
+  { label: 'Guest Requests', path: '/guests/requests', icon: ConciergeBell },
   // Cashiering. Out here with the daily work rather than inside Finance: it
   // is a desk screen, used while a guest is standing there.
   //

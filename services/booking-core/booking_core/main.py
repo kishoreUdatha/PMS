@@ -22,6 +22,7 @@ from .blocks_routes import blocks_router
 from .calendar_routes import calendar_router
 from .change_routes import change_router
 from .checkin_routes import checkin_router
+from .portal_routes import portal_public_router, portal_router
 from .formc_routes import formc_router
 from .checkout_routes import checkout_router
 from .account_routes import account_router
@@ -115,11 +116,13 @@ def health() -> dict[str, str]:
 # Rooms/room-types/amenities routes come first: their paths are more specific
 # than the legacy /room-types collection in `router`.
 app.include_router(public_router)
+app.include_router(portal_public_router)
 app.include_router(channel_router)
 app.include_router(blocks_router)
 app.include_router(calendar_router)
 app.include_router(change_router)
 app.include_router(checkin_router)
+app.include_router(portal_router)
 app.include_router(formc_router)
 app.include_router(checkout_router)
 app.include_router(account_router)

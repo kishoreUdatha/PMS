@@ -7911,3 +7911,103 @@ export async function cancelPaymentLink(id: string, propertyId: string): Promise
     { params: { property_id: propertyId } })
   return data
 }
+
+// -------------------------------------------------------- guest portal ----
+
+export async function createPortalLink(reservationId: string, propertyId: string, send = true):
+  Promise<{ url: string; expires_at: string; message: string | null }> {
+  const { data } = await api.post(`/booking/reservations/${reservationId}/portal-link`,
+    { send }, { params: { property_id: propertyId } })
+  return data
+}
+
+export interface WebCheckin {
+  status: 'submitted' | 'applied'
+  submitted_at: string
+  applied_at: string | null
+  details: Record<string, string | boolean>
+}
+
+export async function getWebCheckin(reservationId: string, propertyId: string): Promise<WebCheckin | null> {
+  const { data } = await api.get<WebCheckin | null>(
+    `/booking/reservations/${reservationId}/web-checkin`, { params: { property_id: propertyId } })
+  return data
+}
+
+export interface GuestRequest {
+  id: string
+  reservation_id: string
+  reservation_number: string | null
+  guest_name: string | null
+  room: string | null
+  kind: string
+  message: string
+  status: 'open' | 'in_progress' | 'done' | 'declined'
+  staff_note: string | null
+  created_at: string
+  updated_at: string
+}
+
+export async function listGuestRequests(propertyId: string, status?: string): Promise<GuestRequest[]> {
+  const { data } = await api.get<GuestRequest[]>('/booking/guest-requests',
+    { params: { property_id: propertyId, ...(status ? { status } : {}) } })
+  return data
+}
+
+export async function updateGuestRequest(id: string, propertyId: string,
+  body: { status?: string; staff_note?: string }): Promise<GuestRequest> {
+  const { data } = await api.put<GuestRequest>(`/booking/guest-requests/${id}`, body,
+    { params: { property_id: propertyId } })
+  return data
+}
+
+/** The guest's own view, from their private link. No session. */
+export interface GuestStay {
+  property_name: string
+  property_phone: string | null
+  property_email: string | null
+  property_address: string | null
+  checkin_time: string | null
+  checkout_time: string | null
+  reservation_number: string
+  status: string
+  arrival: string | null
+  departure: string | null
+  guest_name: string | null
+  rooms: { room_type: string; adults: number | null; children: number | null; room: string | null }[]
+  prefill: Record<string, string>
+  web_checkin: 'none' | 'submitted' | 'applied'
+  documents: string[]
+  requests: { kind: string; message: string; status: string; staff_note: string | null; created_at: string }[]
+  payment: { amount: number; currency: string; url: string | null; expires_at: string | null; purpose: string | null } | null
+  paid: boolean
+}
+
+const stayBase = (code: string, token: string) =>
+  `/booking/public/${encodeURIComponent(code)}/stay/${encodeURIComponent(token)}`
+
+export async function openStay(code: string, token: string): Promise<GuestStay> {
+  const { data } = await api.get<GuestStay>(stayBase(code, token))
+  return data
+}
+
+export async function submitWebCheckin(code: string, token: string,
+  body: Record<string, string | boolean | null>): Promise<{ detail: string }> {
+  const { data } = await api.post(`${stayBase(code, token)}/checkin`, body)
+  return data
+}
+
+export async function uploadStayDocument(code: string, token: string, kind: string,
+  file: File): Promise<{ detail: string }> {
+  const form = new FormData()
+  form.append('kind', kind)
+  form.append('file', file)
+  const { data } = await api.post(`${stayBase(code, token)}/documents`, form)
+  return data
+}
+
+export async function createStayRequest(code: string, token: string,
+  body: { kind: string; message: string }): Promise<{ detail: string }> {
+  const { data } = await api.post(`${stayBase(code, token)}/requests`, body)
+  return data
+}

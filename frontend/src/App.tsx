@@ -61,6 +61,8 @@ import AuditLog from './pages/AuditLog'
 import Billing from './pages/Billing'
 import Login from './pages/Login'
 import Landing from './pages/Landing'
+import GuestPortal from './pages/GuestPortal'
+import GuestRequests from './pages/GuestRequests'
 import SetPassword from './pages/SetPassword'
 import Placeholder from './pages/Placeholder'
 import LedgerReportScreen from './pages/LedgerReport'
@@ -123,6 +125,9 @@ export default function App() {
           first address and is kept so links to it still work. */}
       <Route path="/" element={<Landing />} />
       <Route path="/welcome" element={<Navigate to="/" replace />} />
+      {/* A guest's own booking, from the private link texted to them. No
+          login: the link is the credential. See portal_routes.py. */}
+      <Route path="/stay/:code/:token" element={<GuestPortal />} />
       <Route path="/login" element={<Login />} />
       <Route path="/set-password" element={<SetPassword />} />
 
@@ -255,6 +260,7 @@ export default function App() {
         <Route path="search" element={<AppSearch />} />
         <Route path="guests" element={<Guests />} />
         <Route path="guests/companies" element={<CommercialAccounts />} />
+        <Route path="guests/requests" element={<GuestRequests />} />
         <Route path="guests/:guestId" element={<GuestProfile />} />
         <Route path="reservations/sources" element={<BookingAttributes />} />
         <Route path="channels" element={<ChannelPartners />} />

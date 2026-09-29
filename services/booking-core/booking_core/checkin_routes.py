@@ -775,6 +775,15 @@ def complete_check_in(
             "WhatsApp channels turned on in property settings."
         )
 
+    # The guest's online check-in, if they did one, is now what the desk
+    # checked and applied. See portal_routes.
+    db.execute(
+        text("UPDATE booking.web_checkins SET status = 'applied', "
+             "applied_at = now(), applied_by = :who "
+             "WHERE reservation_id = :r AND status = 'submitted'"),
+        {"who": caller.user_id, "r": row["reservation_id"]},
+    )
+
     db.execute(
         text(
             """

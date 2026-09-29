@@ -2,6 +2,7 @@ import { useState } from 'react'
 import FolioWorkspace from '../components/FolioWorkspace'
 import { StayInformationTab, TasksTab } from '../components/ReservationTabs'
 import ActionsMenu from '../components/ActionsMenu'
+import PortalLinkDialog from '../components/PortalLinkDialog'
 import { fmtDate, fmtDateLong, fmtDateTime } from '../lib/dates'
 import Select from '../components/Select'
 import ListSelect from '../components/ListSelect'
@@ -12,7 +13,7 @@ import {
   ArrowLeft, Loader2, Pencil, BedDouble, XCircle, CheckCircle2, Calendar,
   Moon, Users, FileText, MessageSquare, History, CalendarDays,
   Wallet, Info, Mail, Phone, MapPin, Pencil as PencilIcon, X, Loader2 as Spin,
-  Printer, Wrench,
+  Printer, Wrench, Smartphone,
   AlertTriangle,
 } from 'lucide-react'
 import {
@@ -67,6 +68,7 @@ export default function ReservationDetail() {
   const nav = useNavigate()
   const qc = useQueryClient()
   const [tab, setTab] = useState<TabKey>('folio')
+  const [portal, setPortal] = useState(false)
 
   const { data: r, isLoading } = useQuery({
     queryKey: ['reservation-full', reservationId],
@@ -167,6 +169,13 @@ export default function ReservationDetail() {
               onSelect: () => void openFolioPdf(
                 r.property_id, r.financials.folio_id!),
             }] : []),
+            ...(!['cancelled', 'no_show'].includes(r.status) ? [{
+              label: 'Send guest portal link',
+              icon: Smartphone,
+              group: 'guest',
+              description: 'Online check-in, requests and payment',
+              onSelect: () => setPortal(true),
+            }] : []),
             ...(r.can_cancel ? [{
               label: 'Cancel booking',
               icon: XCircle,
@@ -177,6 +186,11 @@ export default function ReservationDetail() {
           ]} />
         </div>
       </div>
+
+      {portal && (
+        <PortalLinkDialog reservationId={r.id} propertyId={r.property_id}
+          onClose={() => setPortal(false)} />
+      )}
 
       {/* One strip, because a desk reads these together: who, when, which
           room, and what state the booking is in. Separate cards made it four
