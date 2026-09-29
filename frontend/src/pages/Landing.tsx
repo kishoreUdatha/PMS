@@ -305,10 +305,7 @@ export default function Landing() {
         <div className="pointer-events-none absolute -right-40 -top-40 h-[520px] w-[520px] rounded-full bg-brand-accent/10 blur-3xl" />
         <div className="mx-auto grid max-w-7xl items-center gap-14 px-4 pb-20 pt-16 sm:px-6 lg:grid-cols-[1.05fr_1fr] lg:pt-24">
           <div>
-            <span className="inline-flex items-center gap-2 rounded-full border border-brand/20 bg-brand-light/60 px-3 py-1 text-xs font-semibold text-brand-deep">
-              <Sparkles size={14} /> Hotel & resort management, made for India
-            </span>
-            <h1 className="mt-6 text-4xl font-bold leading-[1.1] tracking-tight text-ink sm:text-5xl lg:text-[3.4rem]">
+            <h1 className="text-4xl font-bold leading-[1.1] tracking-tight text-ink sm:text-5xl lg:text-[3.4rem]">
               Run your whole property<br className="hidden sm:block" />{' '}
               <span className="text-brand">from one screen.</span>
             </h1>
