@@ -38,6 +38,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 import httpx
+from chirala_common.audit import record_audit
 from chirala_common.db import bind_tenant_context, system_context
 from chirala_common.routing import TransactionalRoute
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -249,13 +250,30 @@ def _apply(db: Session, revision_id: str, a: dict) -> dict:
     bind_tenant_context(db, organization_id=conn["organization_id"],
                         property_id=conn["property_id"], is_service=True)
 
+    # The booking this revision is about, if an earlier revision created it.
+    existing = _existing_reservation(db, str(a.get("booking_id") or ""))
+
     if status_ == "cancelled":
-        # Cancelling touches inventory and a folio, which this service does
-        # elsewhere and should not reimplement at the edge. Recorded for a
-        # person until that path is wired through.
-        _finish(db, revision_id, "cancelled",
-                detail="Cancellation received; needs processing by the desk.")
-        return {"status": "cancelled", "revision_id": revision_id}
+        return _cancel_from_channel(db, revision_id, existing, conn)
+
+    if existing is not None:
+        # A revision for a booking that already exists is a modification:
+        # new dates, rooms or guests. Sending it down the "new booking" path
+        # below made the hold's idempotency key return the existing booking
+        # unchanged, so the change was dropped without a word and the hotel
+        # kept the old dates. Moving a stay can collide with room
+        # assignments, so it is not applied automatically. It is flagged,
+        # and left unacknowledged so the channel manager keeps showing it
+        # until someone deals with it.
+        _finish(db, revision_id, "modified",
+                reservation_id=existing["id"],
+                detail=f"The OTA changed {existing['number']}. Check its dates, "
+                       f"rooms and guests against the channel and update the "
+                       f"booking.")
+        log.warning("channex booking %s modified %s; needs the desk",
+                    revision_id, existing["number"])
+        return {"status": "modified", "revision_id": revision_id,
+                "reservation_number": existing["number"]}
 
     if not rooms:
         _finish(db, revision_id, "failed", detail="Revision carried no rooms.")
@@ -354,6 +372,124 @@ def _apply(db: Session, revision_id: str, a: dict) -> dict:
              held.number)
     return {"status": "created", "revision_id": revision_id,
             "reservation_number": held.number}
+
+
+def _existing_reservation(db: Session, booking_id: str):
+    """The reservation an earlier revision of this channel booking created."""
+    if not booking_id:
+        return None
+    return db.execute(
+        text("""
+            SELECT r.id, r.number, r.status, r.organization_id, r.property_id
+            FROM distribution.channel_booking_events e
+            JOIN booking.reservations r ON r.id = e.reservation_id
+            WHERE e.booking_id = :b AND e.outcome = 'created'
+            ORDER BY e.updated_at DESC LIMIT 1
+        """),
+        {"b": booking_id},
+    ).mappings().first()
+
+
+def _cancel_from_channel(db: Session, revision_id: str, res, conn) -> dict:
+    """The OTA cancelled: put the rooms back on sale now.
+
+    Waiting for the desk left the rooms off sale, and so unsellable on every
+    channel, until somebody noticed. The inventory release is the same one a
+    desk cancellation makes, so the counters cannot drift apart.
+
+    No penalty is posted here. On an OTA booking the OTA applies its own
+    cancellation terms to the guest, and a charge on our folio would bill
+    them a second time. Money the hotel itself collected (a deposit) is not
+    refunded automatically either. It is flagged, because a refund is a
+    decision.
+    """
+    from .inventory import counter_for, occupancy, shift_inventory
+
+    if res is None:
+        # Cancelling something that never arrived here. Nothing to release.
+        _finish(db, revision_id, "cancelled",
+                detail="Cancellation for a booking that was never created here.")
+        _ack(db, revision_id)
+        return {"status": "cancelled", "revision_id": revision_id}
+    if res["status"] == "cancelled":
+        _finish(db, revision_id, "cancelled", reservation_id=res["id"],
+                detail=f"{res['number']} was already cancelled.")
+        _ack(db, revision_id)
+        return {"status": "cancelled", "revision_id": revision_id}
+    # Arrival is recorded on the rooms, not the reservation: a checked-in
+    # booking is still 'confirmed', with its units 'checked_in'. So the guard
+    # asks the units. Asking the reservation would let a webhook cancel a
+    # guest who is standing in the room.
+    arrived = db.execute(
+        text("SELECT status FROM booking.reservation_units WHERE reservation_id = :r "
+             "AND status IN ('checked_in', 'checked_out', 'no_show') LIMIT 1"),
+        {"r": res["id"]},
+    ).scalar()
+    if arrived or res["status"] in ("checked_in", "checked_out", "no_show"):
+        state = (arrived or res["status"]).replace("_", " ")
+        _finish(db, revision_id, "cancel_blocked", reservation_id=res["id"],
+                detail=f"The OTA cancelled {res['number']}, but its guest is "
+                       f"{state}. The desk needs to resolve it with the channel.")
+        log.error("channex cancelled %s whose guest is %s", res["number"], state)
+        return {"status": "cancel_blocked", "revision_id": revision_id}
+
+    units = db.execute(
+        text("""
+            SELECT id, room_type_id, arrival_date, departure_date
+            FROM booking.reservation_units
+            WHERE reservation_id = :r AND status NOT IN ('cancelled', 'no_show')
+        """),
+        {"r": res["id"]},
+    ).mappings().all()
+    shift_inventory(
+        db, property_id=res["property_id"], organization_id=res["organization_id"],
+        counter=counter_for(res["status"]),
+        delta={k: -n for k, n in occupancy(units).items()},
+        overbooking_allowance=settings.overbooking_allowance,
+    )
+    for u in units:
+        db.execute(
+            text("UPDATE booking.room_calendar_entries SET status = 'released', "
+                 "version = version + 1 "
+                 "WHERE reservation_unit_id = :u AND status = 'active'"),
+            {"u": u["id"]},
+        )
+    db.execute(
+        text("UPDATE booking.reservation_units SET status = 'cancelled', "
+             "assigned_room_id = NULL, version = version + 1 "
+             "WHERE reservation_id = :r AND status NOT IN ('cancelled', 'no_show')"),
+        {"r": res["id"]},
+    )
+    db.execute(
+        text("UPDATE booking.reservations SET status = 'cancelled', "
+             "version = version + 1 WHERE id = :r"),
+        {"r": res["id"]},
+    )
+    paid = db.execute(
+        text("""
+            SELECT coalesce(sum(e.amount), 0)
+            FROM finance.folios f
+            JOIN finance.folio_entries e ON e.folio_id = f.id
+            WHERE f.reservation_id = :r AND e.entry_type = 'credit'
+        """),
+        {"r": res["id"]},
+    ).scalar() or 0
+    record_audit(
+        db, action="reservation.cancelled_by_channel", entity_type="reservation",
+        entity_id=str(res["id"]), organization_id=res["organization_id"],
+        property_id=res["property_id"], actor_subject="channel-manager",
+        before={"status": res["status"]}, after={"status": "cancelled"},
+        reason="Cancelled at the OTA.",
+    )
+    detail = f"Cancelled {res['number']} automatically; its rooms are back on sale."
+    if paid:
+        detail += (f" {paid} was collected by the hotel on this booking; "
+                   f"decide whether to refund it.")
+    _finish(db, revision_id, "cancelled", reservation_id=res["id"], detail=detail)
+    _ack(db, revision_id)
+    log.info("channex cancellation %s released %s", revision_id, res["number"])
+    return {"status": "cancelled", "revision_id": revision_id,
+            "reservation_number": res["number"]}
 
 
 def _ack(db: Session, revision_id: str) -> None:
