@@ -11,8 +11,11 @@ import { useState } from 'react'
  * for — it exists so somebody finds Booking.com in a list without reading.
  *
  * **On the logo files.** Those in `public/ota-logos` are each brand's own
- * touch icon, taken from that brand's own site — Booking.com's from
- * booking.com, and so on. They are trademarks, used here to identify the
+ * mark. The PNGs are touch icons from the brand's own site (Booking.com's
+ * from booking.com, and so on); the SVGs (Airbnb, Trip.com, Google) are the
+ * Simple Icons vector marks, filled with the brand's colour. Two earlier
+ * PNGs were not the brand's logo at all (a stranger's "a" icon for Airbnb, a
+ * map emoji for MakeMyTrip) and were removed. They are trademarks, used here to identify the
  * channel they belong to, which is what a logo is for and what every
  * connectivity partner's brand kit permits. If you have the official kit,
  * replace the file; it is picked up with no other change.
@@ -41,17 +44,19 @@ const norm = (s: string) => s.replace(/[^a-z0-9]/gi, '').toLowerCase()
  * blue are both several points short at their published values, and a mark
  * nobody can read is not on brand either.
  */
-const BRANDS: Record<string, { color: string; slug: string }> = {
+const BRANDS: Record<string, { color: string; slug: string; svg?: boolean }> = {
   bookingcom:   { color: '#003580', slug: 'booking-com' },
   agoda:        { color: '#C2185B', slug: 'agoda' },
   expedia:      { color: '#00355F', slug: 'expedia' },
   makemytrip:   { color: '#C1272D', slug: 'makemytrip' },
-  tripcom:      { color: '#1B5FAA', slug: 'trip-com' },
-  airbnb:       { color: '#C4384A', slug: 'airbnb' },
+  tripcom:      { color: '#1B5FAA', slug: 'trip-com', svg: true },
+  airbnb:       { color: '#C4384A', slug: 'airbnb', svg: true },
   goibibo:      { color: '#C2410C', slug: 'goibibo' },
   cleartrip:    { color: '#B45309', slug: 'cleartrip' },
   yatra:        { color: '#B03060', slug: 'yatra' },
-  googlehotels: { color: '#1A73E8', slug: 'google-hotels' },
+  googlehotels: { color: '#1A73E8', slug: 'google-hotels', svg: true },
+  // The channel manager's own name for it (CHANNEL_CODES: GoogleHotelAds).
+  googlehotelads: { color: '#1A73E8', slug: 'google-hotels', svg: true },
   easemytrip:   { color: '#0F766E', slug: 'easemytrip' },
 }
 
@@ -83,7 +88,7 @@ export default function PartnerMark({ name, size = 36 }: {
       <span
         className="grid shrink-0 place-items-center overflow-hidden rounded-lg bg-white ring-1 ring-slate-200"
         style={{ width: size, height: size }}>
-        <img src={`/ota-logos/${brand.slug}.png`} alt={name}
+        <img src={`/ota-logos/${brand.slug}.${brand.svg ? 'svg' : 'png'}`} alt={name}
           onError={() => setNoLogo(true)}
           className="size-full object-contain p-1" />
       </span>

@@ -13,6 +13,7 @@ import { PLATFORM_NAME } from '../lib/brand'
 import { useAuth } from '../auth/AuthContext'
 import { requestDemo } from '../api'
 import { Field } from '../components/FormBits'
+import PartnerMark from '../components/PartnerMark'
 import { errorText, inputCls } from '../lib/forms'
 import { COUNTRIES } from '../lib/options'
 
@@ -175,7 +176,10 @@ const PRODUCTS = [
 
 /** The channels MyGuest provisions through its channel manager. Kept in step
  *  with CHANNEL_CODES in booking-core's channel_provision.py: a name here that
- *  is not there is a promise the demo cannot keep. Plain text, not logos. */
+ *  is not there is a promise the demo cannot keep. Each is drawn by
+ *  PartnerMark, so the page shows the same mark the app does: the brand's own
+ *  logo from public/ota-logos where there is one, its brand-colour tile where
+ *  there is not (see the README in that folder for where logos come from). */
 const OTAS = [
   'Booking.com', 'Airbnb', 'Expedia', 'Agoda', 'MakeMyTrip', 'Goibibo',
   'Trip.com', 'Cleartrip', 'Yatra', 'Google Hotel Ads',
@@ -445,14 +449,15 @@ export default function Landing() {
           <SectionHead eyebrow="Channel manager"
             title="Sell on every major OTA from one calendar"
             body="A built-in channel manager keeps your rooms, rates and restrictions in step across the online travel agencies, and brings their bookings straight into MyGuest." />
-          <div className="mt-10 flex flex-wrap justify-center gap-2.5">
+          <ul className="mx-auto mt-10 grid max-w-5xl grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
             {OTAS.map((o) => (
-              <span key={o}
-                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-ink shadow-sm">
-                {o}
-              </span>
+              <li key={o}
+                className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-3.5 shadow-pf-card">
+                <PartnerMark name={o} size={44} />
+                <span className="text-sm font-semibold leading-tight text-ink">{o}</span>
+              </li>
             ))}
-          </div>
+          </ul>
           <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {CHANNEL_FLOW.map((f) => <FeatureCard key={f.title} {...f} />)}
           </div>
