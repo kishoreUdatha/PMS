@@ -165,3 +165,66 @@ def _mail_lead(lead: dict) -> None:
     if settings.sales_alert_email:
         _send("demo_alert", settings.sales_alert_email, demo_alert_email(lead))
     _send("demo_confirmation", lead["email"], demo_confirmation_email(lead))
+
+
+# ------------------------------------------------------------- plans ------
+#
+# The pricing section of the landing page, without the prices. The latest
+# published version of each active plan: its name, summary, limits and the
+# modules it includes. Amounts are deliberately left out. The decision is
+# "plans, price on request", and a figure published here would be a quote
+# nobody meant to make.
+
+#: Modules shown to prospects, and what a hotel calls them. A module missing
+#: here (ai_center, or pos until the POS ships) is left off the page, because
+#: listing something a demo cannot show is a promise the product cannot keep.
+PUBLIC_MODULES = {
+    "front_desk": "Front desk & check-in",
+    "reservations": "Reservations & calendar",
+    "housekeeping": "Housekeeping",
+    "guests": "Guest profiles",
+    "reports": "Reports",
+    "rates": "Rate plans & yield rules",
+    "distribution": "Channel manager (OTAs)",
+    "booking_engine": "Direct booking engine",
+    "administration": "Roles, approvals & audit log",
+}
+LIMITS = ("properties", "rooms", "active_users")
+
+
+class PublicPlan(BaseModel):
+    code: str
+    name: str
+    summary: str
+    limits: dict[str, int | None]
+    modules: list[str]
+
+
+@public_router.get("/plans", response_model=list[PublicPlan])
+def public_plans(db: Session = Depends(get_public_session)) -> list[PublicPlan]:
+    rows = db.execute(
+        text("""
+            SELECT DISTINCT ON (p.id) p.code, p.name, p.summary, p.sort_order,
+                   v.id AS version_id
+            FROM billing.plans p
+            JOIN billing.plan_versions v ON v.plan_id = p.id
+            WHERE p.status = 'active' AND v.status = 'published'
+            ORDER BY p.id, v.version_no DESC
+        """),
+    ).mappings().all()
+    out = []
+    for r in sorted(rows, key=lambda x: x["sort_order"]):
+        mods = set(db.execute(
+            text("SELECT module_code FROM billing.plan_version_modules "
+                 "WHERE plan_version_id = :v"), {"v": r["version_id"]},
+        ).scalars())
+        limits = {m: v for m, v in db.execute(
+            text("SELECT metric_code, limit_value FROM billing.plan_version_limits "
+                 "WHERE plan_version_id = :v"), {"v": r["version_id"]},
+        ).all() if m in LIMITS}
+        out.append(PublicPlan(
+            code=r["code"], name=r["name"], summary=r["summary"],
+            limits=limits,
+            modules=[label for code, label in PUBLIC_MODULES.items() if code in mods],
+        ))
+    return out

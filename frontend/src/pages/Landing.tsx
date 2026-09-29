@@ -11,7 +11,7 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import { PLATFORM_NAME } from '../lib/brand'
 import { useAuth } from '../auth/AuthContext'
-import { requestDemo } from '../api'
+import { publicPlans, requestDemo, type PublicPlan } from '../api'
 import { Field } from '../components/FormBits'
 import PartnerMark from '../components/PartnerMark'
 import { errorText, inputCls } from '../lib/forms'
@@ -159,6 +159,7 @@ const MENU = [
   { id: 'features', label: 'Features' },
   { id: 'channels', label: 'Channel manager' },
   { id: 'compliance', label: 'Compliance' },
+  { id: 'pricing', label: 'Pricing' },
   { id: 'onboarding', label: 'Getting started' },
   { id: 'faq', label: 'FAQ' },
 ]
@@ -264,7 +265,16 @@ export default function Landing() {
     : { to: '/login', label: 'Sign in' }
 
   const [demoOpen, setDemoOpen] = useState(false)
-  const openDemo = () => setDemoOpen(true)
+  // The plan a prospect asked about, carried into the demo form's message.
+  const [demoPlan, setDemoPlan] = useState<string | null>(null)
+  const openDemo = (plan?: string) => {
+    setDemoPlan(typeof plan === 'string' ? plan : null)
+    setDemoOpen(true)
+  }
+  const [plans, setPlans] = useState<PublicPlan[]>([])
+  useEffect(() => {
+    publicPlans().then(setPlans).catch(() => setPlans([]))
+  }, [])
   const [menuOpen, setMenuOpen] = useState(false)
   // Scrolled to, not linked: an #anchor would put a fragment in the address
   // bar, and this page keeps its address as the bare site.
@@ -301,7 +311,7 @@ export default function Landing() {
               className="hidden rounded-lg px-4 py-2 text-sm font-semibold text-ink hover:bg-slate-75 sm:block">
               {signIn.label}
             </Link>
-            <button type="button" onClick={openDemo}
+            <button type="button" onClick={() => openDemo()}
               className="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-brand-dark sm:px-4">
               Book a demo
             </button>
@@ -489,6 +499,22 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* ── Pricing ──────────────────────────────────────────────── */}
+      {/* The console's plans, without their prices: "plans, price on
+          request" was the decision. Hidden if the plans cannot be read,
+          rather than showing an empty section. */}
+      {plans.length > 0 && (
+        <section id="pricing" className="scroll-mt-16 bg-slate-50">
+          <div className="mx-auto max-w-7xl px-4 py-24 sm:px-6">
+            <SectionHead eyebrow="Pricing" title="A plan for every size of property"
+              body="Pricing depends on your rooms and properties, so we quote it after a short demo." />
+            <div className={`mx-auto mt-12 grid max-w-6xl gap-5 ${plans.length >= 3 ? 'lg:grid-cols-3' : 'sm:grid-cols-2'}`}>
+              {plans.map((p) => <PlanCard key={p.code} plan={p} onPick={() => openDemo(p.name)} />)}
+            </div>
+          </div>
+        </section>
+      )}
+
       {/* ── Onboarding ─────────────────────────────────────────── */}
       <section id="onboarding" className="scroll-mt-16">
         <div className="mx-auto max-w-7xl px-4 py-24 sm:px-6">
@@ -583,7 +609,7 @@ export default function Landing() {
           </div>
         </div>
       </footer>
-      {demoOpen && <DemoDialog onClose={() => setDemoOpen(false)} />}
+      {demoOpen && <DemoDialog plan={demoPlan} onClose={() => setDemoOpen(false)} />}
     </div>
   )
 }
@@ -607,6 +633,40 @@ function FooterColumn({ title, items, go }: {
           </li>
         ))}
       </ul>
+    </div>
+  )
+}
+
+function limitText(n: number | null | undefined, one: string, many: string): string | null {
+  if (n === undefined) return null
+  if (n === null) return `Unlimited ${many}`
+  return `Up to ${n} ${n === 1 ? one : many}`
+}
+
+function PlanCard({ plan, onPick }: { plan: PublicPlan; onPick: () => void }) {
+  const limits = [
+    limitText(plan.limits.properties, 'property', 'properties'),
+    limitText(plan.limits.rooms, 'room', 'rooms'),
+    limitText(plan.limits.active_users, 'user', 'users'),
+  ].filter(Boolean) as string[]
+  return (
+    <div className="flex flex-col rounded-3xl border border-slate-100 bg-white p-7 shadow-pf-card">
+      <h3 className="text-xl font-bold text-ink">{plan.name}</h3>
+      <p className="mt-1 text-sm text-slate-500">{plan.summary}</p>
+      <ul className="mt-5 space-y-1 border-y border-slate-100 py-4 text-sm font-medium text-ink">
+        {limits.map((l) => <li key={l}>{l}</li>)}
+      </ul>
+      <ul className="mt-5 flex-1 space-y-2.5">
+        {plan.modules.map((m) => (
+          <li key={m} className="flex items-start gap-2 text-sm text-slate-600">
+            <Check size={16} className="mt-0.5 shrink-0 text-positive" /> {m}
+          </li>
+        ))}
+      </ul>
+      <button type="button" onClick={onPick}
+        className="mt-7 rounded-xl border border-brand px-4 py-3 font-semibold text-brand hover:bg-brand hover:text-white">
+        Get pricing
+      </button>
     </div>
   )
 }
@@ -721,10 +781,11 @@ function HeroMock() {
  *  Name, property, phone and email are required. Without any one of them the
  *  team cannot call back or knows nothing about the hotel. The rest is
  *  optional, so asking for it never costs a lead. */
-function DemoDialog({ onClose }: { onClose: () => void }) {
+function DemoDialog({ onClose, plan }: { onClose: () => void; plan?: string | null }) {
   const [f, setF] = useState({
     full_name: '', property_name: '', phone: '', email: '',
-    city: '', country: '', rooms: '', message: '', website: '',
+    city: '', country: '', rooms: '',
+    message: plan ? `I'm interested in the ${plan} plan.` : '', website: '',
   })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')

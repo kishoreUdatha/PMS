@@ -7859,6 +7859,20 @@ export interface DemoRequestIn {
   website?: string
 }
 
+/** A plan as the landing page shows it: no price, by decision. */
+export interface PublicPlan {
+  code: string
+  name: string
+  summary: string
+  limits: { properties?: number | null; rooms?: number | null; active_users?: number | null }
+  modules: string[]
+}
+
+export async function publicPlans(): Promise<PublicPlan[]> {
+  const { data } = await api.get<PublicPlan[]>('/iam/public/plans')
+  return data
+}
+
 export async function requestDemo(body: DemoRequestIn): Promise<{ detail: string }> {
   const { data } = await api.post<{ detail: string }>('/iam/public/demo-requests', body)
   return data
