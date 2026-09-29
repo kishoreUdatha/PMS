@@ -366,7 +366,7 @@ export default function Landing() {
       </section>
 
       {/* ── Four products, one system ──────────────────────────── */}
-      <section id="products" className="mx-auto -mt-6 max-w-7xl scroll-mt-24 px-4 pb-16 sm:px-6">
+      <section id="products" className="mx-auto max-w-7xl scroll-mt-24 px-4 pb-16 sm:px-6">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {PRODUCTS.map((p) => {
             const Icon = p.icon
