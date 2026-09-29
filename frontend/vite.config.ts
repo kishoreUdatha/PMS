@@ -5,6 +5,20 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   return {
     plugins: [react()],
+    build: {
+      rollupOptions: {
+        output: {
+          // Libraries change far less often than screens, so each gets its own
+          // long-cached chunk instead of riding along in the entry bundle.
+          manualChunks: {
+            'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+            'vendor-query': ['@tanstack/react-query'],
+            'vendor-icons': ['lucide-react'],
+            'vendor-axios': ['axios'],
+          },
+        },
+      },
+    },
     server: {
       port: Number(env.VITE_PORT) || 5173,
       // Bind IPv4 as well as IPv6. Left to itself Vite listened only on

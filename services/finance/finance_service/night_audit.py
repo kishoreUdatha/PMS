@@ -431,21 +431,56 @@ def process_no_shows(
 
     warnings: list[str] = []
     charged = Decimal("0")
+    processed: list[Pending] = []
     for p in found:
+        # Lock the booking, then the unit -- the order the desk's no-show and
+        # cancel paths take them in -- and only then look at the unit again.
+        # ``found`` was read without locks, and between that read and this
+        # one the desk may have marked the guest a no-show or cancelled the
+        # booking. Acting on the stale read released the nights a second
+        # time, off another booking's room.
+        session.execute(
+            text(
+                """
+                SELECT r.id FROM booking.reservations r
+                 WHERE r.id = (SELECT reservation_id
+                                 FROM booking.reservation_units WHERE id = :u)
+                 FOR UPDATE
+                """
+            ),
+            {"u": p.unit_id},
+        )
         row = session.execute(
             text(
                 """
                 SELECT u.id, u.reservation_id, u.room_type_id, u.nightly_rate,
                        u.comp_kind,
                        u.arrival_date, u.departure_date, r.number, r.currency,
-                       r.organization_id
+                       r.organization_id, r.status AS reservation_status
                 FROM booking.reservation_units u
                 JOIN booking.reservations r ON r.id = u.reservation_id
                 WHERE u.id = :u
+                FOR UPDATE OF u
                 """
             ),
             {"u": p.unit_id},
         ).mappings().one()
+
+        # The state change first, guarded on the state it expects. Whoever
+        # moves the unit out of 'reserved' is the one writer entitled to
+        # charge for it and give its nights back; anyone else finds zero rows
+        # and leaves it alone. This used to run last, unguarded in effect,
+        # after the nights had already been returned.
+        moved = session.execute(
+            text("UPDATE booking.reservation_units "
+                 "SET status = 'no_show', assigned_room_id = NULL, "
+                 "    version = version + 1 "
+                 "WHERE id = :u AND status = 'reserved'"),
+            {"u": p.unit_id},
+        ).rowcount
+        if moved != 1:
+            continue
+        processed.append(p)
 
         if basis == "none":
             # Recorded and released below, simply not billed. No warning: a
@@ -512,11 +547,17 @@ def process_no_shows(
         )
         nights = _nights_between(row["arrival_date"], row["departure_date"])
         if nights:
+            # The counter the booking occupies. A booking never confirmed sits
+            # in held_units; taking it off reserved_units instead left the
+            # held room off sale and freed a confirmed room that was not this
+            # booking's. Same rule as booking_core.inventory.counter_for.
+            counter = ("held_units" if row["reservation_status"] == "held"
+                       else "reserved_units")
             session.execute(
                 text(
-                    """
+                    f"""
                     UPDATE booking.room_type_inventory_days
-                       SET reserved_units = GREATEST(reserved_units - 1, 0)
+                       SET {counter} = GREATEST({counter} - 1, 0)
                      WHERE property_id = :p AND room_type_id = :rt
                        AND stay_date = ANY(:dates)
                     """
@@ -538,13 +579,6 @@ def process_no_shows(
             action_type="no_show",
         )
 
-        session.execute(
-            text("UPDATE booking.reservation_units "
-                 "SET status = 'no_show', assigned_room_id = NULL, "
-                 "    version = version + 1 "
-                 "WHERE id = :u AND status = 'reserved'"),
-            {"u": p.unit_id},
-        )
         # A booking with nothing left alive is over.
         session.execute(
             text(
@@ -561,7 +595,9 @@ def process_no_shows(
             {"res": row["reservation_id"]},
         )
 
-    return found, charged, warnings
+    # Only what this run actually resolved. A unit the desk dealt with in the
+    # meantime is not this audit's no-show and must not be reported as one.
+    return processed, charged, warnings
 
 
 def _nights_between(arrival: date, departure: date) -> list[date]:

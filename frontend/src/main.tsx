@@ -1,12 +1,11 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClientProvider } from '@tanstack/react-query'
 import App from './App'
 import { AuthProvider } from './auth/AuthContext'
+import { queryClient } from './lib/queryClient'
 import './index.css'
-
-const queryClient = new QueryClient()
 
 // Installable app (see public/sw.js). Production only: in development a
 // service worker would serve yesterday's module graph over Vite's hot reload.

@@ -19,6 +19,7 @@ import {
   sendEmailOtp, verifyEmailOtp,
 } from '../api'
 import { PLATFORM_NAME } from '../lib/brand'
+import { errorText } from '../lib/forms'
 
 /**
  * The first two onboarding steps: who is signing up, and what they run.
@@ -87,16 +88,14 @@ export function OnboardingAccount() {
       boxes.current[0]?.focus()
     },
     onError: (e) => setErr(
-      (e as { response?: { data?: { detail?: string } } })
-        .response?.data?.detail ?? 'The code could not be sent.'),
+      errorText(e, 'The code could not be sent.')),
   })
 
   const checkCode = useMutation({
     mutationFn: () => verifyEmailOtp(form.email.trim(), code),
     onSuccess: () => { setErr(''); setVerified(form.email.trim().toLowerCase()) },
     onError: (e) => setErr(
-      (e as { response?: { data?: { detail?: string } } })
-        .response?.data?.detail ?? 'That code could not be checked.'),
+      errorText(e, 'That code could not be checked.')),
   })
 
   /** Type, paste or backspace across six boxes without thinking about it. */
@@ -135,8 +134,7 @@ export function OnboardingAccount() {
       navigate('/onboarding/property')
     },
     onError: (e) => setErr(
-      (e as { response?: { data?: { detail?: string } } })
-        .response?.data?.detail ?? 'The account could not be created.'),
+      errorText(e, 'The account could not be created.')),
   })
 
   return (
@@ -320,8 +318,7 @@ export function OnboardingProperty() {
     qc.invalidateQueries({ queryKey: ['property-logo', propertyId] })
   }
   const onLogoFail = (e: unknown) => setLogoErr(
-    (e as { response?: { data?: { detail?: string } } })
-      .response?.data?.detail ?? 'The logo could not be saved.')
+    errorText(e, 'The logo could not be saved.'))
 
   const upload = useMutation({
     mutationFn: (f: File) => uploadPropertyLogo(propertyId, f),
@@ -505,7 +502,7 @@ export function OnboardingProperty() {
         {err && (
           <p className="mt-4 flex items-start gap-2 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
             <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-            {err.response?.data?.detail ?? 'The property could not be saved.'}
+            {errorText(err, 'The property could not be saved.')}
           </p>
         )}
       </div>

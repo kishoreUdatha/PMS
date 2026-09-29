@@ -307,47 +307,139 @@ def give_back(
     organization_id: uuid.UUID,
     units: list[dict],
 ) -> int:
-    """Return rooms to the block when a picked-up booking is cancelled.
+    """Return rooms to the block when a booking drawn from it ends unused.
 
     Without this a cancelled group booking would leak: the room comes out of
-    ``reserved_units`` by the ordinary cancellation path and goes back on
-    general sale, so the group silently loses a room it had agreed and the
-    block's own numbers stop adding up.
+    ``reserved_units`` (or ``held_units``, for a hold that expired) by the
+    ordinary release path and goes back on general sale, so the group
+    silently loses a room it had agreed and the block's own numbers stop
+    adding up. It existed for a long time with no caller at all; the
+    cancellation and the hold reaper now call it.
+
+    **The caller must already have released the units' own counter**, in this
+    transaction. This moves those same rooms from general sale into
+    ``allotment_units`` -- a relabelling, not a new claim on the night -- so
+    it does not re-run the oversell check: a night the hotel had deliberately
+    overbooked would otherwise refuse to take back a room it had only just
+    been given.
+
+    Only an **open, definite** block takes rooms back. A block already
+    released or cancelled has handed its rooms to the hotel, and a tentative
+    one never held any; crediting either would take rooms off sale for a
+    group that is not holding them. In those cases the rooms simply stay on
+    general sale, which is where the caller's release put them.
 
     Capped at what the block originally agreed, so a booking cancelled twice,
     or one that ran beyond the block's dates, cannot inflate it.
+
+    Locks are taken in the order ``create_hold`` and ``release`` take them --
+    inventory rows first, then the block's nights -- so a give-back racing a
+    booking or a release queues behind it instead of deadlocking.
     """
-    given = 0
+    wanted: dict[tuple[uuid.UUID, date], int] = {}
     for u in units:
         for day in _nights(u["arrival_date"], u["departure_date"]):
-            row = db.execute(
-                text(
-                    """
-                    SELECT n.rooms_held, l.rooms_blocked
-                      FROM booking.group_block_nights n
-                      JOIN booking.group_block_lines l
-                        ON l.block_id = n.block_id
-                       AND l.room_type_id = n.room_type_id
-                     WHERE n.block_id = :b AND n.room_type_id = :rt
-                       AND n.stay_date = :d
-                       FOR UPDATE OF n
-                    """
-                ),
-                {"b": block_id, "rt": u["room_type_id"], "d": day},
-            ).mappings().first()
-            if row is None or row["rooms_held"] >= row["rooms_blocked"]:
-                continue
-            db.execute(
-                text("UPDATE booking.group_block_nights "
-                     "SET rooms_held = rooms_held + 1 "
-                     "WHERE block_id = :b AND room_type_id = :rt "
-                     "AND stay_date = :d"),
-                {"b": block_id, "rt": u["room_type_id"], "d": day},
-            )
-            given += 1
-            shift_inventory(
-                db, property_id=property_id, organization_id=organization_id,
-                counter="allotment_units", delta={(u["room_type_id"], day): 1})
+            key = (u["room_type_id"], day)
+            wanted[key] = wanted.get(key, 0) + 1
+    if not wanted:
+        return 0
+
+    # The block's night keys never change after it is created -- only
+    # ``rooms_held`` moves -- so reading them unlocked to decide what to lock
+    # is safe. Nights outside the block were never the block's to take back.
+    keys = sorted(
+        (r["room_type_id"], r["stay_date"])
+        for r in db.execute(
+            text(
+                """
+                SELECT room_type_id, stay_date
+                  FROM booking.group_block_nights
+                 WHERE block_id = :b
+                   AND (room_type_id, stay_date) IN (
+                       SELECT * FROM unnest(CAST(:rts AS uuid[]),
+                                            CAST(:days AS date[])))
+                """
+            ),
+            {"b": block_id, "rts": [k[0] for k in wanted],
+             "days": [k[1] for k in wanted]},
+        ).mappings()
+    )
+    if not keys:
+        return 0
+    keys.sort(key=lambda k: (str(k[0]), k[1]))
+
+    # 1) Inventory, in (room_type, date) order.
+    db.execute(
+        text(
+            """
+            SELECT 1 FROM booking.room_type_inventory_days
+             WHERE property_id = :p
+               AND (room_type_id, stay_date) IN (
+                   SELECT * FROM unnest(CAST(:rts AS uuid[]),
+                                        CAST(:days AS date[])))
+             ORDER BY room_type_id, stay_date
+             FOR UPDATE
+            """
+        ),
+        {"p": property_id, "rts": [k[0] for k in keys],
+         "days": [k[1] for k in keys]},
+    )
+
+    # 2) Only now the block's state. A release takes the same inventory locks
+    #    before it changes the block's status, so what is read here is after
+    #    any release that was racing this -- never a status about to change.
+    block = db.execute(
+        text("SELECT status, commitment FROM booking.group_blocks "
+             "WHERE id = :b"),
+        {"b": block_id},
+    ).mappings().first()
+    if (block is None or block["status"] != "open"
+            or not holds_inventory(block["commitment"])):
+        return 0
+
+    # 3) The block's nights, in the same order.
+    rows = db.execute(
+        text(
+            """
+            SELECT n.room_type_id, n.stay_date, n.rooms_held, l.rooms_blocked
+              FROM booking.group_block_nights n
+              JOIN booking.group_block_lines l
+                ON l.block_id = n.block_id
+               AND l.room_type_id = n.room_type_id
+             WHERE n.block_id = :b
+               AND (n.room_type_id, n.stay_date) IN (
+                   SELECT * FROM unnest(CAST(:rts AS uuid[]),
+                                        CAST(:days AS date[])))
+             ORDER BY n.room_type_id, n.stay_date
+               FOR UPDATE OF n
+            """
+        ),
+        {"b": block_id, "rts": [k[0] for k in keys],
+         "days": [k[1] for k in keys]},
+    ).mappings().all()
+
+    given = 0
+    for row in rows:
+        key = (row["room_type_id"], row["stay_date"])
+        n = min(wanted.get(key, 0),
+                int(row["rooms_blocked"]) - int(row["rooms_held"]))
+        if n <= 0:
+            continue
+        db.execute(
+            text("UPDATE booking.group_block_nights "
+                 "SET rooms_held = rooms_held + :n "
+                 "WHERE block_id = :b AND room_type_id = :rt "
+                 "AND stay_date = :d"),
+            {"n": n, "b": block_id, "rt": key[0], "d": key[1]},
+        )
+        db.execute(
+            text("UPDATE booking.room_type_inventory_days "
+                 "SET allotment_units = allotment_units + :n "
+                 "WHERE property_id = :p AND room_type_id = :rt "
+                 "AND stay_date = :d"),
+            {"n": n, "p": property_id, "rt": key[0], "d": key[1]},
+        )
+        given += n
     return given
 
 
@@ -454,7 +546,7 @@ def release(
     return sum(-n for n in delta.values())
 
 
-def sweep_cut_offs(db: Session, *, today: date) -> list[dict]:
+def sweep_cut_offs(db: Session, *, today: date | None = None) -> list[dict]:
     """Release every open block whose cut-off has arrived.
 
     Runs against every tenant, so it discovers blocks under ``system_context``
@@ -466,6 +558,11 @@ def sweep_cut_offs(db: Session, *, today: date) -> list[dict]:
     A block is released *on* its cut-off date rather than after it. "Cut-off
     15 March" means the rooms are back on sale that morning, which is the last
     day they can still be sold for the stay.
+
+    "Arrived" is judged in each property's own timezone unless ``today`` is
+    given. The sweep used to pass the server's ``date.today()`` -- UTC -- for
+    every tenant, so an Indian property's blocks were released five and a
+    half hours late, and one west of UTC released a day early.
     """
     from chirala_common.db import bind_tenant_context, system_context
 
@@ -476,7 +573,8 @@ def sweep_cut_offs(db: Session, *, today: date) -> list[dict]:
             SELECT id, organization_id, property_id, code, name
               FROM booking.group_blocks
              WHERE status = 'open' AND cut_off_date IS NOT NULL
-               AND cut_off_date <= :today
+               AND cut_off_date <= COALESCE(CAST(:today AS date),
+                                            booking.local_today(property_id))
              ORDER BY cut_off_date
             """
         ),

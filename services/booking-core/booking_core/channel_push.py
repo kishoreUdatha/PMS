@@ -45,7 +45,7 @@ log = logging.getLogger("uvicorn.error").getChild("channel-push")
 
 #: How far ahead to publish. An OTA sells a year out; a shorter window means a
 #: guest searching next summer finds nothing and books elsewhere.
-WINDOW_DAYS = 365
+WINDOW_DAYS = 500
 
 #: Channex asks for batches rather than a request per date, and a year of
 #: dates across several room types is more than one request should carry.
@@ -149,56 +149,84 @@ def rate_values(db: Session, conn, start: date,
     skipped: list[str] = []
 
     for p in plans:
-        if p["flat_rate"] is not None:
-            # A flat rate is the nightly price whatever the room, so it needs
-            # no calendar and no room type.
-            values.append({
-                "property_id": conn["external_property_id"],
-                "rate_plan_id": p["external_id"],
-                "date_from": start.isoformat(),
-                "date_to": end.isoformat(),
-                "rate": str(Decimal(str(p["flat_rate"])).quantize(
-                    Decimal("0.01"))),
-            })
-            continue
-        if p["room_types"] != 1:
+        if p["flat_rate"] is None and p["room_types"] != 1:
             skipped.append(
                 f"{p['name']}: tied to {p['room_types']} room types, so it "
                 f"has no single nightly rate. Give it a flat rate, or map one "
                 f"channel rate plan per room type.")
             continue
-
-        rows = db.execute(
-            text(
-                """
-                SELECT d.stay_date,
-                       COALESCE(rc.rate, rt.base_rate) AS rate
-                FROM generate_series(CAST(:start AS date), CAST(:end AS date),
-                                     interval '1 day') AS d(stay_date)
-                CROSS JOIN property.room_types rt
-                LEFT JOIN property.rate_calendar_days rc
-                       ON rc.room_type_id = rt.id
-                      AND rc.stay_date = d.stay_date::date
-                WHERE rt.id = CAST(:rt AS uuid)
-                ORDER BY d.stay_date
-                """
-            ),
-            {"start": start, "end": end, "rt": p["room_type_id"]},
-        ).mappings().all()
-
-        priced = [r for r in rows if r["rate"] is not None]
-        if not priced:
+        nightly = plan_rates(db, p, start, end)
+        if not nightly:
             skipped.append(
                 f"{p['name']}: no rate anywhere in the window, and the room "
                 f"type has no list price either.")
             continue
-
-        values.extend(_collapse(
-            priced, conn, "rate_plan_id", "rate",
-            lambda r, pl=p: str(_plan_rate(pl, Decimal(str(r["rate"])))),
-            external_id=p["external_id"]))
+        days = [{"stay_date": d, "rate": v} for d, v in sorted(nightly.items())]
+        values.extend(_collapse(days, conn, "rate_plan_id", "rate",
+                                lambda r: str(r["rate"]),
+                                external_id=p["external_id"]))
 
     return values, skipped
+
+
+def plan_rates(db: Session, plan, start: date, end: date) -> dict:
+    """{night: price} one rate plan sells for, for the nights it has one.
+
+    A price set on the plan for that night wins; otherwise a flat rate; else
+    the room type's price that night (calendar, falling back to its list
+    price) with the plan's adjustment applied. ``plan`` carries rate_plan_id,
+    room_type_id, flat_rate and the adjustment fields.
+    """
+    overrides = _plan_overrides(db, plan["rate_plan_id"], start, end, "rate")
+    out: dict = {}
+    if plan["flat_rate"] is not None:
+        flat = Decimal(str(plan["flat_rate"])).quantize(Decimal("0.01"))
+        for i in range((end - start).days + 1):
+            day = start + timedelta(days=i)
+            out[day] = overrides.get(day, flat)
+        return out
+    if not plan["room_type_id"]:
+        return dict(overrides)
+    rows = db.execute(
+        text(
+            """
+            SELECT d.stay_date, COALESCE(rc.rate, rt.base_rate) AS rate
+            FROM generate_series(CAST(:start AS date), CAST(:end AS date),
+                                 interval '1 day') AS d(stay_date)
+            CROSS JOIN property.room_types rt
+            LEFT JOIN property.rate_calendar_days rc
+                   ON rc.room_type_id = rt.id
+                  AND rc.stay_date = d.stay_date::date
+            WHERE rt.id = CAST(:rt AS uuid)
+            ORDER BY d.stay_date
+            """
+        ),
+        {"start": start, "end": end, "rt": str(plan["room_type_id"])},
+    ).mappings().all()
+    for r in rows:
+        day = _as_date(r["stay_date"])
+        if day in overrides:
+            out[day] = overrides[day]
+        elif r["rate"] is not None:
+            out[day] = _plan_rate(plan, Decimal(str(r["rate"])))
+    return out
+
+
+def _plan_overrides(db: Session, rate_plan_id, start: date, end: date,
+                    field: str) -> dict:
+    """{night: value} this plan has set for itself on the rate plan calendar."""
+    assert field in {"rate", "min_stay", "max_stay", "closed_to_arrival",
+                     "closed_to_departure", "stop_sell"}
+    rows = db.execute(
+        text(f"SELECT stay_date, {field} AS v FROM property.rate_plan_calendar_days "
+             f"WHERE rate_plan_id = CAST(:p AS uuid) AND stay_date BETWEEN :s AND :e "
+             f"AND {field} IS NOT NULL"),
+        {"p": str(rate_plan_id), "s": start, "e": end},
+    ).mappings().all()
+    if field == "rate":
+        return {_as_date(r["stay_date"]):
+                Decimal(str(r["v"])).quantize(Decimal("0.01")) for r in rows}
+    return {_as_date(r["stay_date"]): r["v"] for r in rows}
 
 
 def _plan_rate(plan, base: Decimal) -> Decimal:
@@ -363,6 +391,95 @@ _RESTRICTION_SQL = """
 """
 
 
+def plan_restrictions(db: Session, rate_plan_id, room_type_id, start: date,
+                      end: date) -> dict:
+    """{night: stay rules} for one rate plan priced from one room type.
+
+    The plan's own minimum stay, then published rate rules in priority order,
+    then the room's per-night grid settings, then the plan's own per-night
+    settings -- most specific last. One implementation for the channel sync
+    and the Rates & Inventory grid, so the screen shows what the OTA gets.
+    """
+    rows = db.execute(
+        text(_RESTRICTION_SQL),
+        {"start": start, "end": end, "plan": str(rate_plan_id),
+         "rt": str(room_type_id)},
+    ).mappings().all()
+
+    # Fold the rules for each night, in priority order.
+    by_day: dict = {}
+    for r in rows:
+        day = _as_date(r["stay_date"])
+        cur = by_day.setdefault(day, {
+            "stay_date": day,
+            "min_stay_arrival": int(r["plan_min_stay"] or 1),
+            "min_stay_through": int(r["plan_min_stay"] or 1),
+            "max_stay": 0,
+            "closed_to_arrival": False,
+            "closed_to_departure": False,
+            "stop_sell": False,
+        })
+        if r["min_stay"] is not None:
+            cur["min_stay_arrival"] = int(r["min_stay"])
+            cur["min_stay_through"] = int(r["min_stay"])
+        if r["max_stay"] is not None:
+            cur["max_stay"] = int(r["max_stay"])
+        # Flags are ORed rather than overwritten: a later rule may close
+        # arrivals, but nothing should quietly re-open what an earlier
+        # one shut. Re-opening is an explicit act, not a side effect of
+        # priority.
+        for flag in ("closed_to_arrival", "closed_to_departure",
+                     "stop_sell"):
+            cur[flag] = cur[flag] or bool(r[flag])
+
+    # Then the grid. A minimum stay or stop-sell typed into Rates &
+    # Inventory for one night is the most specific instruction there is,
+    # and it was never sent at all: the grid saved it, the desk honoured
+    # it, and the OTA kept selling one-night stays into it.
+    cells = db.execute(
+        text("SELECT stay_date, min_stay, stop_sell "
+             "FROM property.rate_calendar_days "
+             "WHERE room_type_id = CAST(:rt AS uuid) "
+             "AND stay_date BETWEEN :s AND :e "
+             "AND (min_stay IS NOT NULL OR stop_sell)"),
+        {"rt": str(room_type_id), "s": start, "e": end},
+    ).mappings().all()
+    for c in cells:
+        cur = by_day.get(_as_date(c["stay_date"]))
+        if cur is None:
+            continue
+        if c["min_stay"] is not None:
+            cur["min_stay_arrival"] = int(c["min_stay"])
+            cur["min_stay_through"] = int(c["min_stay"])
+        cur["stop_sell"] = cur["stop_sell"] or bool(c["stop_sell"])
+
+    # And last, whatever this rate plan has set for itself on a night --
+    # the most specific setting there is. An explicit value wins either
+    # way, so a plan can be re-opened on a night a rule closed.
+    plan_nights = db.execute(
+        text("SELECT stay_date, min_stay, max_stay, closed_to_arrival, "
+             "closed_to_departure, stop_sell "
+             "FROM property.rate_plan_calendar_days "
+             "WHERE rate_plan_id = CAST(:p AS uuid) "
+             "AND stay_date BETWEEN :s AND :e"),
+        {"p": str(rate_plan_id), "s": start, "e": end},
+    ).mappings().all()
+    for o in plan_nights:
+        cur = by_day.get(_as_date(o["stay_date"]))
+        if cur is None:
+            continue
+        if o["min_stay"] is not None:
+            cur["min_stay_arrival"] = int(o["min_stay"])
+            cur["min_stay_through"] = int(o["min_stay"])
+        if o["max_stay"] is not None:
+            cur["max_stay"] = int(o["max_stay"])
+        for flag in ("closed_to_arrival", "closed_to_departure",
+                     "stop_sell"):
+            if o[flag] is not None:
+                cur[flag] = bool(o[flag])
+    return by_day
+
+
 def restriction_values(db: Session, conn, start: date,
                        end: date) -> list[dict]:
     """Stay rules per mapped rate plan, per night, as date ranges."""
@@ -388,38 +505,8 @@ def restriction_values(db: Session, conn, start: date,
             # Cannot be sold on a channel at all, so it has no rules to send.
             # Reported once, by the rate half of the push.
             continue
-        rows = db.execute(
-            text(_RESTRICTION_SQL),
-            {"start": start, "end": end, "plan": p["rate_plan_id"],
-             "rt": p["room_type_id"]},
-        ).mappings().all()
-
-        # Fold the rules for each night, in priority order.
-        by_day: dict = {}
-        for r in rows:
-            day = _as_date(r["stay_date"])
-            cur = by_day.setdefault(day, {
-                "stay_date": day,
-                "min_stay_arrival": int(r["plan_min_stay"] or 1),
-                "min_stay_through": int(r["plan_min_stay"] or 1),
-                "max_stay": 0,
-                "closed_to_arrival": False,
-                "closed_to_departure": False,
-                "stop_sell": False,
-            })
-            if r["min_stay"] is not None:
-                cur["min_stay_arrival"] = int(r["min_stay"])
-                cur["min_stay_through"] = int(r["min_stay"])
-            if r["max_stay"] is not None:
-                cur["max_stay"] = int(r["max_stay"])
-            # Flags are ORed rather than overwritten: a later rule may close
-            # arrivals, but nothing should quietly re-open what an earlier
-            # one shut. Re-opening is an explicit act, not a side effect of
-            # priority.
-            for flag in ("closed_to_arrival", "closed_to_departure",
-                         "stop_sell"):
-                cur[flag] = cur[flag] or bool(r[flag])
-
+        by_day = plan_restrictions(db, p["rate_plan_id"], p["room_type_id"],
+                                   start, end)
         ordered = [by_day[d] for d in sorted(by_day)]
         values.extend(_collapse_many(
             ordered, conn, "rate_plan_id",

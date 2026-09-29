@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from . import models, schemas
 from .audit import record_audit
 from .authz import (
-    assert_property_in_org,
+    assert_property_in_org, require_property_permission,
     Caller, get_caller, require_org_permission, require_permission,
 )
 from .database import get_session
@@ -609,7 +609,8 @@ def create_invitation(
     """
     # The property is named in the body, where guard_request_tenancy
     # cannot see it.
-    assert_property_in_org(db, caller, body.property_id)
+    require_property_permission(db, caller, body.property_id,
+                                "user", "create")
     org = caller.organization_id
     prop = db.execute(
         text(
@@ -880,7 +881,8 @@ def update_user_access(
     """
     # The property is named in the body, where guard_request_tenancy
     # cannot see it.
-    assert_property_in_org(db, caller, body.property_id)
+    require_property_permission(db, caller, body.property_id,
+                                "user", "update")
     user = _org_user_or_404(db, caller, user_id)
     if user.version != body.version:
         raise HTTPException(

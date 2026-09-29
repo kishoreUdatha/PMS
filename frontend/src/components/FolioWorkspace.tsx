@@ -54,6 +54,7 @@ import type { ActionItem } from './menu'
 import NewFolioDialog from './NewFolioDialog'
 import { useOrgId } from '../hooks/useProperty'
 import { useMethodLabel } from '../lib/paymentMethods'
+import { errorText } from '../lib/forms'
 
 const money = (v: string | number, cur = 'INR') =>
   new Intl.NumberFormat('en-IN', {
@@ -337,9 +338,7 @@ export default function FolioWorkspace({ r, onPosted }: {
       setToast(`${sent} receipt${sent === 1 ? '' : 's'} sent to `
         + `${r.guest?.email ?? 'the guest'}.`)
     } catch (e) {
-      const ax = e as { response?: { data?: { detail?: string } } }
-      setToast(ax?.response?.data?.detail
-        ?? `Sent ${sent} of ${paymentIds.length}; the rest failed.`)
+      setToast(errorText(e, `Sent ${sent} of ${paymentIds.length}; the rest failed.`))
     } finally { setBulkBusy('') }
   }
 

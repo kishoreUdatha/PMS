@@ -25,6 +25,7 @@ export default function Security() {
     secret: string; otpauth_uri: string; recovery_codes: string[]
   } | null>(null)
   const [code, setCode] = useState('')
+  const [current, setCurrent] = useState('')
   const [saved, setSaved] = useState(false)
   const [copied, setCopied] = useState('')
 
@@ -38,7 +39,9 @@ export default function Security() {
   async function start() {
     setErr(''); setSaved(false); setCode('')
     try {
-      setEnrolling(await mfaEnrol())
+      const replacing = state?.status === 'active'
+      setEnrolling(await mfaEnrol(replacing ? current.trim() : undefined))
+      setCurrent('')
     } catch (e) { setErr(errorText(e, 'Enrolment could not be started.')) }
   }
 
@@ -102,7 +105,16 @@ export default function Security() {
               )}
 
               <div className="mt-5">
-                <Button tone="primary" onClick={start}>
+                {active && (
+                  <label className="mb-3 block max-w-xs text-sm text-pf-muted">
+                    Current code or a recovery code
+                    <input value={current} inputMode="numeric" autoComplete="one-time-code"
+                      maxLength={10} onChange={(e) => setCurrent(e.target.value)}
+                      className="mt-1 w-full rounded-lg border border-pf-divider px-3 py-2 font-mono text-sm text-pf-navy outline-none focus:border-pf-navy" />
+                  </label>
+                )}
+                <Button tone="primary" onClick={start}
+                  disabled={active && current.trim().length < 6}>
                   {active ? 'Replace my authenticator' : 'Set up two-factor'}
                 </Button>
                 {active && (

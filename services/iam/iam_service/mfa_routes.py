@@ -61,20 +61,23 @@ def make_challenge(user_id: uuid.UUID) -> str:
 
     Signed with the same key material that protects the secrets, so it cannot
     be forged without the key, and carrying its own expiry so a replay of an
-    old one is refused on arithmetic rather than on a lookup.
+    old one is refused on arithmetic rather than on a lookup. The nonce is
+    what makes it single-use: verification records it as spent.
     """
-    payload = f"{user_id}:{int(time.time()) + CHALLENGE_SECONDS}"
+    payload = (f"{user_id}:{secrets.token_hex(16)}:"
+               f"{int(time.time()) + CHALLENGE_SECONDS}")
     return base64.urlsafe_b64encode(seal(_keys(), payload).encode()).decode()
 
 
-def read_challenge(token: str) -> uuid.UUID:
+def read_challenge(token: str) -> tuple[uuid.UUID, str, int]:
+    """``(user_id, nonce, expires)`` from a genuine, unexpired challenge."""
     try:
         payload = open_sealed(
             _keys(), base64.urlsafe_b64decode(token.encode()).decode())
-        raw_id, expires = payload.rsplit(":", 1)
-        if int(expires) < int(time.time()):
+        raw_id, nonce, expires = payload.split(":")
+        if int(expires) < int(time.time()) or len(nonce) != 32:
             raise ValueError("expired")
-        return uuid.UUID(raw_id)
+        return uuid.UUID(raw_id), nonce, int(expires)
     except HTTPException:
         raise
     except Exception:  # noqa: BLE001
@@ -151,16 +154,29 @@ class EnrolOut(BaseModel):
     recovery_codes: list[str]
 
 
+class EnrolIn(BaseModel):
+    #: A current authenticator code or an unused recovery code. Required only
+    #: when replacing a factor that is already active.
+    code: str | None = Field(default=None, min_length=6, max_length=10)
+
+
 @mfa_router.post("/enrol", response_model=EnrolOut)
 def enrol(request: Request,
+          body: EnrolIn | None = None,
           db: Session = Depends(get_session),
           caller: Caller = Depends(get_caller)):
     """Start enrolment: a new secret, its QR payload, and recovery codes.
 
-    Re-enrolling replaces whatever was there, which is the honest behaviour
-    for somebody who has lost their phone and still has a session. The old
-    secret and its unused recovery codes stop working at that moment rather
-    than lingering as a second way in.
+    Re-enrolling replaces whatever was there. The old secret and its unused
+    recovery codes stop working at that moment rather than lingering as a
+    second way in.
+
+    **Replacing an active factor needs that factor.** It used to need only a
+    session, which made the second factor worth no more than the session: a
+    stolen token could enrol the thief's phone and lock the owner out of
+    their own account. So a current code, or one of the recovery codes --
+    which is what they are for when the phone is lost -- has to come with the
+    request. Wrong codes count toward the same lockout as sign-in.
 
     Returns the secret in clear **once**. There is no route that reads it back.
     """
@@ -168,6 +184,26 @@ def enrol(request: Request,
         raise HTTPException(status_code=403, detail="No account")
 
     system_context(db, reason=f"mfa: enrol {caller.subject}")
+    state = mfa_state(db, caller.user_id)
+    if state and state["status"] == "active":
+        from .auth_routes import _attempts, _record_failure, _refuse_if_locked
+
+        _refuse_if_locked(db.execute(
+            text("SELECT locked_until FROM iam.user_credentials "
+                 "WHERE user_id = :u"),
+            {"u": caller.user_id},
+        ).scalar())
+        code = (body.code if body else None) or ""
+        if not code or not check_second_factor(db, caller.user_id, code):
+            if code:
+                _record_failure(caller.user_id,
+                                _attempts(db, caller.user_id) + 1)
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You already have a second factor. Enter a current "
+                       "code from your authenticator, or one of your "
+                       "recovery codes, to replace it.")
+
     secret = totp.new_secret()
     codes = totp.new_recovery_codes()
 

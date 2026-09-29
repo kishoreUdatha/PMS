@@ -34,6 +34,7 @@ import {
   type BookingAttributeKind,
 } from '../api'
 import { useActivePropertyId } from '../hooks/useProperty'
+import { errorText } from '../lib/forms'
 
 //: The one vocabulary this screen still owns. Kept in the shape the rest of
 //: the file expects, rather than inlined, so reintroducing a second list later
@@ -50,11 +51,7 @@ const inputCls = 'w-full rounded-lg border border-slate-200 px-3 py-2.5 '
   + 'text-sm outline-none focus:border-brand'
 
 function extractError(e: unknown): string {
-  const d = (e as { response?: { data?: { detail?: unknown } } })
-    ?.response?.data?.detail
-  if (typeof d === 'string') return d
-  if (Array.isArray(d) && d.length) return String((d[0] as { msg?: string })?.msg ?? d[0])
-  return (e as Error)?.message ?? 'Something went wrong.'
+  return errorText(e, 'Something went wrong.')
 }
 
 export default function BookingAttributes() {

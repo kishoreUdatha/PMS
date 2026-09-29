@@ -10,6 +10,7 @@ import {
   type PaymentCredentials,
 } from '../api'
 import { Crumbs } from '../components/Crumbs'
+import { errorText } from '../lib/forms'
 
 /**
  * Where a tenant enters their own payment gateway.
@@ -494,6 +495,5 @@ function SecretField({ label, stored, value, onChange, cls, hint, disabled,
 }
 
 function msg(e: unknown, fallback: string): string {
-  const er = e as { response?: { data?: { detail?: string } }; message?: string }
-  return er.response?.data?.detail ?? er.message ?? fallback
+  return errorText(e, fallback)
 }

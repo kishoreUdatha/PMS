@@ -4,6 +4,7 @@ import BrandMark from '../components/BrandMark'
 import { AlertTriangle, Check, KeyRound, Loader2 } from 'lucide-react'
 import { useAuth } from '../auth/AuthContext'
 import { setPassword as apiSetPassword } from '../api'
+import { errorText } from '../lib/forms'
 
 /**
  * Where a welcome or reset link lands: choose a password, and you are in.
@@ -43,9 +44,7 @@ export default function SetPassword() {
       // sign-in too, not only for somebody arriving from a welcome link.
       navigate('/dashboard', { replace: true })
     } catch (err) {
-      const e2 = err as { response?: { data?: { detail?: string } } }
-      setError(e2.response?.data?.detail
-        ?? 'That password could not be set. Ask for a new link.')
+      setError(errorText(err, 'That password could not be set. Ask for a new link.'))
     } finally {
       setBusy(false)
     }

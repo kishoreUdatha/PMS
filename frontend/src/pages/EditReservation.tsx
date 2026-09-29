@@ -38,6 +38,7 @@ import {
   getReservationFull, updateBookingDetails, listBookingAttributes,
   BOOKING_SOURCES,
 } from '../api'
+import { errorText } from '../lib/forms'
 
 const field = 'w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-brand'
 const lbl = 'mb-1 block text-xs font-medium text-slate-600'
@@ -125,8 +126,7 @@ export default function EditReservation() {
       await qc.invalidateQueries({ queryKey: ['reservation-full'] })
       setF(null); setSaved(true)
     } catch (e) {
-      const ax = e as { response?: { data?: { detail?: string } } }
-      setErr(ax?.response?.data?.detail ?? 'The changes could not be saved.')
+      setErr(errorText(e, 'The changes could not be saved.'))
     } finally { setBusy(false) }
   }
 

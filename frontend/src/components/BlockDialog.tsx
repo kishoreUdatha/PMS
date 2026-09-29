@@ -5,6 +5,7 @@ import { Loader2, X } from 'lucide-react'
 import { createBlock, BLOCK_REASONS } from '../api'
 
 import DateField from '../components/DateField'
+import { errorText } from '../lib/forms'
 /**
  * Create a block on one room (screen 063's action, offered from 008 and 011).
  *
@@ -56,8 +57,7 @@ export default function BlockDialog({
       onClose()
     },
     onError: (e: unknown) => {
-      const d = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      setError(d ?? 'Could not block the room.')
+      setError(errorText(e, 'Could not block the room.'))
     },
   })
 

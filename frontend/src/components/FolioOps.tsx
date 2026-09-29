@@ -24,6 +24,7 @@ import {
   listReservationFolios, openFolio, transferFolio, cutFolio,
   type ReservationFull,
 } from '../api'
+import { errorText } from '../lib/forms'
 
 const field = 'w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-brand'
 const lbl = 'mb-1 block text-xs font-medium text-slate-600'
@@ -90,8 +91,7 @@ export default function FolioOpDialog({
       }
       onDone()
     } catch (e) {
-      const ax = e as { response?: { data?: { detail?: string } } }
-      setErr(ax?.response?.data?.detail ?? 'That could not be done.')
+      setErr(errorText(e, 'That could not be done.'))
     } finally { setBusy(false) }
   }
 

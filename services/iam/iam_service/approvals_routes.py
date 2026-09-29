@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from . import schemas
 from .audit import record_audit
-from .authz import Caller, require_org_permission, assert_property_in_org
+from .authz import Caller, require_org_permission, require_property_permission
 from .database import get_session
 
 approvals_router = APIRouter(
@@ -229,7 +229,8 @@ def create_request(
     # Named in the body, where guard_request_tenancy cannot see it,
     # and optional -- a request that names no property is org-wide.
     if body.property_id is not None:
-        assert_property_in_org(db, caller, body.property_id)
+        require_property_permission(db, caller, body.property_id,
+                                    "approval", "create")
     out = request_approval(
         db,
         organization_id=caller.organization_id,

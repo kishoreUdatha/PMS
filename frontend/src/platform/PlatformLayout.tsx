@@ -1,6 +1,7 @@
 import { Suspense, useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import ScreenBoundary from './ScreenBoundary'
+import PageSpinner from '../components/PageSpinner'
 import {
   Activity, Building2, CalendarClock, ChevronDown, CreditCard, Globe,
   Handshake, Hotel, LayoutGrid, LifeBuoy, LogOut, Mail, PanelLeftClose,
@@ -320,7 +321,7 @@ export default function PlatformLayout() {
               screen after the first crash renders the error page instead of
               itself -- which looks exactly like the whole console breaking. */}
           <ScreenBoundary key={pathname} where={pathname}>
-            <Suspense fallback={null}>
+            <Suspense fallback={<PageSpinner />}>
               <Outlet />
             </Suspense>
           </ScreenBoundary>

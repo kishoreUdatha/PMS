@@ -89,7 +89,8 @@ def confirm_reservation(
     res = session.execute(
         text(
             """
-            SELECT id, organization_id, property_id, status
+            SELECT id, organization_id, property_id, status, number,
+                   group_block_id
             FROM booking.reservations
             WHERE id = :id
             FOR UPDATE
@@ -101,8 +102,20 @@ def confirm_reservation(
         raise FlowError("Reservation not found")
     if res.status == "confirmed":
         return False  # idempotent, and nothing new happened
+    if res.status == "cancelled" and _expired_hold(session, reservation_id):
+        # The guest paid after the reaper had already given the rooms back.
+        # That used to end as money on a folio for a booking that no longer
+        # existed ("paid_unconfirmed"), with nobody told why. If the rooms are
+        # still there the guest gets them; if they have been sold since, the
+        # answer is a clear refusal the payment webhook can act on.
+        _revive_expired_hold(session, res)
+        return True
     if res.status != "held":
         raise FlowError(f"Cannot confirm reservation in status '{res.status}'")
+    # A hold past its expiry that the reaper has not reached yet is still a
+    # hold: its rooms are still counted in held_units, and the reaper skips a
+    # booking that is locked -- as this one now is -- so confirming it here is
+    # safe and is exactly what a guest paying at 14:59:59 deserves.
 
     units = session.execute(
         text(
@@ -115,32 +128,46 @@ def confirm_reservation(
         {"rid": reservation_id},
     ).all()
 
+    # Every night the booking holds, per room type, locked once and in
+    # (room_type, date) order -- the order create_hold and shift_inventory
+    # take them in. This used to lock unit by unit in whatever order the units
+    # came back, so confirming a two-type booking could take the second
+    # type's rows first and deadlock against a new booking for both.
+    need: dict[tuple[uuid.UUID, date], int] = {}
     for unit in units:
-        nights = _nights(unit.arrival_date, unit.departure_date)
-        # Lock the nights, then shift held -> reserved for this unit.
+        for day in _nights(unit.arrival_date, unit.departure_date):
+            key = (unit.room_type_id, day)
+            need[key] = need.get(key, 0) + 1
+    keys = sorted(need, key=lambda k: (str(k[0]), k[1]))
+    if keys:
         session.execute(
             text(
                 """
-                SELECT stay_date FROM booking.room_type_inventory_days
-                WHERE property_id = :prop AND room_type_id = :rt
-                  AND stay_date = ANY(:dates)
-                ORDER BY stay_date
+                SELECT 1 FROM booking.room_type_inventory_days
+                WHERE property_id = :prop
+                  AND (room_type_id, stay_date) IN (
+                      SELECT * FROM unnest(CAST(:rts AS uuid[]),
+                                           CAST(:days AS date[])))
+                ORDER BY room_type_id, stay_date
                 FOR UPDATE
                 """
             ),
-            {"prop": res.property_id, "rt": unit.room_type_id, "dates": nights},
+            {"prop": res.property_id, "rts": [k[0] for k in keys],
+             "days": [k[1] for k in keys]},
         )
+    for rt, day in keys:
         session.execute(
             text(
                 """
                 UPDATE booking.room_type_inventory_days
-                SET held_units = GREATEST(held_units - 1, 0),
-                    reserved_units = reserved_units + 1
+                SET held_units = GREATEST(held_units - :n, 0),
+                    reserved_units = reserved_units + :n
                 WHERE property_id = :prop AND room_type_id = :rt
-                  AND stay_date = ANY(:dates)
+                  AND stay_date = :d
                 """
             ),
-            {"prop": res.property_id, "rt": unit.room_type_id, "dates": nights},
+            {"n": need[(rt, day)], "prop": res.property_id, "rt": rt,
+             "d": day},
         )
 
     session.execute(
@@ -165,6 +192,93 @@ def confirm_reservation(
         payload={"reservation_id": str(reservation_id)},
     )
     return True
+
+
+def _expired_hold(session: Session, reservation_id: uuid.UUID) -> bool:
+    """Whether this booking was cancelled by the hold reaper, and nothing else.
+
+    Only a hold the reaper expired is eligible to be brought back. A booking
+    the desk cancelled (its hold is 'released'), or one a guest cancelled, is
+    a decision somebody made; a payment arriving late does not overturn it.
+    """
+    return session.execute(
+        text("SELECT 1 FROM booking.booking_holds "
+             "WHERE reservation_id = :r AND status = 'expired' LIMIT 1"),
+        {"r": reservation_id},
+    ).first() is not None
+
+
+def _revive_expired_hold(session: Session, res) -> None:
+    """Confirm a booking whose hold expired, if its rooms are still free.
+
+    The reaper gave the rooms back and cancelled the units. They are taken
+    again straight into ``reserved_units`` -- with the same oversell check a
+    new booking gets -- and the units and the booking are restored. If any
+    night has been sold in the meantime the whole thing is refused and nothing
+    changes: the guest cannot be given a room that is now somebody else's.
+    """
+    from .inventory import InventoryOversold, occupancy, shift_inventory
+    from .settings import settings
+
+    if res.group_block_id is not None:
+        # The reaper handed this booking's rooms back to its block, and
+        # taking them again would have to draw the block down under its own
+        # rules. Safer to say so than to half-do it.
+        raise FlowError(
+            f"The hold on {res.number} expired before payment arrived, and it "
+            f"was drawn from a group block. Rebook it against the block; the "
+            f"payment needs refunding or moving to the new booking.",
+            conflict=True)
+    units = session.execute(
+        text(
+            """
+            SELECT id, room_type_id, arrival_date, departure_date
+            FROM booking.reservation_units
+            WHERE reservation_id = :rid AND status = 'cancelled'
+            """
+        ),
+        {"rid": res.id},
+    ).mappings().all()
+    if not units:
+        raise FlowError(f"{res.number} has no rooms left to confirm.",
+                        conflict=True)
+    try:
+        shift_inventory(
+            session, property_id=res.property_id,
+            organization_id=res.organization_id, counter="reserved_units",
+            delta=occupancy(units),
+            overbooking_allowance=settings.overbooking_allowance)
+    except InventoryOversold as exc:
+        raise FlowError(
+            f"The hold on {res.number} expired before payment arrived, and "
+            f"{exc} The booking cannot be confirmed; the payment needs "
+            f"refunding.",
+            conflict=True) from exc
+
+    session.execute(
+        text("UPDATE booking.reservation_units SET status = 'reserved', "
+             "version = version + 1 WHERE reservation_id = :r "
+             "AND status = 'cancelled'"),
+        {"r": res.id},
+    )
+    session.execute(
+        text("UPDATE booking.reservations SET status = 'confirmed', "
+             "version = version + 1 WHERE id = :id AND status = 'cancelled'"),
+        {"id": res.id},
+    )
+    session.execute(
+        text("UPDATE booking.booking_holds SET status = 'converted', "
+             "updated_at = now() WHERE reservation_id = :id "
+             "AND status = 'expired'"),
+        {"id": res.id},
+    )
+    enqueue_event(
+        session,
+        aggregate_type="reservation",
+        aggregate_id=str(res.id),
+        event_type="booking.reservation_confirmed",
+        payload={"reservation_id": str(res.id), "revived_expired_hold": True},
+    )
 
 
 # --------------------------------------------------------------------------
@@ -430,7 +544,14 @@ def check_out(
     if stay is None:
         raise FlowError("No in-house stay found for this unit")
 
-    today = business_date or datetime.now(timezone.utc).date()
+    # The property's calendar date when the caller names none. UTC's date
+    # lagged India by 5.5 hours, so an early check-out between midnight and
+    # 05:30 kept the night that had just begun off sale.
+    if business_date is None:
+        from chirala_common.property_time import local_today
+
+        business_date = local_today(session, unit.property_id)
+    today = business_date
 
     # Early checkout: return the nights the guest did not stay, keeping the
     # ones they did as occupied history (§4).

@@ -1,15 +1,17 @@
-import { Suspense, lazy } from 'react'
+import { lazy, Suspense } from 'react'
 import { Navigate, Outlet, Route, Routes } from 'react-router-dom'
 import { OverlayHost } from './components/AskDialog'
+import AppLayout from './components/AppLayout'
 import Landing from './pages/Landing'
 import ProtectedRoute from './auth/ProtectedRoute'
 import PlatformRoute from './platform/PlatformRoute'
+import PlatformLayout from './platform/PlatformLayout'
+import PageSpinner from './components/PageSpinner'
 
-// Every screen but the landing page is its own chunk, fetched when it is
-// first opened. The landing page is what a first-time visitor loads, and
-// it used to download the whole application (2 MB of JavaScript) to
-// show one page.
-const AppLayout = lazy(() => import('./components/AppLayout'))
+// Every screen but the landing page is its own chunk, fetched when first visited. The shell
+// (layouts, guards, the overlay host) stays in the entry bundle so the frame
+// paints at once; AppLayout and PlatformLayout hold their own Suspense so
+// only the content area waits while a screen loads.
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const NewReservation = lazy(() => import('./pages/NewReservation'))
 const GroupBlocks = lazy(() => import('./pages/GroupBlocks'))
@@ -96,7 +98,6 @@ const OnboardingTeam = lazy(() => import('./pages/OnboardingTeam').then((m) => (
 const OnboardingImport = lazy(() => import('./pages/OnboardingImport').then((m) => ({ default: m.OnboardingImport })))
 const OnboardingRates = lazy(() => import('./pages/OnboardingMoney').then((m) => ({ default: m.OnboardingRates })))
 const OnboardingBilling = lazy(() => import('./pages/OnboardingMoney').then((m) => ({ default: m.OnboardingBilling })))
-const PlatformLayout = lazy(() => import('./platform/PlatformLayout'))
 const PlatformLogin = lazy(() => import('./platform/PlatformLogin'))
 const PlatformOverview = lazy(() => import('./platform/screens/Overview'))
 const PlatformOtaActions = lazy(() => import('./platform/screens/OtaActions'))
@@ -134,10 +135,7 @@ export default function App() {
       {/* One host for the whole application. Both tiers' screens call
           askReason/askText/notify, which render through it. */}
       <OverlayHost />
-    {/* Catches the first load of a lazy layout or a page outside one. Inside
-        the app shell, the layout's own boundary takes over, so the sidebar
-        does not blank while a screen loads. */}
-    <Suspense fallback={<div className="flex h-full items-center justify-center text-slate-300">Loading…</div>}>
+    <Suspense fallback={<PageSpinner full />}>
     <Routes>
       {/* The public front door, at the root for everyone, signed in or not.
           The dashboard lives at /dashboard. /welcome was the landing page's

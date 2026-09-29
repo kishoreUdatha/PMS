@@ -15,7 +15,8 @@ class FolioCreate(BaseModel):
     property_id: uuid.UUID
     reservation_id: uuid.UUID | None = None
     type: str = "guest"
-    currency: str = "INR"
+    #: Omit it and the folio is opened in the property's own currency.
+    currency: str | None = None
 
 
 class FolioOut(BaseModel):
@@ -42,7 +43,11 @@ class ChargeCreate(BaseModel):
     source_line_key: str = Field(max_length=200)
     charge_code_id: uuid.UUID | None = None
     source_id: str | None = None
-    currency: str = "INR"
+    #: Omit it: the folio (or payment) already says what currency it keeps,
+    #: and the ledger takes it from there. A stated currency that disagrees is
+    #: refused. This used to default to "INR", which silently relabelled every
+    #: posting on a non-rupee folio whose client did not think to send it.
+    currency: str | None = None
     #: What the desk typed. ``amount`` stays the net the guest owes; these say
     #: how it was arrived at, which is what makes a queried line answerable.
     note: str | None = Field(default=None, max_length=300)
@@ -113,7 +118,11 @@ class PaymentCreate(BaseModel):
     #: the payment was taken.
     business_date: date | None = None
     allocations: list[AllocationIn] = Field(min_length=1)
-    currency: str = "INR"
+    #: Omit it: the folio (or payment) already says what currency it keeps,
+    #: and the ledger takes it from there. A stated currency that disagrees is
+    #: refused. This used to default to "INR", which silently relabelled every
+    #: posting on a non-rupee folio whose client did not think to send it.
+    currency: str | None = None
     #: What the guest can quote back if the payment is ever questioned.
     #:
     #: The ledger has always stored one; this endpoint had no field for it, so
@@ -163,7 +172,11 @@ class RefundCreate(BaseModel):
     amount: Decimal = Field(gt=0)
     business_date: date
     reason: str | None = None
-    currency: str = "INR"
+    #: Omit it: the folio (or payment) already says what currency it keeps,
+    #: and the ledger takes it from there. A stated currency that disagrees is
+    #: refused. This used to default to "INR", which silently relabelled every
+    #: posting on a non-rupee folio whose client did not think to send it.
+    currency: str | None = None
 
 
 class RefundOut(BaseModel):

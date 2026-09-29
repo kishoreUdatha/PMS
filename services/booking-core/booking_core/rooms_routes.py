@@ -757,7 +757,10 @@ def bulk_delete_rooms(
                 db, property_id=property_id, room_type_id=rt) - losing[rt]
             short = capacity_shortfall(
                 db, property_id=property_id, room_type_id=rt,
-                new_capacity=remaining)
+                new_capacity=remaining,
+                leaving=[r["id"] for r in rooms
+                         if r["id"] in doomed and r["room_type_id"] == rt]
+                + [room["id"]])
             if short:
                 losing[rt] -= 1
                 days = ", ".join(d.strftime("%d %b") for d in short[:2])
@@ -852,7 +855,7 @@ def delete_room(
             db, property_id=property_id, room_type_id=room["room_type_id"]) - 1
         short = capacity_shortfall(
             db, property_id=property_id, room_type_id=room["room_type_id"],
-            new_capacity=remaining)
+            new_capacity=remaining, leaving=[room["id"]])
         if short:
             days = ", ".join(d.strftime("%d %b %Y") for d in short[:3])
             more = f" and {len(short) - 3} more" if len(short) > 3 else ""

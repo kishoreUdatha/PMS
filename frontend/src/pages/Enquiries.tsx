@@ -16,6 +16,7 @@ import {
 } from '../api'
 import { Crumbs } from '../components/Crumbs'
 import { useActivePropertyId } from '../hooks/useProperty'
+import { errorText } from '../lib/forms'
 
 const plain = (v: string | number | null) => v === null
   ? null
@@ -78,8 +79,7 @@ export default function Enquiries() {
   function flash(m: string) { setErr(''); setToast(m); setTimeout(() => setToast(''), 3000) }
   function fail(e: unknown) {
     setToast('')
-    const er = e as { response?: { data?: { detail?: string } }; message?: string }
-    setErr(er.response?.data?.detail ?? er.message ?? 'That did not work.')
+    setErr(errorText(e, 'That did not work.'))
   }
 
   async function move(card: EnquiryCard, status: string) {

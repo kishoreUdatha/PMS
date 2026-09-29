@@ -327,6 +327,7 @@ export default function Dashboard() {
     queryFn: () => getDashboard(propertyId),
     enabled: propertyId !== '',
     refetchInterval: 30000,
+    refetchIntervalInBackground: false,
   })
 
   const occSpark = data?.chart.map((c) => c.occupancy) ?? []

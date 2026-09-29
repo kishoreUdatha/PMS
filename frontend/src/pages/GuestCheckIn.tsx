@@ -28,6 +28,7 @@ import { useActivePropertyId, usePropertyToday } from '../hooks/useProperty'
 import FormCFields from '../components/FormCFields'
 import { needsFormC, type FormCValues } from '../lib/formC'
 import { usePaymentMethods } from '../lib/paymentMethods'
+import { errorText } from '../lib/forms'
 /**
  * Screen 005 — Guest Check-In.
  *
@@ -355,8 +356,7 @@ export default function GuestCheckIn() {
   }
 
   function fail(e: unknown) {
-    const er = e as { response?: { data?: { detail?: string } } }
-    setError(er.response?.data?.detail ?? 'That did not work. Please try again.')
+    setError(errorText(e, 'That did not work. Please try again.'))
   }
 
   // Saved beside the guest, never instead of it. A failure here must not
@@ -376,9 +376,7 @@ export default function GuestCheckIn() {
           .filter(Boolean).join(', ') || null,
       })
     } catch (e) {
-      const er = e as { response?: { data?: { detail?: string } } }
-      setError(er.response?.data?.detail
-        ?? 'The guest was saved, but the Form C details were not.')
+      setError(errorText(e, 'The guest was saved, but the Form C details were not.'))
     }
   }
 
@@ -429,8 +427,7 @@ export default function GuestCheckIn() {
                 deposit: Number(r.deposit_amount || 0) })
     },
     onError: (e) => {
-      const er = e as { response?: { data?: { detail?: string } } }
-      setError(er.response?.data?.detail ?? 'The check-in could not be completed.')
+      setError(errorText(e, 'The check-in could not be completed.'))
     },
   })
 
@@ -998,8 +995,7 @@ function DocSlot({ guestId, propertyId, kind, title, doc, onChanged,
       await uploadGuestDocument(guestId, propertyId, kind, file)
       onChanged()
     } catch (e) {
-      const er = e as { response?: { data?: { detail?: string } } }
-      setErr(er.response?.data?.detail ?? 'That file could not be uploaded.')
+      setErr(errorText(e, 'That file could not be uploaded.'))
     } finally { setBusy(false) }
   }
 

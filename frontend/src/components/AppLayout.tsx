@@ -1,6 +1,6 @@
 import { Suspense } from 'react'
 import { Outlet } from 'react-router-dom'
-import { Loader2 } from 'lucide-react'
+import PageSpinner from './PageSpinner'
 import Sidebar from './Sidebar'
 import TopBar from './TopBar'
 
@@ -15,7 +15,7 @@ export default function AppLayout() {
         <main className="flex-1 py-6 pl-4 pr-1.5">
           {/* Screens load on demand (see App.tsx); the shell stays put while
               the next one arrives. */}
-          <Suspense fallback={<Loader2 className="animate-spin text-slate-300" />}>
+          <Suspense fallback={<PageSpinner />}>
             <Outlet />
           </Suspense>
         </main>

@@ -18,6 +18,7 @@ import { AlertTriangle, FilePlus2, Loader2, X } from 'lucide-react'
 import Select from './Select'
 import { GST_STATE_CODES, gstinProblem, normaliseGstin } from '../lib/gstin'
 import { openFolio, type InvoiceTiming, type ReservationFull } from '../api'
+import { errorText } from '../lib/forms'
 
 const field = 'w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-brand'
 const lbl = 'mb-1 block text-xs font-medium text-slate-600'
@@ -68,8 +69,7 @@ export default function NewFolioDialog({ r, onClose, onOpened }: {
       })
       onOpened()
     } catch (e) {
-      const ax = e as { response?: { data?: { detail?: string } } }
-      setErr(ax?.response?.data?.detail ?? 'The folio could not be opened.')
+      setErr(errorText(e, 'The folio could not be opened.'))
     } finally { setBusy(false) }
   }
 

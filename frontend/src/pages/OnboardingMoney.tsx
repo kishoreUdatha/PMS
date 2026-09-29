@@ -18,6 +18,7 @@ import {
   saveInvoiceSettings, listRatePlans,
   type RatesAndPolicies, type InvoiceSettings as Billing,
 } from '../api'
+import { errorText } from '../lib/forms'
 
 /**
  * Onboarding steps 5 and 6: what the property charges, and how it bills.
@@ -359,7 +360,7 @@ export function OnboardingRates() {
         {err && (
           <p className="mt-3 flex items-start gap-2 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
             <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-            {err.response?.data?.detail ?? 'That could not be saved.'}
+            {errorText(err, 'That could not be saved.')}
           </p>
         )}
       </div>
@@ -648,7 +649,7 @@ export function OnboardingBilling() {
         {err && (
           <p className="mt-3 flex items-start gap-2 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
             <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-            {err.response?.data?.detail ?? 'Billing could not be saved.'}
+            {errorText(err, 'Billing could not be saved.')}
           </p>
         )}
       </div>

@@ -41,7 +41,7 @@ export default function Sidebar() {
   // particular hotel's logo, which was wrong for every other tenant.
   const propertyName = usePropertyName()
   // Two letters for the collapsed rail: the property's own, not a constant.
-  const initials = (propertyName.match(/[A-Za-z]/g) ?? [])
+  const initials = (propertyName.match(/\b[A-Za-z]/g) ?? [])
     .slice(0, 2).join('').toUpperCase() || '··'
 
   // One poll for the whole shell. The counts endpoint is cheap and this is
@@ -60,6 +60,7 @@ export default function Sidebar() {
     queryFn: () => getReservationCounts(propertyId),
     enabled: propertyId !== '',
     refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
   })
   const arrivals = counts?.arrivals ?? 0
 
@@ -71,6 +72,7 @@ export default function Sidebar() {
     queryFn: () => listOtaActions(propertyId, 'open'),
     enabled: propertyId !== '',
     refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
   })
   const otaOpen = ota?.open_count ?? 0
   const otaOverdue = ota?.overdue_count ?? 0

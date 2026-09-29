@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Globe, Loader2 } from 'lucide-react'
 import SalesChannelsBoard from '../components/SalesChannelsBoard'
+import ChannelActivity from '../components/ChannelActivity'
 import { listProperties } from '../api'
 import { Crumbs } from '../components/Crumbs'
 import { useActivePropertyId } from '../hooks/useProperty'
@@ -62,7 +63,10 @@ export default function SalesChannelsPage() {
       )}
 
       {active && (
-        <SalesChannelsBoard propertyId={active.id} propertyCode={active.code} />
+        <>
+          <SalesChannelsBoard propertyId={active.id} propertyCode={active.code} />
+          <ChannelActivity propertyId={active.id} />
+        </>
       )}
     </div>
   )

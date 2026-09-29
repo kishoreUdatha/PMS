@@ -17,6 +17,7 @@ import {
 import { Crumbs } from '../components/Crumbs'
 import PublishRatesDialog from '../components/PublishRatesDialog'
 import { useActivePropertyId } from '../hooks/useProperty'
+import { clickableRow } from '../lib/a11y'
 
 /**
  * Screen 119 — the rate rule list.
@@ -187,7 +188,7 @@ export default function RateRules() {
                 )}
                 {rules.map((r) => (
                   <tr key={r.id}
-                    onClick={() => navigate(`/rates/rules/${r.id}`)}
+                    {...clickableRow(() => navigate(`/rates/rules/${r.id}`), 'link')}
                     className="cursor-pointer border-b border-slate-100 align-top last:border-0 hover:bg-slate-50">
                     <td className="px-4 py-3">
                       <p className="font-semibold text-slate-800">

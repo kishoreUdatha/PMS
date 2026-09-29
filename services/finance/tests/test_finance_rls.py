@@ -22,10 +22,16 @@ from sqlalchemy.exc import DBAPIError
 
 RUNTIME_URL = os.getenv("FINANCE_DATABASE_URL")
 OWNER_URL = os.getenv("FINANCE_MIGRATION_DATABASE_URL")
-pytestmark = pytest.mark.skipif(
-    not (RUNTIME_URL and OWNER_URL),
-    reason="FINANCE_DATABASE_URL and FINANCE_MIGRATION_DATABASE_URL required",
-)
+# Two tenants seeded by the root conftest when the database has fewer:
+# isolation cannot be shown with one, and skipping for want of a second
+# is how these tests used to pass on every fresh database.
+pytestmark = [
+    pytest.mark.skipif(
+        not (RUNTIME_URL and OWNER_URL),
+        reason="FINANCE_DATABASE_URL and FINANCE_MIGRATION_DATABASE_URL required",
+    ),
+    pytest.mark.usefixtures("two_tenants"),
+]
 
 
 @pytest.fixture(scope="module")

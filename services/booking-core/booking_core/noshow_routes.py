@@ -26,6 +26,9 @@ from decimal import Decimal
 from chirala_common.audit import record_audit
 from chirala_common.authz import Caller, assert_property_in_org, build_authz
 from chirala_common.routing import TransactionalRoute
+from chirala_common.folio_posting import post_charge
+from chirala_common.property_time import local_today, trading_day
+from chirala_common.tax_engine import compute_tax, resolve_rules
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -34,6 +37,8 @@ from sqlalchemy.orm import Session
 from chirala_common import no_show, ota_actions
 
 from .database import get_session
+from .folio_money import primary_folio
+from .inventory import counter_for
 from .settings import settings
 
 _get_caller, require_permission, _require_org = build_authz(
@@ -165,7 +170,38 @@ _UNIT_SQL = """
 """
 
 
-def _unit(db: Session, unit_id: uuid.UUID, property_id: uuid.UUID):
+def _unit(db: Session, unit_id: uuid.UUID, property_id: uuid.UUID, *,
+          lock: bool = False):
+    """The unit and its booking; with ``lock``, both held for the transaction.
+
+    Marking a no-show releases the unit's nights, and so does a cancellation
+    of the same booking and the night audit's own no-show pass. Read without
+    a lock, any two of them could see the unit still reserved and each give
+    its nights back -- one booking released twice, and the second release
+    coming off somebody else's room.
+
+    The reservation is locked first and the unit second, the order the
+    change routes take them in (they lock the reservation, then write its
+    units), so the two paths queue rather than deadlock.
+    """
+    if lock:
+        db.execute(
+            text(
+                """
+                SELECT r.id FROM booking.reservations r
+                 WHERE r.id = (SELECT reservation_id
+                                 FROM booking.reservation_units
+                                WHERE id = :id AND property_id = :prop)
+                 FOR UPDATE
+                """
+            ),
+            {"id": unit_id, "prop": property_id},
+        )
+        db.execute(
+            text("SELECT id FROM booking.reservation_units "
+                 "WHERE id = :id AND property_id = :prop FOR UPDATE"),
+            {"id": unit_id, "prop": property_id},
+        )
     row = db.execute(
         text(_UNIT_SQL + " WHERE ru.id = :id AND ru.property_id = :prop"),
         {"id": unit_id, "prop": property_id},
@@ -192,38 +228,25 @@ def _rate(db: Session, property_id, room_type_id, on: date) -> Decimal:
 
 def _room_tax(db: Session, property_id: uuid.UUID, amount: Decimal,
               units: int) -> tuple[Decimal, str]:
-    """Tax on a room charge, by the same rule the folio uses.
+    """Tax on a room charge, by the engine the folio uses.
 
-    Mirrors ``finance_service.tax_engine``: at most ONE tax group applies (the
-    default where none is named), and every service charge or levy stacks on
-    top. Reading the same table is the point — a penalty taxed differently from
-    a room night would be indefensible on the bill.
+    This used to be a mirror of ``finance_service.tax_engine`` -- a second
+    reading of the same table with its own arithmetic -- and the two had
+    already drifted: the mirror ignored which rules are inclusive, rounded
+    once instead of per component, and multiplied every flat levy by units
+    whatever basis it declared. A penalty quoted here then posted as a
+    different number. Now it is the engine itself, shared through
+    ``chirala_common``, and the quote is what the posting will charge.
     """
-    rows = db.execute(
-        text(
-            """
-            SELECT code, name, charge_type, rate_type, rate_value, amount_basis
-            FROM finance.tax_rules
-            WHERE property_id = :p AND status = 'active'
-              AND 'rooms' = ANY(applicability)
-              AND (charge_type <> 'tax_group' OR is_default)
-              AND charge_type <> 'gst_component'
-            """
-        ),
-        {"p": property_id},
-    ).mappings().all()
-    tax = Decimal("0")
-    labels = []
-    for r in rows:
-        if r["rate_type"] == "percent":
-            part = (amount * Decimal(r["rate_value"]) / Decimal(100))
-            labels.append(f"{r['code']} {r['rate_value']}%")
-        else:
-            # A flat levy is per unit of what it is charged on.
-            part = Decimal(r["rate_value"]) * units
-            labels.append(f"{r['code']} {r['rate_value']}")
-        tax += part
-    return tax.quantize(Decimal("0.01")), ", ".join(labels) or "No room taxes configured"
+    rules = resolve_rules(db, property_id=property_id, category="rooms",
+                          on_date=trading_day(db, property_id))
+    result = compute_tax(rules, amount=amount, units=units, nights=units)
+    labels = [
+        f"{ln.tax_code} {ln.rate_snapshot}{'%' if ln.rate_type == 'percent' else ''}"
+        for ln in result.lines if ln.apply_as == "exclusive"
+    ]
+    return (result.exclusive_total.quantize(Decimal("0.01")),
+            ", ".join(labels) or "No room taxes configured")
 
 
 def _financials(db: Session, row, rooms: int):
@@ -236,26 +259,15 @@ def _financials(db: Session, row, rooms: int):
         d = date.fromordinal(d.toordinal() + 1)
     charges *= rooms
     taxes, tax_label = _room_tax(db, row["property_id"], charges, nights * rooms)
-    folio = db.execute(
-        text(
-            """
-            SELECT f.id,
-                   COALESCE(SUM(e.amount) FILTER (WHERE e.entry_type='credit'), 0)
-                     AS paid
-            FROM finance.folios f
-            LEFT JOIN finance.folio_entries e ON e.folio_id = f.id
-            WHERE f.reservation_id = :r GROUP BY f.id LIMIT 1
-            """
-        ),
-        {"r": row["reservation_id"]},
-    ).mappings().first()
-    paid = Decimal(folio["paid"]) if folio else Decimal("0")
+    # The same folio, and the same net-of-refunds figure, as a cancellation
+    # uses; see folio_money.primary_folio.
+    folio_id, paid = primary_folio(db, row["reservation_id"])
     return {
         "nightly": _rate(db, row["property_id"], row["room_type_id"],
                          row["arrival_date"]),
         "charges": charges, "taxes": taxes, "tax_label": tax_label,
         "total": charges + taxes, "paid": paid,
-        "folio_id": folio["id"] if folio else None,
+        "folio_id": folio_id,
     }
 
 
@@ -314,7 +326,7 @@ def candidates(
 ):
     """Arrivals that never happened: due on or before the date, still reserved."""
     assert_property_in_org(db, caller, property_id)
-    target = on_date or db.execute(text("SELECT CURRENT_DATE")).scalar_one()
+    target = on_date or local_today(db, property_id)
     rows = db.execute(
         text(
             _UNIT_SQL
@@ -356,7 +368,11 @@ def no_show_view(
     """The missed arrival, what it was worth, and what a no-show would cost."""
     assert_property_in_org(db, caller, property_id)
     row = _unit(db, unit_id, property_id)
-    today = db.execute(text("SELECT CURRENT_DATE")).scalar_one()
+    # The property's own date. CURRENT_DATE is UTC: until 05:30 in India it
+    # still said yesterday, so an arrival due today could not be marked a
+    # no-show after midnight -- and one due tomorrow could be, before 05:30
+    # the day before, from the other side of the date line.
+    today = local_today(db, property_id)
     fin = _financials(db, row, 1)
     pol = db.execute(
         text("SELECT policy_text, penalty_nights FROM "
@@ -405,8 +421,12 @@ def mark_no_show(
 ):
     """Mark the arrival missed: charge the penalty, free the room, close it out."""
     assert_property_in_org(db, caller, property_id)
-    row = _unit(db, unit_id, property_id)
-    today = db.execute(text("SELECT CURRENT_DATE")).scalar_one()
+    row = _unit(db, unit_id, property_id, lock=True)
+    # The property's own date. CURRENT_DATE is UTC: until 05:30 in India it
+    # still said yesterday, so an arrival due today could not be marked a
+    # no-show after midnight -- and one due tomorrow could be, before 05:30
+    # the day before, from the other side of the date line.
+    today = local_today(db, property_id)
     warnings: list[str] = []
 
     blocked = _blocked(row, today)
@@ -438,11 +458,24 @@ def mark_no_show(
                 "The penalty was not charged: this reservation has no folio."
             )
         else:
-            _post(db, row, fin["folio_id"], chosen.base_amount,
-                  "no_show_penalty", f"no_show_penalty:{unit_id}")
-            if chosen.tax_amount > 0:
-                _post(db, row, fin["folio_id"], chosen.tax_amount,
-                      "no_show_penalty_tax", f"no_show_penalty_tax:{unit_id}")
+            # Through the shared ledger path. The engine adds the tax as its
+            # own debit when the chosen basis carries tax, so the tax is the
+            # engine's figure rather than one computed here -- and the line
+            # key is the one the night audit uses, so a no-show processed at
+            # the desk and again by the audit is charged once.
+            nights = (row["departure_date"] - row["arrival_date"]).days
+            post_charge(
+                db, organization_id=row["organization_id"],
+                property_id=row["property_id"], folio_id=fin["folio_id"],
+                amount=chosen.base_amount,
+                business_date=trading_day(db, row["property_id"]),
+                source_type="no_show_penalty", tax_category="rooms",
+                taxed=chosen.tax_amount > 0,
+                tax_units=(max(nights, 1)
+                           if body.penalty_basis == "full_stay" else 1),
+                source_line_key=f"no_show_penalty:{unit_id}",
+                posted_by=caller.subject,
+            )
 
     # --- what happens to money already held -------------------------------
     refund_due = Decimal("0")
@@ -456,7 +489,23 @@ def mark_no_show(
             f"marking a no-show does not move money back on its own."
         )
 
-    # --- release the room and the night -----------------------------------
+    # --- close the unit, then release what it held -----------------------
+    # The state change comes first and is guarded on the state it expects, so
+    # the nights below are returned only by the one writer that actually
+    # moved this unit out of 'reserved'. The unit is locked above as well;
+    # this is what makes a second release impossible rather than unlikely.
+    moved = db.execute(
+        text("UPDATE booking.reservation_units SET status = 'no_show', "
+             "assigned_room_id = NULL, version = version + 1 "
+             "WHERE id = :id AND status = 'reserved'"),
+        {"id": unit_id},
+    ).rowcount
+    if moved != 1:
+        raise HTTPException(
+            status_code=409,
+            detail="This arrival was changed by someone else a moment ago. "
+                   "Reload it and try again.")
+
     released = None
     nights_returned = 0
     if body.release_room:
@@ -472,11 +521,16 @@ def mark_no_show(
             nights.append(d)
             d = date.fromordinal(d.toordinal() + 1)
         if nights:
+            # The counter the booking actually occupies: a booking still
+            # merely held sits in held_units, and taking it off
+            # reserved_units instead would strand the held room and free a
+            # confirmed one that was never this booking's.
+            counter = counter_for(row["reservation_status"])
             db.execute(
                 text(
-                    """
+                    f"""
                     UPDATE booking.room_type_inventory_days
-                       SET reserved_units = GREATEST(reserved_units - 1, 0)
+                       SET {counter} = GREATEST({counter} - 1, 0)
                      WHERE property_id = :p AND room_type_id = :rt
                        AND stay_date = ANY(:dates)
                     """
@@ -490,11 +544,6 @@ def mark_no_show(
             "The room was not released, so it stays blocked for these dates."
         )
 
-    db.execute(
-        text("UPDATE booking.reservation_units SET status = 'no_show', "
-             "assigned_room_id = NULL, version = version + 1 WHERE id = :id"),
-        {"id": unit_id},
-    )
     # With every unit missed, the booking itself is over.
     live = db.execute(
         text("SELECT count(*) FROM booking.reservation_units "
@@ -557,20 +606,3 @@ def mark_no_show(
         nights_returned=nights_returned, warnings=warnings,
     )
 
-
-def _post(db: Session, row, folio_id, amount: Decimal, source_type: str,
-          key: str):
-    db.execute(
-        text(
-            """
-            INSERT INTO finance.folio_entries
-                (id, organization_id, property_id, folio_id, entry_type,
-                 amount, currency, business_date, source_type, source_line_key)
-            VALUES (:id, :org, :prop, :folio, 'debit', :amt, :cur,
-                    CURRENT_DATE, :st, :slk)
-            """
-        ),
-        {"id": uuid.uuid4(), "org": row["organization_id"],
-         "prop": row["property_id"], "folio": folio_id, "amt": amount,
-         "cur": row["currency"], "st": source_type, "slk": key},
-    )

@@ -16,6 +16,7 @@ import {
   type HkBoard, type HkCard, type HkAttendant,
 } from '../api'
 import { useActivePropertyId } from '../hooks/useProperty'
+import { errorText } from '../lib/forms'
 
 /**
  * Screen 006 — Housekeeping Operations, Room Board tab.
@@ -442,8 +443,7 @@ export default function Housekeeping() {
     qc.invalidateQueries({ queryKey: ['hk-activity'] })
   }
   const fail = (e: unknown) => {
-    const er = e as { response?: { data?: { detail?: string } } }
-    setError(er.response?.data?.detail ?? 'That did not work. Please try again.')
+    setError(errorText(e, 'That did not work. Please try again.'))
     setToast('')
   }
   const done = (msg: string) => { setToast(msg); setError(''); refresh() }
@@ -519,7 +519,7 @@ export default function Housekeeping() {
     return (
       <p className="flex items-start gap-2 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-        {er?.response?.data?.detail ?? 'The housekeeping board could not be loaded.'}
+        {errorText(er, 'The housekeeping board could not be loaded.')}
       </p>
     )
   }

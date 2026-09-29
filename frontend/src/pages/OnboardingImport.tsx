@@ -11,6 +11,7 @@ import {
   checkBookingImport, commitBookingImport, downloadImportTemplate,
   type ImportCheck, type ImportResult,
 } from '../api'
+import { errorText } from '../lib/forms'
 
 /**
  * Onboarding step 8 — the bookings a property already has.
@@ -52,16 +53,14 @@ export function OnboardingImport() {
   const check = useMutation({
     mutationFn: (f: File) => checkBookingImport(propertyId, f),
     onError: (e) => setErr(
-      (e as { response?: { data?: { detail?: string } } })
-        .response?.data?.detail ?? 'That file could not be read.'),
+      errorText(e, 'That file could not be read.')),
   })
   const result: ImportCheck | undefined = check.data
 
   const commit = useMutation({
     mutationFn: () => commitBookingImport(propertyId, file!, validOnly),
     onError: (e) => setErr(
-      (e as { response?: { data?: { detail?: string } } })
-        .response?.data?.detail ?? 'Those bookings could not be imported.'),
+      errorText(e, 'Those bookings could not be imported.')),
   })
   const done: ImportResult | undefined = commit.data
 

@@ -17,6 +17,7 @@ import { Crumbs } from '../components/Crumbs'
 import { useOrgId } from '../hooks/useProperty'
 import EntityCards, { type Tone } from '../components/EntityCards'
 import { StayLayoutToggle, useListLayout } from '../lib/listLayout'
+import { errorText } from '../lib/forms'
 
 const money = (v: string | number | null) => v === null || v === undefined
   ? '—'
@@ -405,8 +406,7 @@ function AccountModal({ orgId, account, onClose, onDone }: {
         onDone(`${body.name} added.`)
       }
     } catch (e) {
-      const er = e as { response?: { data?: { detail?: string } }; message?: string }
-      setErr(er.response?.data?.detail ?? er.message ?? 'Could not save.')
+      setErr(errorText(e, 'Could not save.'))
     } finally { setBusy(false) }
   }
 

@@ -16,6 +16,8 @@ import {
 } from '../api'
 import { Crumbs } from '../components/Crumbs'
 import { useActivePropertyId } from '../hooks/useProperty'
+import { errorText } from '../lib/forms'
+import { clickableRow } from '../lib/a11y'
 
 /**
  * Screen 118 — Tax and Service Charge Setup.
@@ -35,10 +37,7 @@ const day = (s: string | null) => fmtDate(s)
 const today = () => new Date().toISOString().slice(0, 10)
 
 function apiError(e: unknown): string {
-  const d = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
-  if (typeof d === 'string') return d
-  if (Array.isArray(d)) return 'Some fields are invalid. Check the highlighted values.'
-  return 'Could not save. Please try again.'
+  return errorText(e, 'Could not save. Please try again.')
 }
 
 function Field({ label, required, children }: {
@@ -629,7 +628,7 @@ export default function TaxCharges() {
                 )}
                 {items.map((c) => (
                   <tr key={c.id}
-                    onClick={() => { setCreating(false); setSelected(c) }}
+                    {...clickableRow(() => { setCreating(false); setSelected(c) })}
                     className={`cursor-pointer border-b border-slate-100 last:border-0 hover:bg-slate-50 ${
                       selected?.id === c.id ? 'bg-brand-light/40' : ''}`}>
                     <td className="px-4 py-3 text-sm font-bold text-slate-700">{c.code}</td>

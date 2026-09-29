@@ -100,8 +100,8 @@ export default function DayBook() {
         r.business_date, r.folio_no ?? '', r.reservation_number ?? '',
         r.guest_name ?? '', r.room_code ?? '', r.kind_label, r.description,
         r.note ?? '',
-        r.debit != null ? r.debit.toFixed(2) : '',
-        r.credit != null ? r.credit.toFixed(2) : '',
+        r.debit != null ? Number(r.debit).toFixed(2) : '',
+        r.credit != null ? Number(r.credit).toFixed(2) : '',
         r.posted_by ?? '',
       ]),
     )
@@ -143,7 +143,7 @@ export default function DayBook() {
           <button key={k.value} disabled={!k.count}
             onClick={() => set('kind', kind === k.value ? '' : k.value)}
             title={`${k.count} ${k.label.toLowerCase()}${
-              k.count === 1 ? '' : 's'} — ${money.format(Math.abs(k.total))}`}
+              k.count === 1 ? '' : 's'} — ${money.format(Math.abs(Number(k.total)))}`}
             className={`rounded-full px-3 py-1.5 ${CONTROL_TYPE} ${
               kind === k.value
                 ? 'bg-brand text-white'
@@ -185,14 +185,14 @@ export default function DayBook() {
 
       {t && (
         <div className="flex flex-wrap items-center gap-2">
-          <Figure label="Charges" value={money.format(t.charges)} />
-          <Figure label="Payments" value={money.format(t.payments)} />
-          <Figure label="Refunds" value={money.format(t.refunds)} />
-          <Figure label="Adjustments" value={money.format(t.adjustments)}
+          <Figure label="Charges" value={money.format(Number(t.charges))} />
+          <Figure label="Payments" value={money.format(Number(t.payments))} />
+          <Figure label="Refunds" value={money.format(Number(t.refunds))} />
+          <Figure label="Adjustments" value={money.format(Number(t.adjustments))}
             title="Signed: negative means the day's adjustments came off guest bills on balance" />
           {/* The line that ties this screen to the folios. Owed MORE is not
               good news or bad news, so it is not coloured as either. */}
-          <Figure label="Net movement" value={money.format(t.net)}
+          <Figure label="Net movement" value={money.format(Number(t.net))}
             tone="text-ink"
             title="Debits less credits — the change in what the house is owed across the day" />
           <span className="text-xs text-slate-400">
@@ -276,11 +276,11 @@ export default function DayBook() {
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 text-right
                   tabular-nums text-slate-700">
-                  {r.debit != null ? money.format(r.debit) : ''}
+                  {r.debit != null ? money.format(Number(r.debit)) : ''}
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 text-right
                   tabular-nums text-emerald-700">
-                  {r.credit != null ? money.format(r.credit) : ''}
+                  {r.credit != null ? money.format(Number(r.credit)) : ''}
                 </td>
               </tr>
             ))}

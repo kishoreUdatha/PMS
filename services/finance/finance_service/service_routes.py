@@ -59,6 +59,7 @@ from chirala_common.authz import (
     assert_property_in_org,
     build_authz,
     caller_org,
+    require_property_permission,
 )
 from chirala_common.routing import TransactionalRoute
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -275,7 +276,8 @@ def create_category(
     caller: Caller = Depends(require_org_permission("payments", "create")),
     db: Session = Depends(get_session),
 ):
-    assert_property_in_org(db, caller, body.property_id)
+    require_property_permission(db, caller, body.property_id,
+                                "payments", "create")
     if body.bills_as not in BILLS_AS:
         raise HTTPException(
             422, f"'{body.bills_as}' is not a department the ledger can tax.")
@@ -418,7 +420,8 @@ def create_item(
     caller: Caller = Depends(require_org_permission("payments", "create")),
     db: Session = Depends(get_session),
 ):
-    assert_property_in_org(db, caller, body.property_id)
+    require_property_permission(db, caller, body.property_id,
+                                "payments", "create")
     label = _category_label(db, body.category_id, body.property_id)
     row = db.execute(
         text(
@@ -582,7 +585,8 @@ def create_order(
     db: Session = Depends(get_session),
 ):
     """Put what the guest ordered on their folio."""
-    assert_property_in_org(db, caller, body.property_id)
+    require_property_permission(db, caller, body.property_id,
+                                "payments", "create")
     org = caller_org(caller)
 
     # Already posted under this key? Hand back what was posted. Checked before
@@ -652,6 +656,11 @@ def create_order(
         total += amount
         priced.append((line, item, amount))
 
+    # One day for the order and every line posted from it. The lines used to
+    # be handed ``body.business_date`` directly, which the screen leaves out,
+    # so each posting reached the ledger with no date and was refused.
+    business_date = body.business_date or _trading_day(db, body.property_id)
+
     order_id = db.execute(
         text(
             """
@@ -668,7 +677,7 @@ def create_order(
         {
             "org": org, "prop": body.property_id, "folio": body.folio_id,
             "res": body.reservation_id,
-            "bd": body.business_date or _trading_day(db, body.property_id),
+            "bd": business_date,
             "note": (body.note or "").strip() or None,
             "by": caller.user_id, "total": total,
             "cur": folio["currency"], "key": body.client_key,
@@ -698,7 +707,7 @@ def create_order(
                 property_id=body.property_id,
                 folio_id=body.folio_id,
                 amount=amount,
-                business_date=body.business_date,
+                business_date=business_date,
                 source_type=source_type,
                 # Unique per order line, so a double-tapped Post button
                 # re-posts nothing: the ledger's own uniqueness catches it.

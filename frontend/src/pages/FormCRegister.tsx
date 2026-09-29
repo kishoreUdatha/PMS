@@ -10,6 +10,8 @@ import {
   type FormCRow, type FormCDetail,
 } from '../api'
 import { useActivePropertyId } from '../hooks/useProperty'
+import { errorText } from '../lib/forms'
+import { clickableRow } from '../lib/a11y'
 
 /**
  * Form C register — who has been reported to the Bureau of Immigration.
@@ -136,7 +138,7 @@ export default function FormCRegister() {
             )}
             {rows.map((r: FormCRow) => (
               <tr key={r.reservation_unit_id}
-                onClick={() => setOpen(r.reservation_unit_id)}
+                {...clickableRow(() => setOpen(r.reservation_unit_id))}
                 className="cursor-pointer hover:bg-slate-50">
                 <td className="px-4 py-3 text-slate-700">
                   {r.guest_name ?? '—'}
@@ -235,8 +237,7 @@ function FormCDialog({ unitId, propertyId, onClose, onSaved }: {
   const run = async (fn: () => Promise<unknown>) => {
     setErr('')
     try { await fn(); onSaved() } catch (e) {
-      const er = e as { response?: { data?: { detail?: string } } }
-      setErr(er.response?.data?.detail ?? 'That did not go through.')
+      setErr(errorText(e, 'That did not go through.'))
     }
   }
 
@@ -362,9 +363,7 @@ function FormCDialog({ unitId, propertyId, onClose, onSaved }: {
               {err && <p className="text-xs text-rose-600">{err}</p>}
               {(save.error || file.error) && (
                 <p className="text-xs text-rose-600">
-                  {((save.error ?? file.error) as {
-                    response?: { data?: { detail?: string } }
-                  })?.response?.data?.detail ?? 'That did not go through.'}
+                  {errorText((save.error ?? file.error), 'That did not go through.')}
                 </p>
               )}
 

@@ -13,6 +13,7 @@ import {
   cancelBlock, listManagedRoomTypes, BLOCK_REASONS,
   type BlockGroup, type BlockStats, type BlockConflict,
 } from '../api'
+import { errorText } from '../lib/forms'
 
 /** Screen 063 — Room Block and Out of Order. */
 
@@ -30,10 +31,7 @@ function Label({ children, required }: { children: React.ReactNode; required?: b
 }
 
 function apiError(e: unknown): string {
-  const d = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
-  if (typeof d === 'string') return d
-  if (Array.isArray(d)) return 'Some fields are invalid. Check the highlighted values.'
-  return 'Could not save. Please try again.'
+  return errorText(e, 'Could not save. Please try again.')
 }
 
 const today = () => new Date().toISOString().slice(0, 10)
